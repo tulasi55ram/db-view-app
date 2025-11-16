@@ -23,6 +23,19 @@
         "title": "DBView: Configure Connection"
       },
       {
+        "command": "dbview.addConnection",
+        "title": "Add New Connection",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dbview.switchConnection",
+        "title": "DBView: Switch Connection"
+      },
+      {
+        "command": "dbview.manageConnections",
+        "title": "DBView: Manage Connections"
+      },
+      {
         "command": "dbview.openTable",
         "title": "DBView: Open Table"
       },
@@ -32,7 +45,8 @@
       },
       {
         "command": "dbview.refreshExplorer",
-        "title": "DBView: Refresh Explorer View"
+        "title": "Refresh",
+        "icon": "$(refresh)"
       }
     ],
     "viewsContainers": {
@@ -59,6 +73,18 @@
       }
     ],
     "menus": {
+      "view/title": [
+        {
+          "command": "dbview.addConnection",
+          "when": "view == dbview.dbExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbview.refreshExplorer",
+          "when": "view == dbview.dbExplorer",
+          "group": "navigation@2"
+        }
+      ],
       "view/item/context": [
         {
           "command": "dbview.configureConnection",

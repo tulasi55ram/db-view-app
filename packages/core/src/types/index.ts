@@ -1,4 +1,5 @@
 export interface ConnectionConfig {
+  name?: string;
   host: string;
   port: number;
   user: string;

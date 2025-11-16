@@ -39,9 +39,25 @@ export async function openTablePanel(
   );
 
   openPanels.set(key, panel);
+
   panel.onDidDispose(() => {
     console.log(`[dbview] Panel for ${key} disposed`);
     openPanels.delete(key);
+  });
+
+  // Refresh data when the panel becomes visible (tab is clicked)
+  panel.onDidChangeViewState((e) => {
+    if (e.webviewPanel.visible && e.webviewPanel.active) {
+      console.log(`[dbview] Panel for ${key} became active, refreshing data...`);
+      // Re-send init and data to ensure correct state
+      panel.webview.postMessage({
+        type: "INIT_TABLE_VIEW",
+        schema: target.schema,
+        table: target.table,
+        limit: 100
+      });
+      sendTableRows(panel, client, target, 100);
+    }
   });
 
   panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri);

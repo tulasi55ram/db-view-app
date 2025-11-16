@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { ConnectionConfig } from "@dbview/core";
+import { saveConnectionWithName } from "./connectionSettings";
 
 export function showConnectionConfigPanel(
   context: vscode.ExtensionContext,
@@ -27,6 +28,7 @@ export function showConnectionConfigPanel(
         switch (message.command) {
           case "submit":
             const connection: ConnectionConfig = {
+              name: message.name || undefined,
               host: message.host,
               port: parseInt(message.port, 10),
               database: message.database,
@@ -35,7 +37,11 @@ export function showConnectionConfigPanel(
             };
 
             if (message.saveConnection) {
-              await saveConnection(context, connection);
+              if (connection.name?.trim()) {
+                await saveConnectionWithName(context, connection);
+              } else {
+                await saveConnection(context, connection);
+              }
             }
 
             panel.dispose();
@@ -51,6 +57,7 @@ export function showConnectionConfigPanel(
             console.log("[dbview] Testing connection...");
             try {
               const testConfig: ConnectionConfig = {
+                name: message.name || undefined,
                 host: message.host,
                 port: parseInt(message.port, 10),
                 database: message.database,
@@ -121,12 +128,13 @@ async function saveConnection(
 }
 
 function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
+  const defaultName = escapeHtml(defaults?.name ?? "");
   const defaultHost = escapeHtml(defaults?.host ?? "localhost");
   const defaultPort = defaults?.port ?? 5432;
   const defaultDatabase = escapeHtml(defaults?.database ?? "postgres");
   const defaultUser = escapeHtml(defaults?.user ?? "postgres");
 
-  console.log("[dbview] Webview defaults:", { defaultHost, defaultPort, defaultDatabase, defaultUser });
+  console.log("[dbview] Webview defaults:", { defaultName, defaultHost, defaultPort, defaultDatabase, defaultUser });
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -330,6 +338,12 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
         <p class="subtitle">Enter your PostgreSQL database connection details</p>
 
         <form id="connectionForm">
+            <div class="form-group">
+                <label for="name">Connection Name (optional)</label>
+                <input type="text" id="name" name="name" value="${defaultName}" placeholder="e.g., Production, Development">
+                <div class="help-text">Give this connection a name to save and switch between multiple connections</div>
+            </div>
+
             <div class="row">
                 <div class="form-group">
                     <label for="host">Host</label>
@@ -387,6 +401,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
             e.preventDefault();
 
             const formData = new FormData(form);
+            const name = formData.get('name');
             const host = formData.get('host');
             const port = formData.get('port');
             const database = formData.get('database');
@@ -408,6 +423,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
 
             vscode.postMessage({
                 command: 'submit',
+                name,
                 host,
                 port,
                 database,
@@ -419,6 +435,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
 
         testBtn.addEventListener('click', () => {
             const formData = new FormData(form);
+            const name = formData.get('name');
             const host = formData.get('host');
             const port = formData.get('port');
             const database = formData.get('database');
@@ -442,6 +459,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
 
             vscode.postMessage({
                 command: 'testConnection',
+                name,
                 host,
                 port,
                 database,

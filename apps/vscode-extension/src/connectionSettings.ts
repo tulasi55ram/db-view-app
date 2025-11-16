@@ -9,6 +9,8 @@ const STATE_KEYS = {
 } as const;
 
 const PASSWORD_KEY = "dbview.connection.password";
+const CONNECTIONS_KEY = "dbview.connections";
+const ACTIVE_CONNECTION_KEY = "dbview.activeConnection";
 
 export async function getStoredConnection(
   context: vscode.ExtensionContext
@@ -152,4 +154,109 @@ async function saveConnection(
       ? context.secrets.store(PASSWORD_KEY, connection.password)
       : context.secrets.delete(PASSWORD_KEY)
   ]);
+}
+
+// New functions for managing multiple connections
+
+export async function getAllSavedConnections(
+  context: vscode.ExtensionContext
+): Promise<ConnectionConfig[]> {
+  const connections = context.globalState.get<ConnectionConfig[]>(CONNECTIONS_KEY);
+  if (!connections) {
+    return [];
+  }
+
+  // Retrieve passwords from secrets for each connection
+  const connectionsWithPasswords = await Promise.all(
+    connections.map(async (conn) => {
+      if (conn.name) {
+        const password = await context.secrets.get(`dbview.connection.${conn.name}.password`);
+        return { ...conn, password: password ?? undefined };
+      }
+      return conn;
+    })
+  );
+
+  return connectionsWithPasswords;
+}
+
+export async function saveConnectionWithName(
+  context: vscode.ExtensionContext,
+  connection: ConnectionConfig
+): Promise<void> {
+  if (!connection.name?.trim()) {
+    throw new Error("Connection name is required");
+  }
+
+  const connections = await getAllSavedConnections(context);
+
+  // Check if connection with this name already exists
+  const existingIndex = connections.findIndex(c => c.name === connection.name);
+
+  // Store password in secrets if provided
+  if (connection.password) {
+    await context.secrets.store(`dbview.connection.${connection.name}.password`, connection.password);
+  }
+
+  // Remove password from the connection object before storing in globalState
+  const connectionToStore = { ...connection };
+  delete connectionToStore.password;
+
+  if (existingIndex >= 0) {
+    // Update existing connection
+    connections[existingIndex] = connectionToStore;
+  } else {
+    // Add new connection
+    connections.push(connectionToStore);
+  }
+
+  await context.globalState.update(CONNECTIONS_KEY, connections);
+
+  // Also save as the legacy single connection for backward compatibility
+  await saveConnection(context, connection);
+
+  // Set as active connection
+  await context.globalState.update(ACTIVE_CONNECTION_KEY, connection.name);
+}
+
+export async function deleteConnection(
+  context: vscode.ExtensionContext,
+  connectionName: string
+): Promise<void> {
+  const connections = await getAllSavedConnections(context);
+  const filteredConnections = connections.filter(c => c.name !== connectionName);
+
+  await context.globalState.update(CONNECTIONS_KEY, filteredConnections);
+  await context.secrets.delete(`dbview.connection.${connectionName}.password`);
+
+  // If the deleted connection was active, clear the active connection
+  const activeConnection = context.globalState.get<string>(ACTIVE_CONNECTION_KEY);
+  if (activeConnection === connectionName) {
+    await context.globalState.update(ACTIVE_CONNECTION_KEY, undefined);
+  }
+}
+
+export async function getActiveConnectionName(
+  context: vscode.ExtensionContext
+): Promise<string | undefined> {
+  return context.globalState.get<string>(ACTIVE_CONNECTION_KEY);
+}
+
+export async function setActiveConnection(
+  context: vscode.ExtensionContext,
+  connectionName: string
+): Promise<ConnectionConfig | null> {
+  const connections = await getAllSavedConnections(context);
+  const connection = connections.find(c => c.name === connectionName);
+
+  if (!connection) {
+    return null;
+  }
+
+  await context.globalState.update(ACTIVE_CONNECTION_KEY, connectionName);
+
+  // Also save as the legacy single connection for backward compatibility
+  await saveConnection(context, connection);
+
+  return connection;
 }
