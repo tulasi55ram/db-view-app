@@ -1,0 +1,11 @@
+{
+  "name": "dbview",
+  "private": true,
+  "version": "0.0.1",
+  "packageManager": "pnpm@8.15.0",
+  "scripts": {
+    "dev:extension": "bash -lc 'pnpm --filter @dbview/ui dev & pnpm --filter @dbview/vscode-extension watch'",
+    "build:extension": "pnpm --filter @dbview/ui build && pnpm --filter @dbview/vscode-extension build",
+    "build": "pnpm run -r build"
+  }
+}

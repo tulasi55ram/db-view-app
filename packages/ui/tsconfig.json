@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "target": "ESNext",
+    "types": ["vite/client"],
+    "allowJs": false
+  },
+  "include": [
+    "src",
+    "vite.config.ts",
+    "tailwind.config.ts"
+  ]
+}

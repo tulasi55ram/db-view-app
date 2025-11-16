@@ -1,0 +1,98 @@
+{
+  "name": "@dbview/vscode-extension",
+  "displayName": "dbview.app",
+  "description": "Browse Postgres schemas and tables inside VS Code.",
+  "version": "0.0.1",
+  "publisher": "dbview",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/apps/vscode-extension/src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dbview.configureConnection",
+        "title": "DBView: Configure Connection"
+      },
+      {
+        "command": "dbview.openTable",
+        "title": "DBView: Open Table"
+      },
+      {
+        "command": "dbview.openSqlRunner",
+        "title": "DBView: Open SQL Runner"
+      },
+      {
+        "command": "dbview.refreshExplorer",
+        "title": "DBView: Refresh Explorer View"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dbview",
+          "title": "DB View",
+          "icon": "./media/dbview-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "dbview": [
+        {
+          "id": "dbview.dbExplorer",
+          "name": "DB Explorer"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "dbview.dbExplorer",
+        "contents": "No database connection configured.\n[Configure Connection](command:dbview.configureConnection)"
+      }
+    ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "dbview.configureConnection",
+          "when": "view == dbview.dbExplorer && viewItem == welcome",
+          "group": "inline"
+        },
+        {
+          "command": "dbview.configureConnection",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "navigation"
+        },
+        {
+          "command": "dbview.refreshExplorer",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "pnpm run compile",
+    "compile": "tsc -p ./tsconfig.json",
+    "watch": "tsc -w -p ./tsconfig.json",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "@dbview/core": "workspace:*",
+    "pg": "^8.11.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.17",
+    "@types/vscode": "^1.84.0",
+    "typescript": "^5.4.2",
+    "vsce": "^2.15.0",
+    "@types/pg": "^8.10.9"
+  }
+}

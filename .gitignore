@@ -1,0 +1,28 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build outputs
+apps/vscode-extension/dist/
+apps/vscode-extension/media/webview/
+packages/core/dist/
+packages/ui/dist/
+apps/desktop/dist/
+
+# editor / tooling
+.vscode/
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# environment / secrets
+.env
+.env.local
+*.sqlite
+
+# misc
+coverage/
+tmp/
