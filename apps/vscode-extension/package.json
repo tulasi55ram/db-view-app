@@ -47,6 +47,26 @@
         "command": "dbview.refreshExplorer",
         "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "dbview.refreshConnection",
+        "title": "Refresh Connection",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dbview.editConnection",
+        "title": "Edit Connection",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "dbview.deleteConnection",
+        "title": "Delete Connection",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dbview.copyConnectionString",
+        "title": "Copy Connection String",
+        "icon": "$(copy)"
       }
     ],
     "viewsContainers": {
@@ -100,6 +120,26 @@
           "command": "dbview.refreshExplorer",
           "when": "view == dbview.dbExplorer && viewItem == connection",
           "group": "navigation"
+        },
+        {
+          "command": "dbview.refreshConnection",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbview.editConnection",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "inline@2"
+        },
+        {
+          "command": "dbview.copyConnectionString",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "inline@3"
+        },
+        {
+          "command": "dbview.deleteConnection",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "inline@4"
         }
       ]
     }

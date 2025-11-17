@@ -25,7 +25,10 @@ export async function getStoredConnection(
   }
 
   const password = await context.secrets.get(PASSWORD_KEY);
+  const activeConnectionName = await getActiveConnectionName(context);
+
   return {
+    name: activeConnectionName,
     host,
     port,
     user,
@@ -259,4 +262,16 @@ export async function setActiveConnection(
   await saveConnection(context, connection);
 
   return connection;
+}
+
+export async function clearStoredConnection(context: vscode.ExtensionContext): Promise<void> {
+  await Promise.all([
+    context.globalState.update(STATE_KEYS.host, undefined),
+    context.globalState.update(STATE_KEYS.port, undefined),
+    context.globalState.update(STATE_KEYS.user, undefined),
+    context.globalState.update(STATE_KEYS.database, undefined),
+    context.secrets.delete(PASSWORD_KEY)
+  ]);
+
+  await context.globalState.update(ACTIVE_CONNECTION_KEY, undefined);
 }

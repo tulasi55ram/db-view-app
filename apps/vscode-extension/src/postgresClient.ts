@@ -6,6 +6,15 @@ export interface QueryResultSet {
   rows: Record<string, unknown>[];
 }
 
+export interface ObjectCounts {
+  tables: number;
+  views: number;
+  materializedViews: number;
+  functions: number;
+  procedures: number;
+  types: number;
+}
+
 const DEFAULT_CONFIG: PoolConfig = process.env.DBVIEW_DATABASE_URL
   ? { connectionString: process.env.DBVIEW_DATABASE_URL }
   : {
@@ -15,6 +24,11 @@ const DEFAULT_CONFIG: PoolConfig = process.env.DBVIEW_DATABASE_URL
       password: process.env.DBVIEW_PG_PASSWORD ?? "postgres",
       database: process.env.DBVIEW_PG_DB ?? "postgres"
     };
+
+interface TableListRow {
+  table_name: string;
+  total_bytes: string | number | null;
+}
 
 export class PostgresClient {
   private readonly config: PoolConfig;
@@ -43,15 +57,30 @@ export class PostgresClient {
     return result.rows.map((row) => row.schema_name);
   }
 
-  async listTables(schema: string): Promise<string[]> {
-    const result = await this.query<{ table_name: string }>(
-      `select table_name
+  async listTables(schema: string): Promise<{ name: string; sizeBytes?: number }[]> {
+    const result = await this.query<TableListRow>(
+      `select table_name,
+              pg_total_relation_size(
+                quote_ident(table_schema) || '.' || quote_ident(table_name)
+              ) as total_bytes
        from information_schema.tables
        where table_schema = $1 and table_type = 'BASE TABLE'
        order by table_name`,
       [schema]
     );
-    return result.rows.map((row) => row.table_name);
+    return result.rows.map((row) => {
+      const rawSize = row.total_bytes;
+      const sizeNumber =
+        typeof rawSize === "number"
+          ? rawSize
+          : rawSize !== null && rawSize !== undefined
+            ? Number.parseInt(String(rawSize), 10)
+            : undefined;
+      return {
+        name: row.table_name,
+        sizeBytes: Number.isNaN(sizeNumber ?? NaN) ? undefined : sizeNumber
+      };
+    });
   }
 
   async fetchTableRows(schema: string, table: string, limit = 100): Promise<QueryResultSet> {
@@ -66,6 +95,127 @@ export class PostgresClient {
   async runQuery(sql: string): Promise<QueryResultSet> {
     const result = await this.query(sql);
     return createResultSet(result);
+  }
+
+  async getDatabaseSize(): Promise<number> {
+    const result = await this.query<{ size: string }>(
+      `select pg_database_size(current_database()) as size`
+    );
+    return parseInt(result.rows[0]?.size ?? "0", 10);
+  }
+
+  async getObjectCounts(schema: string): Promise<ObjectCounts> {
+    const tablesResult = await this.query<{ count: string }>(
+      `select count(*) as count
+       from information_schema.tables
+       where table_schema = $1 and table_type = 'BASE TABLE'`,
+      [schema]
+    );
+
+    const viewsResult = await this.query<{ count: string }>(
+      `select count(*) as count
+       from information_schema.views
+       where table_schema = $1`,
+      [schema]
+    );
+
+    const matViewsResult = await this.query<{ count: string }>(
+      `select count(*) as count
+       from pg_matviews
+       where schemaname = $1`,
+      [schema]
+    );
+
+    const functionsResult = await this.query<{ count: string }>(
+      `select count(*) as count
+       from pg_proc p
+       join pg_namespace n on p.pronamespace = n.oid
+       where n.nspname = $1 and p.prokind = 'f'`,
+      [schema]
+    );
+
+    const proceduresResult = await this.query<{ count: string }>(
+      `select count(*) as count
+       from pg_proc p
+       join pg_namespace n on p.pronamespace = n.oid
+       where n.nspname = $1 and p.prokind = 'p'`,
+      [schema]
+    );
+
+    const typesResult = await this.query<{ count: string }>(
+      `select count(*) as count
+       from pg_type t
+       join pg_namespace n on t.typnamespace = n.oid
+       where n.nspname = $1 and t.typtype in ('c', 'e', 'd')`,
+      [schema]
+    );
+
+    return {
+      tables: parseInt(tablesResult.rows[0]?.count ?? "0", 10),
+      views: parseInt(viewsResult.rows[0]?.count ?? "0", 10),
+      materializedViews: parseInt(matViewsResult.rows[0]?.count ?? "0", 10),
+      functions: parseInt(functionsResult.rows[0]?.count ?? "0", 10),
+      procedures: parseInt(proceduresResult.rows[0]?.count ?? "0", 10),
+      types: parseInt(typesResult.rows[0]?.count ?? "0", 10)
+    };
+  }
+
+  async listViews(schema: string): Promise<string[]> {
+    const result = await this.query<{ table_name: string }>(
+      `select table_name
+       from information_schema.views
+       where table_schema = $1
+       order by table_name`,
+      [schema]
+    );
+    return result.rows.map((row) => row.table_name);
+  }
+
+  async listMaterializedViews(schema: string): Promise<string[]> {
+    const result = await this.query<{ matviewname: string }>(
+      `select matviewname
+       from pg_matviews
+       where schemaname = $1
+       order by matviewname`,
+      [schema]
+    );
+    return result.rows.map((row) => row.matviewname);
+  }
+
+  async listFunctions(schema: string): Promise<string[]> {
+    const result = await this.query<{ proname: string }>(
+      `select p.proname
+       from pg_proc p
+       join pg_namespace n on p.pronamespace = n.oid
+       where n.nspname = $1 and p.prokind = 'f'
+       order by p.proname`,
+      [schema]
+    );
+    return result.rows.map((row) => row.proname);
+  }
+
+  async listProcedures(schema: string): Promise<string[]> {
+    const result = await this.query<{ proname: string }>(
+      `select p.proname
+       from pg_proc p
+       join pg_namespace n on p.pronamespace = n.oid
+       where n.nspname = $1 and p.prokind = 'p'
+       order by p.proname`,
+      [schema]
+    );
+    return result.rows.map((row) => row.proname);
+  }
+
+  async listTypes(schema: string): Promise<string[]> {
+    const result = await this.query<{ typname: string }>(
+      `select t.typname
+       from pg_type t
+       join pg_namespace n on t.typnamespace = n.oid
+       where n.nspname = $1 and t.typtype in ('c', 'e', 'd')
+       order by t.typname`,
+      [schema]
+    );
+    return result.rows.map((row) => row.typname);
   }
 
   private async query<T extends QueryResultRow = QueryResultRow>(

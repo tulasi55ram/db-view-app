@@ -9,6 +9,7 @@ export function showConnectionConfigPanel(
   console.log("[dbview] showConnectionConfigPanel called with defaults:", defaults);
 
   return new Promise((resolve) => {
+    let resolved = false;
     const panel = vscode.window.createWebviewPanel(
       "dbviewConnectionConfig",
       "Configure Database Connection",
@@ -25,8 +26,10 @@ export function showConnectionConfigPanel(
 
     panel.webview.onDidReceiveMessage(
       async (message) => {
+        console.log("[dbview] Received message from webview:", message.command);
         switch (message.command) {
           case "submit":
+            console.log("[dbview] Submit command received, saveConnection:", message.saveConnection);
             const connection: ConnectionConfig = {
               name: message.name || undefined,
               host: message.host,
@@ -36,19 +39,31 @@ export function showConnectionConfigPanel(
               password: message.password || undefined
             };
 
+            console.log("[dbview] Connection object created:", { ...connection, password: connection.password ? "***" : undefined });
+
             if (message.saveConnection) {
+              console.log("[dbview] Saving connection...");
               if (connection.name?.trim()) {
+                console.log("[dbview] Saving with name:", connection.name);
                 await saveConnectionWithName(context, connection);
               } else {
+                console.log("[dbview] Saving without name (legacy mode)");
                 await saveConnection(context, connection);
               }
+              console.log("[dbview] Connection saved successfully");
+            } else {
+              console.log("[dbview] Not saving connection (temporary connection)");
             }
 
+            console.log("[dbview] Disposing panel and resolving with connection");
+            resolved = true;
             panel.dispose();
             resolve(connection);
             break;
 
           case "cancel":
+            console.log("[dbview] Cancel command received");
+            resolved = true;
             panel.dispose();
             resolve(null);
             break;
@@ -89,7 +104,12 @@ export function showConnectionConfigPanel(
     );
 
     panel.onDidDispose(() => {
-      resolve(null);
+      if (!resolved) {
+        console.log("[dbview] Panel disposed without explicit resolution, resolving with null");
+        resolve(null);
+      } else {
+        console.log("[dbview] Panel disposed after explicit resolution, ignoring");
+      }
     });
   });
 }
@@ -384,6 +404,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
             <div class="button-group">
                 <button type="button" id="testBtn" class="btn-test">Test Connection</button>
                 <button type="submit" class="btn-primary">Connect</button>
+                <button type="button" id="saveBtn" class="btn-primary">Save Connection</button>
                 <button type="button" id="cancelBtn" class="btn-secondary">Cancel</button>
             </div>
         </form>
@@ -395,11 +416,11 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
         const form = document.getElementById('connectionForm');
         const cancelBtn = document.getElementById('cancelBtn');
         const testBtn = document.getElementById('testBtn');
+        const saveBtn = document.getElementById('saveBtn');
         const statusMessage = document.getElementById('statusMessage');
-
-        form.addEventListener('submit', (e) => {
-            e.preventDefault();
-
+        
+        function submitForm({ forceSave = false } = {}) {
+            console.log('[dbview-webview] submitForm called, forceSave:', forceSave);
             const formData = new FormData(form);
             const name = formData.get('name');
             const host = formData.get('host');
@@ -407,20 +428,32 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
             const database = formData.get('database');
             const user = formData.get('user');
             const password = formData.get('password');
-            const saveConnection = formData.get('saveConnection') === 'on';
+            const saveConnectionCheckbox = formData.get('saveConnection') === 'on';
+            const saveConnection = forceSave ? true : saveConnectionCheckbox;
+
+            console.log('[dbview-webview] Form data:', { name, host, port, database, user, saveConnection });
 
             // Basic validation
             if (!host || !port || !database || !user) {
+                console.log('[dbview-webview] Validation failed: missing required fields');
                 showStatus('Please fill in all required fields', 'error');
+                return;
+            }
+
+            if (forceSave && !name?.trim()) {
+                console.log('[dbview-webview] Validation failed: name required for save');
+                showStatus('Enter a connection name to save it', 'error');
                 return;
             }
 
             const portNum = parseInt(port, 10);
             if (isNaN(portNum) || portNum <= 0 || portNum > 65535) {
+                console.log('[dbview-webview] Validation failed: invalid port');
                 showStatus('Please enter a valid port number (1-65535)', 'error');
                 return;
             }
 
+            console.log('[dbview-webview] Validation passed, posting message to extension');
             vscode.postMessage({
                 command: 'submit',
                 name,
@@ -431,7 +464,19 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
                 password,
                 saveConnection
             });
+            console.log('[dbview-webview] Message posted');
+        }
+
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            submitForm();
         });
+
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => {
+                submitForm({ forceSave: true });
+            });
+        }
 
         testBtn.addEventListener('click', () => {
             const formData = new FormData(form);
