@@ -44,6 +44,10 @@
         "title": "DBView: Open SQL Runner"
       },
       {
+        "command": "dbview.openERDiagram",
+        "title": "DBView: Open ER Diagram"
+      },
+      {
         "command": "dbview.refreshExplorer",
         "title": "Refresh",
         "icon": "$(refresh)"
@@ -67,6 +71,98 @@
         "command": "dbview.copyConnectionString",
         "title": "Copy Connection String",
         "icon": "$(copy)"
+      },
+      {
+        "command": "dbview.openDocs",
+        "title": "DBView: View Documentation"
+      },
+      {
+        "command": "dbview.copyTableName",
+        "title": "Copy Table Name",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbview.copySchemaTableName",
+        "title": "Copy Schema.Table Name",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbview.generateSelect",
+        "title": "Generate SELECT Query",
+        "icon": "$(code)"
+      },
+      {
+        "command": "dbview.openSqlRunner",
+        "title": "Open SQL Runner",
+        "icon": "$(play)"
+      },
+      {
+        "command": "dbview.openERDiagram",
+        "title": "Open ER Diagram",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "dbview.copyColumnName",
+        "title": "Copy Column Name",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbview.copyColumnDefinition",
+        "title": "Copy Column Definition",
+        "icon": "$(symbol-field)"
+      },
+      {
+        "command": "dbview.showDatabaseInfo",
+        "title": "Database Info",
+        "icon": "$(info)"
+      },
+      {
+        "command": "dbview.copyDatabaseName",
+        "title": "Copy Database Name",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbview.copyHostPort",
+        "title": "Copy Host:Port",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbview.disconnectConnection",
+        "title": "Disconnect",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "dbview.reconnectConnection",
+        "title": "Reconnect",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "dbview.newQueryFromConnection",
+        "title": "New SQL Query",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dbview.showRunningQueries",
+        "title": "Show Active Queries",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "dbview.showSecurityInfo",
+        "title": "Show Connection Security Info",
+        "category": "DBView",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "dbview.clearPassword",
+        "title": "Clear Saved Password",
+        "category": "DBView",
+        "icon": "$(key)"
+      },
+      {
+        "command": "dbview.clearAllPasswords",
+        "title": "Clear All Saved Passwords",
+        "category": "DBView",
+        "icon": "$(clear-all)"
       }
     ],
     "viewsContainers": {
@@ -89,20 +185,30 @@
     "viewsWelcome": [
       {
         "view": "dbview.dbExplorer",
-        "contents": "No database connection configured.\n[Configure Connection](command:dbview.configureConnection)"
+        "contents": "Welcome to DB View!\n\nConnect to a PostgreSQL database to browse schemas, tables, views, and more.\n\n[$(database) Add Connection](command:dbview.configureConnection)\n\n[$(book) View Documentation](command:dbview.openDocs)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "dbview.addConnection",
+          "command": "dbview.openSqlRunner",
           "when": "view == dbview.dbExplorer",
           "group": "navigation@1"
         },
         {
-          "command": "dbview.refreshExplorer",
+          "command": "dbview.openERDiagram",
+          "when": "view == dbview.dbExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbview.addConnection",
           "when": "view == dbview.dbExplorer",
           "group": "navigation@2"
+        },
+        {
+          "command": "dbview.refreshExplorer",
+          "when": "view == dbview.dbExplorer",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -112,14 +218,64 @@
           "group": "inline"
         },
         {
-          "command": "dbview.configureConnection",
+          "command": "dbview.newQueryFromConnection",
           "when": "view == dbview.dbExplorer && viewItem == connection",
-          "group": "navigation"
+          "group": "1_actions@1"
+        },
+        {
+          "command": "dbview.showDatabaseInfo",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "dbview.showRunningQueries",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "1_actions@3"
         },
         {
           "command": "dbview.refreshExplorer",
           "when": "view == dbview.dbExplorer && viewItem == connection",
-          "group": "navigation"
+          "group": "2_connection@1"
+        },
+        {
+          "command": "dbview.reconnectConnection",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "2_connection@2"
+        },
+        {
+          "command": "dbview.disconnectConnection",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "2_connection@3"
+        },
+        {
+          "command": "dbview.copyConnectionString",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "dbview.copyDatabaseName",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "3_copy@2"
+        },
+        {
+          "command": "dbview.copyHostPort",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "3_copy@3"
+        },
+        {
+          "command": "dbview.editConnection",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "4_manage@1"
+        },
+        {
+          "command": "dbview.configureConnection",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "4_manage@2"
+        },
+        {
+          "command": "dbview.deleteConnection",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "5_danger@1"
         },
         {
           "command": "dbview.refreshConnection",
@@ -127,19 +283,59 @@
           "group": "inline@1"
         },
         {
-          "command": "dbview.editConnection",
+          "command": "dbview.newQueryFromConnection",
           "when": "view == dbview.dbExplorer && viewItem == connection",
           "group": "inline@2"
         },
         {
-          "command": "dbview.copyConnectionString",
+          "command": "dbview.editConnection",
           "when": "view == dbview.dbExplorer && viewItem == connection",
           "group": "inline@3"
         },
         {
-          "command": "dbview.deleteConnection",
+          "command": "dbview.copyConnectionString",
           "when": "view == dbview.dbExplorer && viewItem == connection",
           "group": "inline@4"
+        },
+        {
+          "command": "dbview.deleteConnection",
+          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "group": "inline@5"
+        },
+        {
+          "command": "dbview.openTable",
+          "when": "view == dbview.dbExplorer && viewItem == table",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbview.copyTableName",
+          "when": "view == dbview.dbExplorer && viewItem == table",
+          "group": "copy@1"
+        },
+        {
+          "command": "dbview.copySchemaTableName",
+          "when": "view == dbview.dbExplorer && viewItem == table",
+          "group": "copy@2"
+        },
+        {
+          "command": "dbview.generateSelect",
+          "when": "view == dbview.dbExplorer && viewItem == table",
+          "group": "generate@1"
+        },
+        {
+          "command": "dbview.openTable",
+          "when": "view == dbview.dbExplorer && viewItem == table",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbview.copyColumnName",
+          "when": "view == dbview.dbExplorer && viewItem == column",
+          "group": "copy@1"
+        },
+        {
+          "command": "dbview.copyColumnDefinition",
+          "when": "view == dbview.dbExplorer && viewItem == column",
+          "group": "copy@2"
         }
       ]
     }
@@ -152,13 +348,14 @@
   },
   "dependencies": {
     "@dbview/core": "workspace:*",
-    "pg": "^8.11.5"
+    "pg": "^8.11.5",
+    "sql-formatter": "^15.6.12"
   },
   "devDependencies": {
     "@types/node": "^20.11.17",
+    "@types/pg": "^8.10.9",
     "@types/vscode": "^1.84.0",
     "typescript": "^5.4.2",
-    "vsce": "^2.15.0",
-    "@types/pg": "^8.10.9"
+    "vsce": "^2.15.0"
   }
 }

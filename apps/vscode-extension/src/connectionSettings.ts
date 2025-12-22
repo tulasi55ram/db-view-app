@@ -24,8 +24,16 @@ export async function getStoredConnection(
     return null;
   }
 
-  const password = await context.secrets.get(PASSWORD_KEY);
   const activeConnectionName = await getActiveConnectionName(context);
+
+  // Try to get password from named connection first, then fall back to legacy key
+  let password: string | undefined;
+  if (activeConnectionName) {
+    password = await context.secrets.get(`dbview.connection.${activeConnectionName}.password`);
+  }
+  if (!password) {
+    password = await context.secrets.get(PASSWORD_KEY);
+  }
 
   return {
     name: activeConnectionName,
@@ -274,4 +282,68 @@ export async function clearStoredConnection(context: vscode.ExtensionContext): P
   ]);
 
   await context.globalState.update(ACTIVE_CONNECTION_KEY, undefined);
+}
+
+// ============================================================================
+// Password Management Functions
+// ============================================================================
+
+/**
+ * Check if a password is saved for the current connection
+ */
+export async function isPasswordSaved(
+  context: vscode.ExtensionContext,
+  connectionName?: string
+): Promise<boolean> {
+  if (connectionName) {
+    const password = await context.secrets.get(`dbview.connection.${connectionName}.password`);
+    return password !== undefined;
+  }
+
+  const password = await context.secrets.get(PASSWORD_KEY);
+  return password !== undefined;
+}
+
+/**
+ * Clear password for a specific connection
+ */
+export async function clearPassword(
+  context: vscode.ExtensionContext,
+  connectionName?: string
+): Promise<void> {
+  if (connectionName) {
+    await context.secrets.delete(`dbview.connection.${connectionName}.password`);
+  } else {
+    await context.secrets.delete(PASSWORD_KEY);
+  }
+}
+
+/**
+ * Clear all saved passwords
+ */
+export async function clearAllPasswords(context: vscode.ExtensionContext): Promise<void> {
+  // Clear legacy password
+  await context.secrets.delete(PASSWORD_KEY);
+
+  // Clear all connection passwords
+  const connections = await getAllSavedConnections(context);
+  await Promise.all(
+    connections.map(conn =>
+      conn.name ? context.secrets.delete(`dbview.connection.${conn.name}.password`) : Promise.resolve()
+    )
+  );
+}
+
+/**
+ * Get connection security info
+ */
+export async function getConnectionSecurityInfo(
+  context: vscode.ExtensionContext,
+  connectionName?: string
+): Promise<{ passwordSaved: boolean; sslEnabled: boolean }> {
+  const passwordSaved = await isPasswordSaved(context, connectionName);
+  const connection = await getStoredConnection(context);
+  const sslEnabled = Boolean(connection?.ssl);
+
+  return { passwordSaved, sslEnabled };
 }

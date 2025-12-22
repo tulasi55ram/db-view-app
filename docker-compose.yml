@@ -1,0 +1,65 @@
+version: "3.8"
+
+services:
+  # PostgreSQL - Primary database (currently supported)
+  postgres:
+    image: postgres:16-alpine
+    container_name: dbview-postgres
+    environment:
+      POSTGRES_USER: dbview
+      POSTGRES_PASSWORD: dbview123
+      POSTGRES_DB: dbview_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbview -d dbview_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MySQL - Future support (Phase 7)
+  mysql:
+    image: mysql:8.0
+    container_name: dbview-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_USER: dbview
+      MYSQL_PASSWORD: dbview123
+      MYSQL_DATABASE: dbview_dev
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "dbview", "-pdbview123"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB - Future support (Phase 7)
+  mongodb:
+    image: mongo:7.0
+    container_name: dbview-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: dbview
+      MONGO_INITDB_ROOT_PASSWORD: dbview123
+      MONGO_INITDB_DATABASE: dbview_dev
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongodb/init.js:/docker-entrypoint-initdb.d/init.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  mysql_data:
+  mongodb_data:

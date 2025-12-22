@@ -16,7 +16,18 @@ type ObjectTypeContainerNode = {
   objectType: "tables" | "views" | "materializedViews" | "functions" | "procedures" | "types";
   count: number;
 };
-type TableNode = { type: "table"; sizeBytes?: number } & TableIdentifier;
+type TableNode = { type: "table"; sizeBytes?: number; rowCount?: number } & TableIdentifier;
+type ColumnNode = {
+  type: "column";
+  schema: string;
+  table: string;
+  name: string;
+  dataType: string;
+  isNullable: boolean;
+  isPrimaryKey: boolean;
+  isForeignKey: boolean;
+  foreignKeyRef: string | null;
+};
 type ViewNode = { type: "view"; schema: string; name: string };
 type MaterializedViewNode = { type: "materializedView"; schema: string; name: string };
 type FunctionNode = { type: "function"; schema: string; name: string };
@@ -29,6 +40,7 @@ type NodeData =
   | SchemaNode
   | ObjectTypeContainerNode
   | TableNode
+  | ColumnNode
   | ViewNode
   | MaterializedViewNode
   | FunctionNode
@@ -103,7 +115,20 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.connectionError = errorMessage;
-        vscode.window.showErrorMessage(`dbview: Failed to connect - ${errorMessage}`);
+
+        // Provide helpful message for authentication errors
+        if (errorMessage.includes("SASL") || errorMessage.includes("password")) {
+          vscode.window.showErrorMessage(
+            "dbview: Authentication failed. Please reconfigure your connection with the correct password.",
+            "Configure Connection"
+          ).then(selection => {
+            if (selection === "Configure Connection") {
+              vscode.commands.executeCommand("dbview.configureConnection");
+            }
+          });
+        } else {
+          vscode.window.showErrorMessage(`dbview: Failed to connect - ${errorMessage}`);
+        }
         console.error("[dbview] Connection error:", error);
         return [];
       }
@@ -152,7 +177,7 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
             const tables = await this.client.listTables(schema);
             return tables.map((table) =>
               new SchemaTreeItem(
-                { type: "table", schema, table: table.name, sizeBytes: table.sizeBytes },
+                { type: "table", schema, table: table.name, sizeBytes: table.sizeBytes, rowCount: table.rowCount },
                 this.connection
               )
             );
@@ -186,6 +211,35 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       }
     }
 
+    // Handle table expansion to show columns
+    if (isTableNode(element.node)) {
+      const { schema, table } = element.node;
+      try {
+        const columns = await this.client.listColumns(schema, table);
+        return columns.map((col) =>
+          new SchemaTreeItem(
+            {
+              type: "column",
+              schema,
+              table,
+              name: col.name,
+              dataType: col.dataType,
+              isNullable: col.isNullable,
+              isPrimaryKey: col.isPrimaryKey,
+              isForeignKey: col.isForeignKey,
+              foreignKeyRef: col.foreignKeyRef
+            },
+            this.connection
+          )
+        );
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`dbview: Failed to list columns for "${schema}.${table}" - ${errorMessage}`);
+        console.error(`[dbview] Error listing columns for ${schema}.${table}:`, error);
+        return [];
+      }
+    }
+
     return [];
   }
 }
@@ -201,12 +255,27 @@ export class SchemaTreeItem extends vscode.TreeItem {
     this.connectionInfo = connectionInfo ?? null;
 
     this.contextValue = node.type;
-    this.iconPath = new vscode.ThemeIcon(getIcon(node));
+    this.iconPath = new vscode.ThemeIcon(getIcon(node), getIconColor(node));
 
     if (isTableNode(node)) {
       const sizeLabel = typeof node.sizeBytes === "number" ? formatBytes(node.sizeBytes) : undefined;
-      this.description = node.schema;
-      this.tooltip = `${node.schema}.${node.table}${sizeLabel ? ` · ${sizeLabel}` : ""}`;
+      const rowLabel = typeof node.rowCount === "number" ? formatRowCount(node.rowCount) : undefined;
+      // Show row count and size in description
+      const descParts: string[] = [];
+      if (rowLabel) descParts.push(rowLabel);
+      if (sizeLabel) descParts.push(sizeLabel);
+      this.description = descParts.join(" · ");
+
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**${node.schema}.${node.table}**\n\n`);
+      this.tooltip.appendMarkdown(`📁 Schema: \`${node.schema}\`\n\n`);
+      if (rowLabel) {
+        this.tooltip.appendMarkdown(`📊 Rows: ~${node.rowCount?.toLocaleString()}\n\n`);
+      }
+      if (sizeLabel) {
+        this.tooltip.appendMarkdown(`💾 Size: ${sizeLabel}\n\n`);
+      }
+      this.tooltip.appendMarkdown(`_Click to view data, expand to see columns_`);
       this.command = {
         command: "dbview.openTable",
         title: "Open Table",
@@ -214,19 +283,114 @@ export class SchemaTreeItem extends vscode.TreeItem {
       };
     }
 
-    if (isViewNode(node) || isMaterializedViewNode(node) || isFunctionNode(node) || isProcedureNode(node) || isTypeNode(node)) {
+    if (isColumnNode(node)) {
+      // Build description showing type and constraints
+      const constraints: string[] = [];
+      if (node.isPrimaryKey) constraints.push("PK");
+      if (node.isForeignKey) constraints.push("FK");
+      if (!node.isNullable) constraints.push("NOT NULL");
+
+      this.description = node.dataType + (constraints.length > 0 ? ` [${constraints.join(", ")}]` : "");
+
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**${node.name}**\n\n`);
+      this.tooltip.appendMarkdown(`📋 Type: \`${node.dataType}\`\n\n`);
+      if (node.isPrimaryKey) {
+        this.tooltip.appendMarkdown(`🔑 Primary Key\n\n`);
+      }
+      if (node.isForeignKey && node.foreignKeyRef) {
+        this.tooltip.appendMarkdown(`🔗 Foreign Key → \`${node.foreignKeyRef}\`\n\n`);
+      }
+      this.tooltip.appendMarkdown(`${node.isNullable ? "✓ Nullable" : "✗ NOT NULL"}`);
+    }
+
+    if (isViewNode(node)) {
       this.description = node.schema;
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**${node.schema}.${node.name}**\n\n`);
+      this.tooltip.appendMarkdown(`👁️ View\n\n`);
+      this.tooltip.appendMarkdown(`_A stored query that can be treated as a virtual table_`);
+    }
+
+    if (isMaterializedViewNode(node)) {
+      this.description = node.schema;
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**${node.schema}.${node.name}**\n\n`);
+      this.tooltip.appendMarkdown(`📊 Materialized View\n\n`);
+      this.tooltip.appendMarkdown(`_A view with cached results for faster queries_`);
+    }
+
+    if (isFunctionNode(node)) {
+      this.description = node.schema;
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**${node.schema}.${node.name}**\n\n`);
+      this.tooltip.appendMarkdown(`⚡ Function\n\n`);
+      this.tooltip.appendMarkdown(`_A reusable SQL function_`);
+    }
+
+    if (isProcedureNode(node)) {
+      this.description = node.schema;
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**${node.schema}.${node.name}**\n\n`);
+      this.tooltip.appendMarkdown(`🔧 Stored Procedure\n\n`);
+      this.tooltip.appendMarkdown(`_A stored procedure that can be called_`);
+    }
+
+    if (isTypeNode(node)) {
+      this.description = node.schema;
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**${node.schema}.${node.name}**\n\n`);
+      this.tooltip.appendMarkdown(`📦 Custom Type\n\n`);
+      this.tooltip.appendMarkdown(`_A user-defined data type_`);
+    }
+
+    if (isSchemaNode(node)) {
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**Schema: ${node.schema}**\n\n`);
+      this.tooltip.appendMarkdown(`_Expand to see database objects_`);
+    }
+
+    if (isSchemasContainerNode(node)) {
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**${node.count} schemas found**\n\n`);
+      this.tooltip.appendMarkdown(`_Expand to browse schemas_`);
+    }
+
+    if (isObjectTypeContainerNode(node)) {
+      const typeDescriptions: Record<typeof node.objectType, string> = {
+        tables: "Store your data in structured rows and columns",
+        views: "Virtual tables based on SQL queries",
+        materializedViews: "Cached query results for faster access",
+        functions: "Reusable SQL functions",
+        procedures: "Stored procedures for complex operations",
+        types: "Custom data types"
+      };
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**${node.count} ${node.objectType}**\n\n`);
+      this.tooltip.appendMarkdown(`_${typeDescriptions[node.objectType]}_`);
     }
 
     if (isConnectionNode(node) && connectionInfo) {
-      // Only show description if we don't have size info (size is already in label)
-      if (!node.sizeInBytes) {
-        this.description = `${connectionInfo.host}:${connectionInfo.port}/${connectionInfo.database}`;
+      const hostInfo = `${connectionInfo.host}:${connectionInfo.port}`;
+      this.description = node.sizeInBytes ? formatBytes(node.sizeInBytes) : hostInfo;
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**${connectionInfo.name || connectionInfo.database}**\n\n`);
+      this.tooltip.appendMarkdown(`🖥️ Host: \`${hostInfo}\`\n\n`);
+      this.tooltip.appendMarkdown(`📀 Database: \`${connectionInfo.database}\`\n\n`);
+      this.tooltip.appendMarkdown(`👤 User: \`${connectionInfo.user}\`\n\n`);
+      if (node.sizeInBytes) {
+        this.tooltip.appendMarkdown(`💾 Size: ${formatBytes(node.sizeInBytes)}\n\n`);
       }
+      this.tooltip.appendMarkdown(`---\n\n`);
+      this.tooltip.appendMarkdown(`_Right-click for more options_`);
     }
 
     if (isWelcomeNode(node)) {
-      this.description = "Click to configure your database connection";
+      this.description = "Click to add a connection";
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**Get Started**\n\n`);
+      this.tooltip.appendMarkdown(`Click to configure your first database connection.\n\n`);
+      this.tooltip.appendMarkdown(`Supported: PostgreSQL`);
       this.command = {
         command: "dbview.configureConnection",
         title: "Configure Connection"
@@ -264,8 +428,10 @@ function getLabel(node: NodeData, connectionInfo?: ConnectionConfig | null): str
     return `${labels[node.objectType]} (${node.count})`;
   }
   if (isTableNode(node)) {
-    const sizeLabel = typeof node.sizeBytes === "number" ? ` (${formatBytes(node.sizeBytes)})` : "";
-    return `${node.table}${sizeLabel}`;
+    return node.table;
+  }
+  if (isColumnNode(node)) {
+    return node.name;
   }
   if (isViewNode(node)) {
     return node.name;
@@ -293,6 +459,14 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
+function formatRowCount(count: number): string {
+  if (count === 0) return "0 rows";
+  if (count === 1) return "1 row";
+  if (count < 1000) return `${count} rows`;
+  if (count < 1000000) return `${(count / 1000).toFixed(1)}K rows`;
+  return `${(count / 1000000).toFixed(1)}M rows`;
+}
+
 function getCollapsibleState(node: NodeData): vscode.TreeItemCollapsibleState {
   if (isConnectionNode(node)) {
     return vscode.TreeItemCollapsibleState.Expanded;
@@ -308,6 +482,10 @@ function getCollapsibleState(node: NodeData): vscode.TreeItemCollapsibleState {
     return node.count > 0
       ? vscode.TreeItemCollapsibleState.Collapsed
       : vscode.TreeItemCollapsibleState.None;
+  }
+  if (isTableNode(node)) {
+    // Tables can be expanded to show columns
+    return vscode.TreeItemCollapsibleState.Collapsed;
   }
   return vscode.TreeItemCollapsibleState.None;
 }
@@ -328,10 +506,10 @@ function getIcon(node: NodeData): string {
   if (isObjectTypeContainerNode(node)) {
     const icons: Record<typeof node.objectType, string> = {
       tables: "table",
-      views: "preview",
+      views: "eye",
       materializedViews: "layers",
       functions: "symbol-method",
-      procedures: "bracket",
+      procedures: "terminal",
       types: "symbol-class"
     };
     return icons[node.objectType];
@@ -339,8 +517,13 @@ function getIcon(node: NodeData): string {
   if (isTableNode(node)) {
     return "table";
   }
+  if (isColumnNode(node)) {
+    if (node.isPrimaryKey) return "key";
+    if (node.isForeignKey) return "references";
+    return "symbol-field";
+  }
   if (isViewNode(node)) {
-    return "preview";
+    return "eye";
   }
   if (isMaterializedViewNode(node)) {
     return "layers";
@@ -349,12 +532,62 @@ function getIcon(node: NodeData): string {
     return "symbol-method";
   }
   if (isProcedureNode(node)) {
-    return "bracket";
+    return "terminal";
   }
   if (isTypeNode(node)) {
     return "symbol-class";
   }
   return "file";
+}
+
+function getIconColor(node: NodeData): vscode.ThemeColor | undefined {
+  if (isWelcomeNode(node)) {
+    return new vscode.ThemeColor("charts.blue");
+  }
+  if (isConnectionNode(node)) {
+    return new vscode.ThemeColor("charts.green");
+  }
+  if (isSchemasContainerNode(node)) {
+    return new vscode.ThemeColor("charts.yellow");
+  }
+  if (isSchemaNode(node)) {
+    return new vscode.ThemeColor("charts.purple");
+  }
+  if (isObjectTypeContainerNode(node)) {
+    const colors: Record<typeof node.objectType, string> = {
+      tables: "charts.blue",
+      views: "charts.orange",
+      materializedViews: "charts.purple",
+      functions: "charts.yellow",
+      procedures: "charts.red",
+      types: "charts.green"
+    };
+    return new vscode.ThemeColor(colors[node.objectType]);
+  }
+  if (isTableNode(node)) {
+    return new vscode.ThemeColor("charts.blue");
+  }
+  if (isColumnNode(node)) {
+    if (node.isPrimaryKey) return new vscode.ThemeColor("charts.yellow");
+    if (node.isForeignKey) return new vscode.ThemeColor("charts.purple");
+    return undefined; // Default color for regular columns
+  }
+  if (isViewNode(node)) {
+    return new vscode.ThemeColor("charts.orange");
+  }
+  if (isMaterializedViewNode(node)) {
+    return new vscode.ThemeColor("charts.purple");
+  }
+  if (isFunctionNode(node)) {
+    return new vscode.ThemeColor("charts.yellow");
+  }
+  if (isProcedureNode(node)) {
+    return new vscode.ThemeColor("charts.red");
+  }
+  if (isTypeNode(node)) {
+    return new vscode.ThemeColor("charts.green");
+  }
+  return undefined;
 }
 
 function isWelcomeNode(node: NodeData): node is WelcomeNode {
@@ -379,6 +612,10 @@ function isObjectTypeContainerNode(node: NodeData): node is ObjectTypeContainerN
 
 function isTableNode(node: NodeData): node is TableNode {
   return node.type === "table";
+}
+
+function isColumnNode(node: NodeData): node is ColumnNode {
+  return node.type === "column";
 }
 
 function isViewNode(node: NodeData): node is ViewNode {

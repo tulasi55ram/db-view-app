@@ -30,13 +30,37 @@ export function showConnectionConfigPanel(
         switch (message.command) {
           case "submit":
             console.log("[dbview] Submit command received, saveConnection:", message.saveConnection);
+
+            // If editing an existing connection and password is empty, retrieve from secrets
+            let password = message.password || undefined;
+            if (!password) {
+              // Try named connection key first
+              if (defaults?.name) {
+                console.log("[dbview] No password provided, checking secrets for existing connection:", defaults.name);
+                const storedPassword = await context.secrets.get(`dbview.connection.${defaults.name}.password`);
+                if (storedPassword) {
+                  console.log("[dbview] Found stored password for connection");
+                  password = storedPassword;
+                }
+              }
+              // Fall back to legacy key if still no password
+              if (!password) {
+                console.log("[dbview] Checking legacy password key");
+                const legacyPassword = await context.secrets.get("dbview.connection.password");
+                if (legacyPassword) {
+                  console.log("[dbview] Found password from legacy key");
+                  password = legacyPassword;
+                }
+              }
+            }
+
             const connection: ConnectionConfig = {
               name: message.name || undefined,
               host: message.host,
               port: parseInt(message.port, 10),
               database: message.database,
               user: message.user,
-              password: message.password || undefined
+              password
             };
 
             console.log("[dbview] Connection object created:", { ...connection, password: connection.password ? "***" : undefined });
@@ -71,13 +95,36 @@ export function showConnectionConfigPanel(
           case "testConnection":
             console.log("[dbview] Testing connection...");
             try {
+              // If editing an existing connection and password is empty, retrieve from secrets
+              let testPassword = message.password || undefined;
+              if (!testPassword) {
+                // Try named connection key first
+                if (defaults?.name) {
+                  console.log("[dbview] No password provided for test, checking secrets for existing connection:", defaults.name);
+                  const storedPassword = await context.secrets.get(`dbview.connection.${defaults.name}.password`);
+                  if (storedPassword) {
+                    console.log("[dbview] Found stored password for connection test");
+                    testPassword = storedPassword;
+                  }
+                }
+                // Fall back to legacy key if still no password
+                if (!testPassword) {
+                  console.log("[dbview] Checking legacy password key for test");
+                  const legacyPassword = await context.secrets.get("dbview.connection.password");
+                  if (legacyPassword) {
+                    console.log("[dbview] Found password from legacy key for test");
+                    testPassword = legacyPassword;
+                  }
+                }
+              }
+
               const testConfig: ConnectionConfig = {
                 name: message.name || undefined,
                 host: message.host,
                 port: parseInt(message.port, 10),
                 database: message.database,
                 user: message.user,
-                password: message.password || undefined
+                password: testPassword
               };
 
               const { testConnection } = await import("./postgresClient");
@@ -153,8 +200,9 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
   const defaultPort = defaults?.port ?? 5432;
   const defaultDatabase = escapeHtml(defaults?.database ?? "postgres");
   const defaultUser = escapeHtml(defaults?.user ?? "postgres");
+  const isEditing = Boolean(defaults?.name);
 
-  console.log("[dbview] Webview defaults:", { defaultName, defaultHost, defaultPort, defaultDatabase, defaultUser });
+  console.log("[dbview] Webview defaults:", { defaultName, defaultHost, defaultPort, defaultDatabase, defaultUser, isEditing });
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -390,8 +438,8 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
 
             <div class="form-group">
                 <label for="password">Password</label>
-                <input type="password" id="password" name="password" autocomplete="off">
-                <div class="help-text">Leave empty if no password is required</div>
+                <input type="password" id="password" name="password" autocomplete="off" placeholder="${isEditing ? "Leave empty to keep existing password" : ""}">
+                <div class="help-text">${isEditing ? "Leave empty to keep the existing password, or enter a new one to change it" : "Leave empty if no password is required"}</div>
             </div>
 
             <div class="checkbox-group">
