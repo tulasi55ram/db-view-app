@@ -608,31 +608,87 @@ LIMIT limit;
 - Higher boost values ensure snippets appear at top when relevant
 - Implementation: [sqlSnippets.ts](packages/ui/src/utils/sqlSnippets.ts)
 
-### 5.3 Data Export/Import
+### 5.3 Data Export/Import ✅ Complete
+
+**Implementation:** Native VSCode File System APIs with custom formatters/parsers
 
 **Features:**
-- [ ] Export to CSV, JSON, SQL (INSERT statements)
-- [ ] Import from CSV, JSON
-- [ ] Backup table (pg_dump)
-- [ ] Copy as INSERT statements
+- [x] Export to CSV with optional headers
+- [x] Export to JSON (formatted, human-readable)
+- [x] Export to SQL (INSERT statements with proper escaping)
+- [x] Import from CSV (with/without headers)
+- [x] Import from JSON (array of objects)
+- [x] Copy selected rows as INSERT statements to clipboard
+- [x] Export options: selected rows only, include headers (CSV)
+- [x] Column validation on import
+- [x] Partial import handling (continues on row errors)
+- [x] VSCode save dialog integration
+- [x] Toast notifications for success/error feedback
+- [ ] Backup table (pg_dump) - Deferred to Phase 5.3.1
+
+**Export Formats:**
+
+| Format | Extension | Features |
+|--------|-----------|----------|
+| CSV | `.csv` | Headers optional, proper quoting/escaping |
+| JSON | `.json` | Pretty-printed array of objects |
+| SQL | `.sql` | PostgreSQL INSERT statements |
 
 **UI Components:**
+
+**Export Dialog:**
 ```
 ┌─────────────────────────────────────────┐
-│  Export Data                         ✕  │
+│  📥 Export Data                      ✕  │
 ├─────────────────────────────────────────┤
-│  Format:  ○ CSV  ● JSON  ○ SQL          │
+│  Format:                                │
+│  ┌──────┐ ┌──────┐ ┌──────┐            │
+│  │ CSV  │ │ JSON │ │ SQL  │            │
+│  └──────┘ └──────┘ └──────┘            │
 │                                         │
 │  Options:                               │
-│  ☑ Include headers                      │
+│  ☑ Include headers (CSV only)           │
 │  ☐ Selected rows only (3 selected)      │
 │  ☐ Apply current filters                │
-│                                         │
-│  Encoding: [UTF-8____________] ▼        │
 │                                         │
 │            [Cancel]  [📥 Export]        │
 └─────────────────────────────────────────┘
 ```
+
+**Import Dialog:**
+```
+┌─────────────────────────────────────────┐
+│  📤 Import Data                      ✕  │
+├─────────────────────────────────────────┤
+│  File Format:                           │
+│  ┌──────────┐ ┌──────────┐             │
+│  │   CSV    │ │   JSON   │             │
+│  └──────────┘ └──────────┘             │
+│                                         │
+│  ☑ First row contains headers           │
+│                                         │
+│  Select File:                           │
+│  [Choose File...] data.csv              │
+│                                         │
+│  ⚠️ Important:                          │
+│  • Column names must match table        │
+│  • Data types must be compatible        │
+│                                         │
+│            [Cancel]  [📤 Import]        │
+└─────────────────────────────────────────┘
+```
+
+**Toolbar Integration:**
+```
+[Export] [Import] [Copy SQL] (when rows selected)
+```
+
+**Technical Details:**
+- Export formatters: [exportFormatters.ts](packages/ui/src/utils/exportFormatters.ts)
+- Import parsers: [importParsers.ts](packages/ui/src/utils/importParsers.ts)
+- Export dialog: [ExportDataDialog.tsx](packages/ui/src/components/ExportDataDialog.tsx)
+- Import dialog: [ImportDataDialog.tsx](packages/ui/src/components/ImportDataDialog.tsx)
+- Backend handlers: [mainPanel.ts](apps/vscode-extension/src/mainPanel.ts) (EXPORT_DATA, IMPORT_DATA, COPY_TO_CLIPBOARD)
 
 ---
 
