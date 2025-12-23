@@ -37,14 +37,17 @@ The comprehensive database setup includes:
 ✅ **Constraints**: PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK, DEFAULT, NOT NULL
 
 ### **Sample Data**
-- **20 users** with diverse roles and statuses
-- **20 products** across multiple categories
-- **10 employees** across 7 departments
-- **5 projects** with tasks and time entries
+- **1020+ users** in PostgreSQL (20 named + 1000 generated)
+- **1020+ users** in MySQL (20 named + 1000 generated via stored procedure)
+- **1020+ users** in SQL Server (20 named + 1000 generated via T-SQL loop)
+- **1020+ users** in SQLite (20 named + 1000 generated via shell script)
+- **20 products** across multiple categories (PostgreSQL only)
+- **10 employees** across 7 departments (PostgreSQL only)
+- **5 projects** with tasks and time entries (PostgreSQL only)
 - **6 orders** with order items
-- **5 invoices** with payments
-- **10 analytics events**
-- **5 blog posts** with comments
+- **5 invoices** with payments (PostgreSQL only)
+- **10 analytics events** (PostgreSQL only)
+- **5 blog posts** with comments (PostgreSQL only)
 - And much more...
 
 ### **Views**
@@ -69,20 +72,32 @@ The comprehensive database setup includes:
 
 ## 🚀 Quick Start
 
-### Start PostgreSQL Database
+### Start Databases
 ```bash
 # Start only PostgreSQL
 docker-compose up -d postgres
 
-# Or start all databases (PostgreSQL, MySQL, MongoDB)
+# Start PostgreSQL, MySQL, and SQL Server
+docker-compose up -d postgres mysql sqlserver
+
+# Start all databases (PostgreSQL, MySQL, SQL Server, SQLite, MongoDB)
 docker-compose up -d
 ```
 
-### Connect to PostgreSQL
+### Connect to Databases
 ```bash
-# Using psql CLI
+# PostgreSQL using psql
 psql -h localhost -U dbview -d dbview_dev
 # Password: dbview123
+
+# MySQL using mysql client
+docker exec -it dbview-mysql mysql -u dbview -pdbview123 dbview_dev
+
+# SQL Server using sqlcmd
+docker exec -it dbview-sqlserver /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "DbView123!" -d dbview_dev
+
+# SQLite using sqlite3
+sqlite3 ./docker/sqlite/dbview.db
 
 # Or use the DBView VS Code extension!
 ```
@@ -96,12 +111,27 @@ psql -h localhost -U dbview -d dbview_dev
 - **Username**: dbview
 - **Password**: dbview123
 
-#### MySQL (Future - Phase 7)
+#### MySQL (Phase 7 - Ready)
 - **Host**: localhost
 - **Port**: 3306
 - **Database**: dbview_dev
 - **Username**: dbview
 - **Password**: dbview123
+- **Root Password**: root123
+- **Features**: 1020+ users, products, orders tables
+
+#### SQL Server (Phase 7 - Ready)
+- **Host**: localhost
+- **Port**: 1433
+- **Database**: dbview_dev
+- **Username**: sa
+- **Password**: DbView123!
+- **Features**: 1020+ users, products, orders tables, T-SQL support
+
+#### SQLite (Phase 7 - Ready)
+- **Database File**: ./docker/sqlite/dbview.db
+- **Features**: 1020+ users, products, orders tables, file-based access
+- **Note**: No username/password required
 
 #### MongoDB (Future - Phase 7)
 - **Host**: localhost
@@ -469,8 +499,53 @@ docker-compose down -v
 docker-compose up -d postgres
 ```
 
+## 🔗 Connection Strings
+
+### PostgreSQL
+```
+postgresql://dbview:dbview123@localhost:5432/dbview_dev
+```
+
+### MySQL
+```
+mysql://dbview:dbview123@localhost:3306/dbview_dev
+```
+
+### SQL Server
+```
+Server=localhost,1433;Database=dbview_dev;User Id=sa;Password=DbView123!;TrustServerCertificate=True
+```
+
+### SQLite
+```
+./docker/sqlite/dbview.db
+```
+
+## 📝 Quick Verification
+
+After starting the databases, verify they have 1020+ users:
+
+```bash
+# PostgreSQL
+docker exec -it dbview-postgres psql -U dbview -d dbview_dev -c "SELECT COUNT(*) FROM public.users;"
+
+# MySQL
+docker exec -it dbview-mysql mysql -u dbview -pdbview123 dbview_dev -e "SELECT COUNT(*) FROM users;"
+
+# SQL Server (after initialization completes, ~60 seconds)
+docker exec -it dbview-sqlserver /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "DbView123!" -d dbview_dev -Q "SELECT COUNT(*) FROM users;"
+
+# SQLite
+sqlite3 ./docker/sqlite/dbview.db "SELECT COUNT(*) FROM users;"
+```
+
+All should return **1020** users!
+
 ## 📚 Resources
 
 - [PostgreSQL Documentation](https://www.postgresql.org/docs/)
+- [MySQL Documentation](https://dev.mysql.com/doc/)
+- [SQL Server Documentation](https://learn.microsoft.com/en-us/sql/sql-server/)
+- [SQLite Documentation](https://www.sqlite.org/docs.html)
 - [Docker Compose Documentation](https://docs.docker.com/compose/)
 - [DBView Extension Repository](https://github.com/yourusername/db-view-app)

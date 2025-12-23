@@ -1,12 +1,13 @@
 import * as vscode from "vscode";
-import type { ConnectionConfig } from "@dbview/core";
+import type { ConnectionConfig, DatabaseConnectionConfig, DatabaseType } from "@dbview/core";
 import { saveConnectionWithName } from "./connectionSettings";
+import { DatabaseAdapterFactory } from "./adapters/DatabaseAdapterFactory";
 
 export function showConnectionConfigPanel(
   context: vscode.ExtensionContext,
-  defaults?: Partial<ConnectionConfig>,
+  defaults?: Partial<ConnectionConfig | DatabaseConnectionConfig>,
   options?: { skipSave?: boolean }
-): Promise<ConnectionConfig | null> {
+): Promise<DatabaseConnectionConfig | null> {
   console.log("[dbview] showConnectionConfigPanel called with defaults:", defaults);
   const skipSave = options?.skipSave ?? false;
 
@@ -56,7 +57,9 @@ export function showConnectionConfigPanel(
               }
             }
 
-            const connection: ConnectionConfig = {
+            const dbType = message.dbType || 'postgres';
+            const connection: DatabaseConnectionConfig = {
+              dbType,
               name: message.name || undefined,
               host: message.host,
               port: parseInt(message.port, 10),
@@ -64,9 +67,13 @@ export function showConnectionConfigPanel(
               user: message.user,
               password,
               readOnly: message.readOnly || false
-            };
+            } as DatabaseConnectionConfig;
 
-            console.log("[dbview] Connection object created:", { ...connection, password: connection.password ? "***" : undefined });
+            const logConnection = { ...connection } as any;
+            if ('password' in logConnection && logConnection.password) {
+              logConnection.password = "***";
+            }
+            console.log("[dbview] Connection object created:", logConnection);
 
             if (skipSave) {
               console.log("[dbview] Skipping save (caller will handle it)");
@@ -123,7 +130,9 @@ export function showConnectionConfigPanel(
                 }
               }
 
-              const testConfig: ConnectionConfig = {
+              const dbType = message.dbType || 'postgres';
+              const testConfig: DatabaseConnectionConfig = {
+                dbType,
                 name: message.name || undefined,
                 host: message.host,
                 port: parseInt(message.port, 10),
@@ -131,15 +140,17 @@ export function showConnectionConfigPanel(
                 user: message.user,
                 password: testPassword,
                 readOnly: message.readOnly || false
-              };
+              } as DatabaseConnectionConfig;
 
-              const { testConnection } = await import("./postgresClient");
-              const result = await testConnection(testConfig);
+              // Create adapter and test connection
+              const adapter = DatabaseAdapterFactory.create(testConfig);
+              await adapter.connect();
+              await adapter.disconnect();
 
               panel.webview.postMessage({
                 command: "testResult",
-                success: result.success,
-                message: result.message
+                success: true,
+                message: `Successfully connected to ${dbType.toUpperCase()} database`
               });
             } catch (error) {
               console.error("[dbview] Connection test error:", error);
@@ -178,9 +189,10 @@ function escapeHtml(text: string): string {
 
 async function saveConnection(
   context: vscode.ExtensionContext,
-  connection: ConnectionConfig
+  connection: DatabaseConnectionConfig
 ): Promise<void> {
   const STATE_KEYS = {
+    dbType: "dbview.connection.dbType",
     host: "dbview.connection.host",
     port: "dbview.connection.port",
     user: "dbview.connection.user",
@@ -189,27 +201,47 @@ async function saveConnection(
 
   const PASSWORD_KEY = "dbview.connection.password";
 
-  await Promise.all([
-    context.globalState.update(STATE_KEYS.host, connection.host),
-    context.globalState.update(STATE_KEYS.port, connection.port),
-    context.globalState.update(STATE_KEYS.user, connection.user),
-    context.globalState.update(STATE_KEYS.database, connection.database),
-    connection.password
-      ? context.secrets.store(PASSWORD_KEY, connection.password)
-      : context.secrets.delete(PASSWORD_KEY)
-  ]);
+  const updates: Promise<void>[] = [
+    Promise.resolve(context.globalState.update(STATE_KEYS.dbType, connection.dbType))
+  ];
+
+  // Only save host/port/user/database if they exist (not for SQLite)
+  if ('host' in connection && connection.host) {
+    updates.push(Promise.resolve(context.globalState.update(STATE_KEYS.host, connection.host)));
+  }
+  if ('port' in connection && connection.port) {
+    updates.push(Promise.resolve(context.globalState.update(STATE_KEYS.port, connection.port)));
+  }
+  if ('user' in connection && connection.user) {
+    updates.push(Promise.resolve(context.globalState.update(STATE_KEYS.user, connection.user)));
+  }
+  if ('database' in connection && connection.database) {
+    updates.push(Promise.resolve(context.globalState.update(STATE_KEYS.database, connection.database)));
+  }
+
+  // Save password if it exists
+  if ('password' in connection && connection.password) {
+    updates.push(Promise.resolve(context.secrets.store(PASSWORD_KEY, connection.password)));
+  } else {
+    updates.push(Promise.resolve(context.secrets.delete(PASSWORD_KEY)));
+  }
+
+  await Promise.all(updates);
 }
 
-function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
+function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnectionConfig>): string {
+  // Determine the database type
+  const dbType = (defaults && 'dbType' in defaults) ? defaults.dbType : 'postgres';
+
   const defaultName = escapeHtml(defaults?.name ?? "");
-  const defaultHost = escapeHtml(defaults?.host ?? "localhost");
-  const defaultPort = defaults?.port ?? 5432;
-  const defaultDatabase = escapeHtml(defaults?.database ?? "postgres");
-  const defaultUser = escapeHtml(defaults?.user ?? "postgres");
+  const defaultHost = escapeHtml((defaults && 'host' in defaults ? defaults.host : undefined) ?? "localhost");
+  const defaultPort = (defaults && 'port' in defaults ? defaults.port : undefined) ?? (dbType === 'mysql' ? 3306 : 5432);
+  const defaultDatabase = escapeHtml((defaults && 'database' in defaults ? defaults.database : undefined) ?? (dbType === 'mysql' ? 'mysql' : 'postgres'));
+  const defaultUser = escapeHtml((defaults && 'user' in defaults ? defaults.user : undefined) ?? (dbType === 'mysql' ? 'root' : 'postgres'));
   const defaultReadOnly = defaults?.readOnly ?? false;
   const isEditing = Boolean(defaults?.name);
 
-  console.log("[dbview] Webview defaults:", { defaultName, defaultHost, defaultPort, defaultDatabase, defaultUser, defaultReadOnly, isEditing });
+  console.log("[dbview] Webview defaults:", { dbType, defaultName, defaultHost, defaultPort, defaultDatabase, defaultUser, defaultReadOnly, isEditing });
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -264,7 +296,8 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
 
         input[type="text"],
         input[type="number"],
-        input[type="password"] {
+        input[type="password"],
+        select {
             width: 100%;
             padding: 8px 10px;
             background-color: var(--vscode-input-background);
@@ -275,7 +308,16 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
             outline: none;
         }
 
-        input:focus {
+        select {
+            cursor: pointer;
+        }
+
+        select option:disabled {
+            color: var(--vscode-disabledForeground);
+        }
+
+        input:focus,
+        select:focus {
             border-color: var(--vscode-focusBorder);
         }
 
@@ -416,9 +458,21 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
 <body>
     <div class="container">
         <h1>Configure Database Connection</h1>
-        <p class="subtitle">Enter your PostgreSQL database connection details</p>
+        <p class="subtitle" id="subtitle">Enter your database connection details</p>
 
         <form id="connectionForm">
+            <div class="form-group">
+                <label for="dbType">Database Type</label>
+                <select id="dbType" name="dbType">
+                    <option value="postgres" ${dbType === 'postgres' ? 'selected' : ''}>🐘 PostgreSQL</option>
+                    <option value="mysql" ${dbType === 'mysql' ? 'selected' : ''}>🐬 MySQL</option>
+                    <option value="sqlserver" disabled>🗄️ SQL Server (Coming Soon)</option>
+                    <option value="sqlite" disabled>🪶 SQLite (Coming Soon)</option>
+                    <option value="mongodb" disabled>🍃 MongoDB (Coming Soon)</option>
+                </select>
+                <div class="help-text">Select the type of database you want to connect to</div>
+            </div>
+
             <div class="form-group">
                 <label for="name">Connection Name (optional)</label>
                 <input type="text" id="name" name="name" value="${defaultName}" placeholder="e.g., Production, Development">
@@ -492,8 +546,96 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
         const productionWarning = document.getElementById('productionWarning');
         const nameInput = document.getElementById('name');
         const hostInput = document.getElementById('host');
+        const portInput = document.getElementById('port');
         const databaseInput = document.getElementById('database');
+        const userInput = document.getElementById('user');
         const readOnlyCheckbox = document.getElementById('readOnly');
+        const dbTypeSelect = document.getElementById('dbType');
+        const subtitleElement = document.getElementById('subtitle');
+
+        // Database type configuration
+        const dbTypeConfig = {
+            postgres: {
+                name: 'PostgreSQL',
+                defaultPort: 5432,
+                defaultDatabase: 'postgres',
+                defaultUser: 'postgres',
+                subtitle: 'Enter your PostgreSQL database connection details'
+            },
+            mysql: {
+                name: 'MySQL',
+                defaultPort: 3306,
+                defaultDatabase: 'mysql',
+                defaultUser: 'root',
+                subtitle: 'Enter your MySQL database connection details'
+            },
+            sqlserver: {
+                name: 'SQL Server',
+                defaultPort: 1433,
+                defaultDatabase: 'master',
+                defaultUser: 'sa',
+                subtitle: 'Enter your SQL Server database connection details'
+            },
+            sqlite: {
+                name: 'SQLite',
+                defaultPort: 0,
+                defaultDatabase: '',
+                defaultUser: '',
+                subtitle: 'Select your SQLite database file'
+            },
+            mongodb: {
+                name: 'MongoDB',
+                defaultPort: 27017,
+                defaultDatabase: 'admin',
+                defaultUser: '',
+                subtitle: 'Enter your MongoDB connection details'
+            }
+        };
+
+        // Handle database type change
+        function handleDatabaseTypeChange() {
+            const selectedType = dbTypeSelect.value;
+            const config = dbTypeConfig[selectedType];
+
+            if (!config) return;
+
+            // Update subtitle
+            if (subtitleElement) {
+                subtitleElement.textContent = config.subtitle;
+            }
+
+            // Update default port if current port matches another database's default
+            const currentPort = parseInt(portInput.value, 10);
+            const isDefaultPort = Object.values(dbTypeConfig).some(c => c.defaultPort === currentPort);
+
+            if (!currentPort || isDefaultPort) {
+                portInput.value = config.defaultPort;
+            }
+
+            // Update database and user placeholders if they are empty or contain defaults
+            const currentDatabase = databaseInput.value.toLowerCase();
+            const isDefaultDatabase = Object.values(dbTypeConfig).some(c =>
+                c.defaultDatabase && currentDatabase === c.defaultDatabase.toLowerCase()
+            );
+
+            if (!currentDatabase || isDefaultDatabase) {
+                databaseInput.value = config.defaultDatabase;
+            }
+
+            const currentUser = userInput.value.toLowerCase();
+            const isDefaultUser = Object.values(dbTypeConfig).some(c =>
+                c.defaultUser && currentUser === c.defaultUser.toLowerCase()
+            );
+
+            if (!currentUser || isDefaultUser) {
+                userInput.value = config.defaultUser;
+            }
+
+            console.log('[dbview-webview] Database type changed to:', selectedType);
+        }
+
+        // Listen for database type changes
+        dbTypeSelect.addEventListener('change', handleDatabaseTypeChange);
 
         // Production database detection
         const productionKeywords = ['prod', 'production', 'live', 'main', 'master'];
@@ -527,6 +669,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
         function submitForm({ forceSave = false } = {}) {
             console.log('[dbview-webview] submitForm called, forceSave:', forceSave);
             const formData = new FormData(form);
+            const dbType = formData.get('dbType') || 'postgres';
             const name = formData.get('name');
             const host = formData.get('host');
             const port = formData.get('port');
@@ -537,7 +680,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
             const saveConnection = forceSave ? true : saveConnectionCheckbox;
             const readOnly = formData.get('readOnly') === 'on';
 
-            console.log('[dbview-webview] Form data:', { name, host, port, database, user, saveConnection });
+            console.log('[dbview-webview] Form data:', { dbType, name, host, port, database, user, saveConnection });
 
             // Basic validation
             if (!host || !port || !database || !user) {
@@ -562,6 +705,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
             console.log('[dbview-webview] Validation passed, posting message to extension');
             vscode.postMessage({
                 command: 'submit',
+                dbType,
                 name,
                 host,
                 port,
@@ -587,6 +731,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
 
         testBtn.addEventListener('click', () => {
             const formData = new FormData(form);
+            const dbType = formData.get('dbType') || 'postgres';
             const name = formData.get('name');
             const host = formData.get('host');
             const port = formData.get('port');
@@ -612,6 +757,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
 
             vscode.postMessage({
                 command: 'testConnection',
+                dbType,
                 name,
                 host,
                 port,

@@ -6,16 +6,134 @@ export interface SSLConfig {
   cert?: string; // Client certificate
 }
 
-export interface ConnectionConfig {
+// ============================================
+// Phase 7: Multi-Database Support
+// ============================================
+
+/**
+ * Database types supported by dbview
+ */
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlserver' | 'sqlite' | 'mongodb';
+
+/**
+ * PostgreSQL connection configuration
+ */
+export interface PostgresConnectionConfig {
+  dbType: 'postgres';
   name?: string;
   host: string;
   port: number;
   user: string;
   password?: string;
   database: string;
-  ssl?: boolean | SSLConfig; // Support both simple boolean and advanced config
-  savePassword?: boolean; // Track if password should be saved
-  readOnly?: boolean; // Block all write operations (INSERT, UPDATE, DELETE)
+  ssl?: boolean | SSLConfig;
+  savePassword?: boolean;
+  readOnly?: boolean;
+}
+
+/**
+ * MySQL connection configuration
+ */
+export interface MySQLConnectionConfig {
+  dbType: 'mysql';
+  name?: string;
+  host: string;
+  port: number;
+  user: string;
+  password?: string;
+  database: string;
+  ssl?: boolean | SSLConfig;
+  charset?: string; // Default: 'utf8mb4'
+  savePassword?: boolean;
+  readOnly?: boolean;
+}
+
+/**
+ * SQL Server connection configuration
+ */
+export interface SQLServerConnectionConfig {
+  dbType: 'sqlserver';
+  name?: string;
+  host: string;
+  port?: number; // Optional, defaults to 1433
+  user?: string;
+  password?: string;
+  database: string;
+  instanceName?: string; // e.g., 'SQLEXPRESS'
+  authenticationType: 'sql' | 'windows';
+  domain?: string; // For Windows Authentication
+  trustServerCertificate?: boolean;
+  encrypt?: boolean; // Default: true
+  savePassword?: boolean;
+  readOnly?: boolean;
+}
+
+/**
+ * SQLite connection configuration
+ */
+export interface SQLiteConnectionConfig {
+  dbType: 'sqlite';
+  name?: string;
+  filePath: string; // Path to .db/.sqlite/.sqlite3 file
+  mode?: 'readonly' | 'readwrite' | 'create';
+  readOnly?: boolean;
+}
+
+/**
+ * MongoDB connection configuration
+ */
+export interface MongoDBConnectionConfig {
+  dbType: 'mongodb';
+  name?: string;
+  connectionString?: string; // Full MongoDB URI
+  // OR individual fields:
+  host?: string;
+  port?: number;
+  user?: string;
+  password?: string;
+  database: string;
+  authDatabase?: string; // Default: 'admin'
+  replicaSet?: string;
+  ssl?: boolean;
+  savePassword?: boolean;
+  readOnly?: boolean;
+}
+
+/**
+ * Discriminated union of all database connection configurations
+ */
+export type DatabaseConnectionConfig =
+  | PostgresConnectionConfig
+  | MySQLConnectionConfig
+  | SQLServerConnectionConfig
+  | SQLiteConnectionConfig
+  | MongoDBConnectionConfig;
+
+/**
+ * Legacy ConnectionConfig for backward compatibility
+ * @deprecated Use DatabaseConnectionConfig instead
+ */
+export type ConnectionConfig = PostgresConnectionConfig | (Omit<PostgresConnectionConfig, 'dbType'> & { dbType?: 'postgres' });
+
+// Type guards
+export function isPostgresConfig(config: DatabaseConnectionConfig): config is PostgresConnectionConfig {
+  return config.dbType === 'postgres';
+}
+
+export function isMySQLConfig(config: DatabaseConnectionConfig): config is MySQLConnectionConfig {
+  return config.dbType === 'mysql';
+}
+
+export function isSQLServerConfig(config: DatabaseConnectionConfig): config is SQLServerConnectionConfig {
+  return config.dbType === 'sqlserver';
+}
+
+export function isSQLiteConfig(config: DatabaseConnectionConfig): config is SQLiteConnectionConfig {
+  return config.dbType === 'sqlite';
+}
+
+export function isMongoDBConfig(config: DatabaseConnectionConfig): config is MongoDBConnectionConfig {
+  return config.dbType === 'mongodb';
 }
 
 export interface Column {

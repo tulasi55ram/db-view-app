@@ -59,7 +59,43 @@ services:
       timeout: 5s
       retries: 5
 
+  # SQL Server - Future support (Phase 7)
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: dbview-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "DbView123!"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+      - ./docker/sqlserver:/docker-entrypoint-initdb.d:ro
+    entrypoint: /bin/bash /docker-entrypoint-initdb.d/entrypoint.sh
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P DbView123! -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # SQLite - File-based database container
+  sqlite:
+    image: nouchka/sqlite3:latest
+    container_name: dbview-sqlite
+    volumes:
+      - ./docker/sqlite:/data
+      - ./docker/sqlite/init.sh:/docker-entrypoint.sh:ro
+    command: /bin/sh -c "if [ -f /docker-entrypoint.sh ]; then sh /docker-entrypoint.sh; fi && tail -f /dev/null"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/data/dbview.db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   mysql_data:
   mongodb_data:
+  sqlserver_data:

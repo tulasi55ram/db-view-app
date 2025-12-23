@@ -45,10 +45,18 @@ export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
   const viewRef = useRef<EditorView | null>(null);
   const readOnlyCompartment = useRef(new Compartment());
 
+  // Store autocomplete data in a ref so it can be updated without recreating the editor
+  const autocompleteDataRef = useRef({ schemas, tables, columns });
+
+  // Update the ref whenever autocomplete data changes
+  useEffect(() => {
+    autocompleteDataRef.current = { schemas, tables, columns };
+  }, [schemas, tables, columns]);
+
   useEffect(() => {
     if (!editorRef.current) return;
 
-    // Custom SQL autocomplete
+    // Custom SQL autocomplete - uses ref to always get latest data
     const sqlAutocomplete = (context: CompletionContext) => {
       const word = context.matchBefore(/\w*/);
       if (!word || (word.from === word.to && !context.explicit)) {
@@ -56,6 +64,9 @@ export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
       }
 
       const suggestions: any[] = [];
+
+      // Get latest autocomplete data from ref
+      const { schemas, tables, columns } = autocompleteDataRef.current;
 
       // SQL Snippets (match by prefix for discoverability)
       const snippetMatches = SQL_SNIPPETS.filter(snippet =>

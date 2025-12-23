@@ -1,19 +1,76 @@
 import * as vscode from "vscode";
-import { PostgresClient, type QueryResultSet } from "./postgresClient";
+import type { DatabaseAdapter, QueryResultSet } from "./adapters/DatabaseAdapter";
 import type { TableIdentifier } from "./schemaExplorer";
 import { getWebviewHtml, getThemeKind, type ThemeKind } from "./webviewHost";
-import type { SavedView, FilterCondition, ColumnMetadata, TableInfo, ConnectionConfig } from "@dbview/core";
+import type { SavedView, FilterCondition, ColumnMetadata, TableInfo, DatabaseConnectionConfig } from "@dbview/core";
 import { format as formatSql } from "sql-formatter";
+
+// Get autocomplete performance limits from VS Code settings
+// Users can adjust these in Settings > Extensions > DBView if they have large databases
+// TODO: Implement lazy loading - fetch column metadata on-demand when user types specific table names
+function getAutocompleteLimits() {
+  const config = vscode.workspace.getConfiguration('dbview.autocomplete');
+  return {
+    MAX_TABLES_PER_SCHEMA: config.get<number>('maxTablesPerSchema', 200),
+    MAX_TOTAL_TABLES: config.get<number>('maxTotalTables', 500),
+    MAX_TABLES_WITH_METADATA: config.get<number>('maxTablesWithMetadata', 100)
+  };
+}
 
 // Multi-panel support: one panel per connection
 const panels: Map<string, vscode.WebviewPanel> = new Map();
-const panelConfigs: Map<string, ConnectionConfig> = new Map();
-const panelClients: Map<string, PostgresClient> = new Map();
+const panelConfigs: Map<string, DatabaseConnectionConfig> = new Map();
+const panelClients: Map<string, DatabaseAdapter> = new Map();
+const panelReadyState: Map<string, boolean> = new Map();
+const panelMessageQueues: Map<string, any[]> = new Map();
 
-// Helper to get connection key - must match schemaExplorer.ts implementation
-function getConnectionKey(config: ConnectionConfig): string {
-  // Include user to ensure uniqueness even for same host:port/database with different users
-  return config.name || `${config.user}@${config.host}:${config.port}/${config.database}`;
+// Helper to get connection key - MUST match schemaExplorer.ts implementation exactly
+function getConnectionKey(config: DatabaseConnectionConfig): string {
+  const dbType = config.dbType || 'postgres';
+
+  // Use name if available, with dbType prefix
+  if (config.name) {
+    return `${dbType}:${config.name}`;
+  }
+
+  // Generate key based on database type
+  switch (dbType) {
+    case 'sqlite':
+      return `${dbType}:${(config as any).filePath}`;
+    case 'mongodb':
+      if ((config as any).connectionString) {
+        return `${dbType}:${(config as any).connectionString}`;
+      }
+      return `${dbType}:${(config as any).user || 'anonymous'}@${(config as any).host || 'localhost'}:${(config as any).port || 27017}/${(config as any).database}`;
+    case 'postgres':
+    case 'mysql':
+    case 'sqlserver':
+      // All have host:port/database structure
+      return `${dbType}:${(config as any).user}@${(config as any).host}:${(config as any).port}/${(config as any).database}`;
+    default:
+      // Future database types - use JSON as fallback
+      return `${dbType}:${JSON.stringify(config)}`;
+  }
+}
+
+// Helper to send messages to webview (queues if not ready)
+function sendMessageToPanel(connectionKey: string, message: any): void {
+  const panel = panels.get(connectionKey);
+  if (!panel) {
+    console.warn(`[dbview-mainPanel] Cannot send message - panel not found for key: ${connectionKey}`);
+    return;
+  }
+
+  const isReady = panelReadyState.get(connectionKey);
+  if (isReady) {
+    console.log(`[dbview-mainPanel] Sending message immediately: ${message.type}`);
+    panel.webview.postMessage(message);
+  } else {
+    console.log(`[dbview-mainPanel] Queuing message (webview not ready): ${message.type}`);
+    const queue = panelMessageQueues.get(connectionKey) || [];
+    queue.push(message);
+    panelMessageQueues.set(connectionKey, queue);
+  }
 }
 
 export function updateWebviewTheme(): void {
@@ -27,39 +84,50 @@ export function updateWebviewTheme(): void {
   }
 }
 
-function isReadOnlyMode(config: ConnectionConfig): boolean {
+function isReadOnlyMode(config: DatabaseConnectionConfig): boolean {
   return config.readOnly === true;
 }
 
-export function getPanelForConnection(connectionName: string): vscode.WebviewPanel | undefined {
-  return panels.get(connectionName);
+/**
+ * Get existing panel for a connection config
+ * @param config Connection configuration (must match what was used to create panel)
+ * @returns The webview panel if it exists, undefined otherwise
+ */
+export function getPanelForConnection(config: DatabaseConnectionConfig): vscode.WebviewPanel | undefined {
+  const key = getConnectionKey(config);
+  return panels.get(key);
 }
 
 export function getAllPanels(): vscode.WebviewPanel[] {
   return Array.from(panels.values());
 }
 
-export function closePanelForConnection(connectionName: string): void {
-  const panel = panels.get(connectionName);
+/**
+ * Close existing panel for a connection config
+ * @param config Connection configuration (must match what was used to create panel)
+ */
+export function closePanelForConnection(config: DatabaseConnectionConfig): void {
+  const key = getConnectionKey(config);
+  const panel = panels.get(key);
   if (panel) {
-    panel.dispose(); // This will trigger disposal handler
+    panel.dispose(); // This will trigger disposal handler which cleans up maps
   }
 }
 
 export async function getOrCreateMainPanel(
   context: vscode.ExtensionContext,
-  client: PostgresClient,
-  connectionConfig: ConnectionConfig
+  client: DatabaseAdapter,
+  connectionConfig: DatabaseConnectionConfig
 ): Promise<vscode.WebviewPanel> {
   const key = getConnectionKey(connectionConfig);
 
+  const connInfo: any = { name: connectionConfig.name, dbType: connectionConfig.dbType };
+  if ('database' in connectionConfig) connInfo.database = connectionConfig.database;
+  if ('host' in connectionConfig) connInfo.host = connectionConfig.host;
+  if ('port' in connectionConfig) connInfo.port = connectionConfig.port;
+
   console.log(`[dbview-mainPanel] ========== getOrCreateMainPanel CALLED ==========`);
-  console.log(`[dbview-mainPanel] Connection config:`, JSON.stringify({
-    name: connectionConfig.name,
-    database: connectionConfig.database,
-    host: connectionConfig.host,
-    port: connectionConfig.port
-  }, null, 2));
+  console.log(`[dbview-mainPanel] Connection config:`, JSON.stringify(connInfo, null, 2));
   console.log(`[dbview-mainPanel] Generated connection key: "${key}"`);
   console.log(`[dbview-mainPanel] Current panels map size: ${panels.size}`);
   console.log(`[dbview-mainPanel] Current panel keys:`, Array.from(panels.keys()));
@@ -74,7 +142,7 @@ export async function getOrCreateMainPanel(
   }
 
   // Create new panel for this connection
-  const connectionTitle = connectionConfig.name || connectionConfig.database;
+  const connectionTitle = connectionConfig.name || ('database' in connectionConfig ? connectionConfig.database : connectionConfig.dbType);
   console.log(`[dbview-mainPanel] ✓ CREATING NEW panel for connection: ${connectionTitle} (key: "${key}")`);
   vscode.window.showInformationMessage(`[DEBUG] Creating NEW panel: ${connectionTitle}`);
 
@@ -94,6 +162,8 @@ export async function getOrCreateMainPanel(
   panels.set(key, panel);
   panelConfigs.set(key, connectionConfig);
   panelClients.set(key, client);
+  panelReadyState.set(key, false);
+  panelMessageQueues.set(key, []);
 
   console.log(`[dbview-mainPanel] ✓ Panel stored in map with key: "${key}"`);
   console.log(`[dbview-mainPanel] ✓ Panels map now has ${panels.size} panel(s)`);
@@ -104,6 +174,8 @@ export async function getOrCreateMainPanel(
     panels.delete(key);
     panelConfigs.delete(key);
     panelClients.delete(key);
+    panelReadyState.delete(key);
+    panelMessageQueues.delete(key);
     console.log(`[dbview-mainPanel] Panels map now has ${panels.size} panel(s)`);
   });
 
@@ -116,6 +188,20 @@ export async function getOrCreateMainPanel(
       const tabId = message.tabId;
 
       switch (message?.type) {
+        case "WEBVIEW_READY": {
+          console.log(`[dbview-mainPanel] Webview ready for connection: ${key}`);
+          panelReadyState.set(key, true);
+
+          // Flush any queued messages
+          const queue = panelMessageQueues.get(key) || [];
+          console.log(`[dbview-mainPanel] Flushing ${queue.length} queued message(s)`);
+          for (const queuedMsg of queue) {
+            panel.webview.postMessage(queuedMsg);
+          }
+          panelMessageQueues.set(key, []);
+          break;
+        }
+
         case "LOAD_TABLE_ROWS": {
           const schema = message.schema;
           const table = message.table;
@@ -186,11 +272,18 @@ export async function getOrCreateMainPanel(
         case "GET_TABLE_INDEXES": {
           console.log(`[dbview] Getting indexes for ${message.schema}.${message.table}`);
           try {
-            const indexes = await client.getIndexes(message.schema, message.table);
-            panel.webview.postMessage({
-              type: "TABLE_INDEXES",
-              indexes
-            });
+            if (client.getIndexes) {
+              const indexes = await client.getIndexes(message.schema, message.table);
+              panel.webview.postMessage({
+                type: "TABLE_INDEXES",
+                indexes
+              });
+            } else {
+              panel.webview.postMessage({
+                type: "TABLE_INDEXES",
+                indexes: []
+              });
+            }
           } catch (error) {
             console.error(`[dbview] Error getting table indexes:`, error);
             panel.webview.postMessage({
@@ -222,11 +315,18 @@ export async function getOrCreateMainPanel(
         case "GET_ER_DIAGRAM": {
           console.log(`[dbview] Getting ER diagram for schemas:`, message.schemas);
           try {
-            const diagramData = await client.getERDiagramData(message.schemas);
-            panel.webview.postMessage({
-              type: "ER_DIAGRAM_DATA",
-              diagramData
-            });
+            if (client.getERDiagramData) {
+              const diagramData = await client.getERDiagramData(message.schemas);
+              panel.webview.postMessage({
+                type: "ER_DIAGRAM_DATA",
+                diagramData
+              });
+            } else {
+              panel.webview.postMessage({
+                type: "ER_DIAGRAM_DATA",
+                diagramData: { tables: [], relationships: [] }
+              });
+            }
           } catch (error) {
             console.error(`[dbview] Error getting ER diagram:`, error);
             panel.webview.postMessage({
@@ -510,34 +610,55 @@ export async function getOrCreateMainPanel(
 
         case "GET_AUTOCOMPLETE_DATA": {
           console.log(`[dbview] Getting autocomplete data`);
+          const startTime = Date.now();
           try {
-            // Fetch all schemas
-            const schemasResult = await client.runQuery(`
-              SELECT schema_name
-              FROM information_schema.schemata
-              WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-              ORDER BY schema_name
-            `);
-            const schemas = schemasResult.rows.map((row: any) => row.schema_name as string);
+            // Get configurable limits from VS Code settings
+            const limits = getAutocompleteLimits();
+            console.log(`[dbview] Using limits: ${limits.MAX_TOTAL_TABLES} tables max, ${limits.MAX_TABLES_WITH_METADATA} with metadata`);
 
-            // Fetch all tables with row counts
-            const tablesResult = await client.runQuery(`
-              SELECT
-                schemaname as schema,
-                tablename as name,
-                n_live_tup as row_count
-              FROM pg_stat_user_tables
-              ORDER BY schemaname, tablename
-            `);
-            const tables: TableInfo[] = tablesResult.rows.map((row: any) => ({
-              schema: row.schema,
-              name: row.name,
-              rowCount: row.row_count ? parseInt(row.row_count) : undefined
-            }));
+            // Fetch all schemas using database-agnostic adapter method
+            const schemas = await client.listSchemas();
+            console.log(`[dbview] Fetched ${schemas.length} schemas in ${Date.now() - startTime}ms`);
 
-            // Fetch columns for all tables (this may be expensive for large DBs)
+            // Fetch tables with row counts for each schema (with limits for performance)
+            const allTables: TableInfo[] = [];
+
+            for (const schema of schemas) {
+              if (allTables.length >= limits.MAX_TOTAL_TABLES) {
+                console.log(`[dbview] Reached max table limit (${limits.MAX_TOTAL_TABLES}), skipping remaining schemas`);
+                break;
+              }
+
+              try {
+                const schemaTables = await client.listTables(schema);
+                // Limit tables per schema
+                const limitedTables = schemaTables.slice(0, limits.MAX_TABLES_PER_SCHEMA);
+
+                if (schemaTables.length > limitedTables.length) {
+                  console.log(`[dbview] Schema '${schema}' has ${schemaTables.length} tables, limiting to ${limitedTables.length}`);
+                }
+
+                // Add schema to each table info
+                allTables.push(...limitedTables.map(t => ({
+                  ...t,
+                  schema: schema
+                })));
+              } catch (error) {
+                console.error(`[dbview] Error fetching tables for schema ${schema}:`, error);
+              }
+            }
+            console.log(`[dbview] Fetched ${allTables.length} tables in ${Date.now() - startTime}ms`);
+
+            // Fetch column metadata only for a limited subset of tables to prevent performance issues
+            // Full metadata fetching on large DBs can take minutes and freeze the UI
             const columns: Record<string, ColumnMetadata[]> = {};
-            for (const table of tables) {
+            const tablesToFetchMetadata = allTables.slice(0, limits.MAX_TABLES_WITH_METADATA);
+
+            if (allTables.length > limits.MAX_TABLES_WITH_METADATA) {
+              console.log(`[dbview] Limiting column metadata fetch to ${limits.MAX_TABLES_WITH_METADATA} of ${allTables.length} tables`);
+            }
+
+            for (const table of tablesToFetchMetadata) {
               const key = `${table.schema}.${table.name}`;
               try {
                 columns[key] = await client.getTableMetadata(table.schema, table.name);
@@ -547,10 +668,13 @@ export async function getOrCreateMainPanel(
               }
             }
 
+            const totalTime = Date.now() - startTime;
+            console.log(`[dbview] Autocomplete data ready: ${schemas.length} schemas, ${allTables.length} tables, ${Object.keys(columns).length} tables with column metadata (${totalTime}ms)`);
+
             panel.webview.postMessage({
               type: "AUTOCOMPLETE_DATA",
               schemas,
-              tables,
+              tables: allTables,
               columns
             });
           } catch (error) {
@@ -562,8 +686,11 @@ export async function getOrCreateMainPanel(
         case "FORMAT_SQL": {
           console.log(`[dbview] Formatting SQL for tab ${tabId}`);
           try {
+            // Determine SQL dialect based on database type
+            const sqlDialect = client.type === 'mysql' ? 'mysql' : 'postgresql';
+
             const formatted = formatSql(message.sql, {
-              language: 'postgresql',
+              language: sqlDialect,
               tabWidth: 2,
               keywordCase: 'upper',
               indentStyle: 'standard',
@@ -589,13 +716,29 @@ export async function getOrCreateMainPanel(
         case "EXPLAIN_QUERY": {
           console.log(`[dbview] Explaining query for tab ${tabId}`);
           try {
-            // Wrap user query in EXPLAIN ANALYZE
-            const explainSQL = `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${message.sql}`;
+            // Use database-specific EXPLAIN syntax
+            let explainSQL: string;
+            if (client.type === 'mysql') {
+              // MySQL uses simpler EXPLAIN syntax
+              explainSQL = `EXPLAIN FORMAT=JSON ${message.sql}`;
+            } else {
+              // PostgreSQL EXPLAIN with detailed options
+              explainSQL = `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${message.sql}`;
+            }
+
             const result = await client.runQuery(explainSQL);
 
-            // PostgreSQL returns EXPLAIN output in first row, first column
-            const explainOutput = result.rows[0]['QUERY PLAN'];
-            const plan = Array.isArray(explainOutput) ? explainOutput[0] : explainOutput;
+            // Extract the plan from the result (format varies by database)
+            let plan;
+            if (client.type === 'mysql') {
+              // MySQL returns JSON in 'EXPLAIN' column
+              const explainOutput = result.rows[0]['EXPLAIN'];
+              plan = typeof explainOutput === 'string' ? JSON.parse(explainOutput) : explainOutput;
+            } else {
+              // PostgreSQL returns EXPLAIN output in 'QUERY PLAN' column
+              const explainOutput = result.rows[0]['QUERY PLAN'];
+              plan = Array.isArray(explainOutput) ? explainOutput[0] : explainOutput;
+            }
 
             panel.webview.postMessage({
               type: "EXPLAIN_RESULT",
@@ -742,15 +885,16 @@ export async function getOrCreateMainPanel(
 
 export async function openTableInPanel(
   context: vscode.ExtensionContext,
-  client: PostgresClient,
-  connectionConfig: ConnectionConfig,
+  client: DatabaseAdapter,
+  connectionConfig: DatabaseConnectionConfig,
   target: TableIdentifier
 ): Promise<void> {
-  const panel = await getOrCreateMainPanel(context, client, connectionConfig);
-  const connectionName = connectionConfig.name || connectionConfig.database;
+  await getOrCreateMainPanel(context, client, connectionConfig);
+  const connectionName = connectionConfig.name || ('database' in connectionConfig ? connectionConfig.database : 'unknown');
+  const key = getConnectionKey(connectionConfig);
 
-  // Send message to open the table in a new tab
-  panel.webview.postMessage({
+  // Send message to open the table in a new tab (queues if webview not ready)
+  sendMessageToPanel(key, {
     type: "OPEN_TABLE",
     schema: target.schema,
     table: target.table,
@@ -761,14 +905,15 @@ export async function openTableInPanel(
 
 export async function openQueryInPanel(
   context: vscode.ExtensionContext,
-  client: PostgresClient,
-  connectionConfig: ConnectionConfig
+  client: DatabaseAdapter,
+  connectionConfig: DatabaseConnectionConfig
 ): Promise<void> {
-  const panel = await getOrCreateMainPanel(context, client, connectionConfig);
-  const connectionName = connectionConfig.name || connectionConfig.database;
+  await getOrCreateMainPanel(context, client, connectionConfig);
+  const connectionName = connectionConfig.name || ('database' in connectionConfig ? connectionConfig.database : 'unknown');
+  const key = getConnectionKey(connectionConfig);
 
-  // Send message to open a new query tab
-  panel.webview.postMessage({
+  // Send message to open a new query tab (queues if webview not ready)
+  sendMessageToPanel(key, {
     type: "OPEN_QUERY_TAB",
     connectionName
   });
@@ -776,31 +921,43 @@ export async function openQueryInPanel(
 
 export async function openERDiagramInPanel(
   context: vscode.ExtensionContext,
-  client: PostgresClient,
-  connectionConfig: ConnectionConfig,
+  client: DatabaseAdapter,
+  connectionConfig: DatabaseConnectionConfig,
   schemas?: string[]
 ): Promise<void> {
-  const panel = await getOrCreateMainPanel(context, client, connectionConfig);
+  await getOrCreateMainPanel(context, client, connectionConfig);
+  const key = getConnectionKey(connectionConfig);
 
-  // If no schemas provided, get all available schemas
+  // If no schemas provided, get all available schemas using database-agnostic method
   let schemasToVisualize = schemas;
   if (!schemasToVisualize) {
     try {
-      const result = await client.runQuery(`
-        SELECT schema_name
-        FROM information_schema.schemata
-        WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-        ORDER BY schema_name
-      `);
-      schemasToVisualize = result.rows.map((row: any) => row.schema_name);
+      schemasToVisualize = await client.listSchemas();
+      console.log(`[dbview] Fetched ${schemasToVisualize.length} schemas for ER diagram`);
     } catch (error) {
       console.error('[dbview] Error fetching schemas:', error);
-      schemasToVisualize = ['public']; // Fallback to public schema
+      // Fallback based on database type
+      const dbType = connectionConfig.dbType || 'postgres';
+      switch (dbType) {
+        case 'postgres':
+          schemasToVisualize = ['public'];
+          break;
+        case 'mysql':
+        case 'sqlserver':
+        case 'mongodb':
+          schemasToVisualize = ['database' in connectionConfig ? connectionConfig.database : 'default'];
+          break;
+        case 'sqlite':
+          schemasToVisualize = ['main'];
+          break;
+        default:
+          schemasToVisualize = ['default'];
+      }
     }
   }
 
-  // Send message to open ER diagram
-  panel.webview.postMessage({
+  // Send message to open ER diagram (queues if webview not ready)
+  sendMessageToPanel(key, {
     type: "OPEN_ER_DIAGRAM",
     schemas: schemasToVisualize
   });

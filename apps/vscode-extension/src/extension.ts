@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
-import type { ConnectionConfig } from "@dbview/core";
-import { PostgresClient } from "./postgresClient";
+import type { DatabaseConnectionConfig } from "@dbview/core";
+import type { DatabaseAdapter } from "./adapters/DatabaseAdapter";
+import { DatabaseAdapterFactory } from "./adapters/DatabaseAdapterFactory";
 import { SchemaExplorerProvider, SchemaTreeItem, type TableIdentifier } from "./schemaExplorer";
 import { openTableInPanel, openQueryInPanel, openERDiagramInPanel, updateWebviewTheme } from "./mainPanel";
 import {
@@ -21,40 +22,118 @@ import { showConnectionConfigPanel } from "./connectionConfigPanel";
 // Module-level reference for cleanup on deactivate
 let schemaExplorerInstance: SchemaExplorerProvider | null = null;
 
+/**
+ * Migrate existing connections to multi-database format
+ * Adds dbType: 'postgres' to legacy connections
+ */
+async function migrateConnectionsToMultiDB(context: vscode.ExtensionContext): Promise<void> {
+  const migrationVersion = context.globalState.get('dbview.migrationVersion');
+  if (migrationVersion === '2.0.0') {
+    return;
+  }
+
+  console.log("[dbview] Running multi-database migration...");
+
+  const connections = await getAllSavedConnections(context);
+  let migratedCount = 0;
+
+  for (const conn of connections) {
+    if (!('dbType' in conn)) {
+      // Add dbType: 'postgres' to legacy connections
+      const migratedConn: DatabaseConnectionConfig = {
+        ...(conn as any),
+        dbType: 'postgres' as const
+      } as DatabaseConnectionConfig;
+
+      if ((conn as any).name) {
+        await updateConnection(context, (conn as any).name, migratedConn);
+        migratedCount++;
+      }
+    }
+  }
+
+  await context.globalState.update('dbview.migrationVersion', '2.0.0');
+
+  if (migratedCount > 0) {
+    console.log(`[dbview] Migration complete: ${migratedCount} connection(s) updated for multi-database support`);
+  } else {
+    console.log("[dbview] Migration complete: No connections needed migration");
+  }
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   console.log("[dbview] Extension activating...");
 
-  let connection = await getStoredConnection(context);
-  console.log("[dbview] Stored connection:", connection ? `${connection.host}:${connection.port}/${connection.database}` : "none");
+  // Run migration for multi-database support
+  await migrateConnectionsToMultiDB(context);
 
-  let client = new PostgresClient(connection ?? undefined);
+  let connection = await getStoredConnection(context);
+  const connStr = connection && 'host' in connection && 'port' in connection && 'database' in connection
+    ? `${connection.host}:${connection.port}/${connection.database}`
+    : connection?.name || 'unknown';
+  console.log("[dbview] Stored connection:", connection ? connStr : "none");
+
+  // Create client using adapter factory
+  let client: DatabaseAdapter | undefined;
+  if (connection) {
+    const connectionConfig: DatabaseConnectionConfig = 'dbType' in connection
+      ? connection as DatabaseConnectionConfig
+      : { ...(connection as any), dbType: 'postgres' as const } as DatabaseConnectionConfig;
+    client = DatabaseAdapterFactory.create(connectionConfig);
+  }
+
   const schemaExplorer = new SchemaExplorerProvider(client, connection, context);
   schemaExplorerInstance = schemaExplorer; // Store for cleanup on deactivate
 
   // Start health check if there's an initial connection
-  if (connection) {
+  if (connection && client) {
     // Do an initial ping to set connection status
-    client.ping().then(isAlive => {
-      if (isAlive) {
+    client.ping().then((isAlive: boolean) => {
+      if (isAlive && client) {
         client.startHealthCheck();
         console.log("[dbview] Initial connection verified, health check started");
       } else {
         console.log("[dbview] Initial connection failed, will show status in sidebar");
       }
       // Force refresh after ping to update status indicator
-      console.log("[dbview] Refreshing tree after initial ping, status:", client.status);
+      console.log("[dbview] Refreshing tree after initial ping, status:", client?.status);
       schemaExplorer.refresh();
-    }).catch(err => {
+    }).catch((err: Error) => {
       console.error("[dbview] Initial ping failed:", err);
       schemaExplorer.refresh();
     });
   }
 
   // Helper to safely switch to a new client
-  async function switchClient(newConnection: ConnectionConfig | null): Promise<void> {
+  async function switchClient(newConnection: DatabaseConnectionConfig | null): Promise<void> {
     console.log("[dbview] Switching client, disconnecting old pool...");
-    await client.disconnect();
-    client = new PostgresClient(newConnection ?? undefined);
+    if (client) {
+      await client.disconnect();
+    }
+
+    if (newConnection) {
+      client = DatabaseAdapterFactory.create(newConnection);
+
+      // Connect to the database (required for MySQL and other non-pooled adapters)
+      try {
+        await client.connect();
+        console.log("[dbview] Client connected successfully");
+
+        // Start health check
+        const isAlive = await client.ping();
+        if (isAlive) {
+          client.startHealthCheck();
+          console.log("[dbview] Health check started");
+        }
+      } catch (error) {
+        console.error("[dbview] Failed to connect client:", error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`Failed to connect to database: ${errorMessage}`);
+      }
+    } else {
+      client = undefined;
+    }
+
     schemaExplorer.updateClient(client, newConnection);
     schemaExplorer.refresh();
     connection = newConnection;
@@ -113,8 +192,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
       // Handle both TableIdentifier (from tree item command) and SchemaTreeItem (from context menu)
       let selection: TableIdentifier;
-      let conn: ConnectionConfig | null = null;
-      let targetClient: PostgresClient | null = null;
+      let conn: DatabaseConnectionConfig | null = null;
+      let targetClient: DatabaseAdapter | undefined = undefined;
 
       if (target && 'node' in target) {
         // It's a SchemaTreeItem from context menu
@@ -125,7 +204,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           selection = { schema: treeItem.node.schema, table: treeItem.node.table };
           // Get connection from tree item
           conn = treeItem.connectionInfo ?? null;
-          console.log(`[dbview] openTable: Connection from tree item - Name: "${conn?.name}", Database: "${conn?.database}", Host: "${conn?.host}:${conn?.port}"`);
+          console.log(`[dbview] openTable: Connection from tree item - ${formatConnectionDisplay(conn || ({dbType: 'postgres'} as any))}`);
 
           // Show visual notification
           vscode.window.showInformationMessage(`Opening table from connection: ${conn?.name || 'unnamed'}`);
@@ -143,13 +222,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         selection = target as TableIdentifier;
         conn = connection;
         targetClient = client;
-        console.log(`[dbview] openTable: Using global connection - Name: "${conn?.name}", Database: "${conn?.database}"`);
+        console.log(`[dbview] openTable: Using global connection - ${conn ? formatConnectionDisplay(conn) : 'none'}`);
       } else {
         // No target provided, use default
         selection = { schema: "public", table: "users" };
         conn = connection;
         targetClient = client;
-        console.log(`[dbview] openTable: Using default connection - Name: "${conn?.name}", Database: "${conn?.database}"`);
+        console.log(`[dbview] openTable: Using default connection - ${conn ? formatConnectionDisplay(conn) : 'none'}`);
       }
 
       if (!conn || !targetClient) {
@@ -157,8 +236,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
 
-      const connKey = conn.name || `${conn.user}@${conn.host}:${conn.port}/${conn.database}`;
-      console.log(`[dbview] openTable: Opening ${selection.schema}.${selection.table} for connection "${conn.name || conn.database}"`);
+      const connKey = conn.name || formatConnectionDetailedDisplay(conn);
+      console.log(`[dbview] openTable: Opening ${selection.schema}.${selection.table} for connection "${formatConnectionDisplay(conn)}"`);
       console.log(`[dbview] openTable: Connection key will be: "${connKey}"`);
 
       await openTableInPanel(context, targetClient, conn, selection);
@@ -167,7 +246,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   const openSqlRunnerCommand = vscode.commands.registerCommand("dbview.openSqlRunner", () => {
-    if (!connection) {
+    if (!connection || !client) {
       vscode.window.showWarningMessage('No connection available');
       return;
     }
@@ -194,8 +273,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const activeConnectionName = await getActiveConnectionName(context);
 
       const items = connections.map(conn => ({
-        label: conn.name || `${conn.host}:${conn.port}/${conn.database}`,
-        description: conn.name ? `${conn.user}@${conn.host}:${conn.port}/${conn.database}` : undefined,
+        label: formatConnectionDisplay(conn),
+        description: conn.name ? formatConnectionDetailedDisplay(conn) : undefined,
         detail: conn.name === activeConnectionName ? "$(check) Active" : undefined,
         connectionName: conn.name || ""
       }));
@@ -235,8 +314,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const activeConnectionName = await getActiveConnectionName(context);
 
       const items = connections.map(conn => ({
-        label: conn.name || `${conn.host}:${conn.port}/${conn.database}`,
-        description: conn.name ? `${conn.user}@${conn.host}:${conn.port}/${conn.database}` : undefined,
+        label: formatConnectionDisplay(conn),
+        description: conn.name ? formatConnectionDetailedDisplay(conn) : undefined,
         detail: conn.name === activeConnectionName ? "$(check) Active" : undefined,
         connectionName: conn.name || ""
       }));
@@ -347,14 +426,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         // If name changed, invalidate the old cached client
         if (originalName !== editedConnection.name) {
-          schemaExplorer.invalidateClient(originalName);
+          schemaExplorer.invalidateClient(item.connectionInfo);
         }
       }
 
       // Always invalidate current client to force reconnect with new settings
-      if (editedConnection.name) {
-        schemaExplorer.invalidateClient(editedConnection.name);
-      }
+      schemaExplorer.invalidateClient(editedConnection);
 
       vscode.window.showInformationMessage("Connection updated successfully");
       schemaExplorer.refresh();
@@ -369,14 +446,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
 
-      let connectionToCopy: ConnectionConfig = item.connectionInfo;
+      let connectionToCopy: DatabaseConnectionConfig = item.connectionInfo;
 
-      if (!connectionToCopy.password && connectionToCopy.name) {
+      // Add password if not present and it's saved (only for password-based databases)
+      if ('password' in connectionToCopy && !connectionToCopy.password && connectionToCopy.name) {
         const storedPassword = await context.secrets.get(
           `dbview.connection.${connectionToCopy.name}.password`
         );
         if (storedPassword) {
-          connectionToCopy = { ...connectionToCopy, password: storedPassword };
+          connectionToCopy = { ...(connectionToCopy as any), password: storedPassword } as DatabaseConnectionConfig;
         }
       }
 
@@ -395,7 +473,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       const connectionName = item.connectionInfo.name;
-      const label = item.label ?? item.connectionInfo.database ?? "connection";
+      const label = item.label ?? formatConnectionDisplay(item.connectionInfo);
       const confirm = await vscode.window.showWarningMessage(
         `Delete connection "${label}"?`,
         { modal: true },
@@ -478,6 +556,57 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   );
 
+  const refreshTableCountCommand = vscode.commands.registerCommand(
+    "dbview.refreshTableCount",
+    async (item?: SchemaTreeItem) => {
+      if (!item || item.node.type !== "table" || !item.connectionInfo) {
+        return;
+      }
+
+      const tableNode = item.node;
+      const client = schemaExplorer.getClientForConnection(item.connectionInfo);
+      if (!client) {
+        vscode.window.showWarningMessage("No active database connection");
+        return;
+      }
+
+      if (!client.getActualRowCount) {
+        vscode.window.showWarningMessage("Actual row count not supported for this database type");
+        return;
+      }
+
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Counting rows in ${tableNode.table}...`,
+            cancellable: false
+          },
+          async () => {
+            const actualCount = await client.getActualRowCount!(
+              tableNode.schema,
+              tableNode.table
+            );
+
+            // Update the tree item's cached row count
+            tableNode.rowCount = actualCount;
+
+            // Refresh the tree view
+            schemaExplorer.refresh();
+
+            vscode.window.showInformationMessage(
+              `${tableNode.table}: ${actualCount.toLocaleString()} rows`
+            );
+          }
+        );
+      } catch (error) {
+        vscode.window.showErrorMessage(
+          `Failed to count rows: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  );
+
   const copyColumnNameCommand = vscode.commands.registerCommand(
     "dbview.copyColumnName",
     async (item?: SchemaTreeItem) => {
@@ -506,7 +635,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const showDatabaseInfoCommand = vscode.commands.registerCommand(
     "dbview.showDatabaseInfo",
     async () => {
-      if (!connection) {
+      if (!connection || !client) {
         vscode.window.showWarningMessage("No active database connection");
         return;
       }
@@ -589,8 +718,12 @@ ${info.version.split(',')[0]}
   const showRunningQueriesCommand = vscode.commands.registerCommand(
     "dbview.showRunningQueries",
     async () => {
-      if (!connection) {
+      if (!connection || !client) {
         vscode.window.showWarningMessage("No active database connection");
+        return;
+      }
+      if (!client.getRunningQueries) {
+        vscode.window.showWarningMessage("Running queries not supported for this database");
         return;
       }
       try {
@@ -658,8 +791,12 @@ ${info.version.split(',')[0]}
         vscode.window.showWarningMessage("No connection available");
         return;
       }
-      await vscode.env.clipboard.writeText(conn.database);
-      vscode.window.showInformationMessage(`Copied: ${conn.database}`);
+      if ('database' in conn) {
+        await vscode.env.clipboard.writeText(conn.database);
+        vscode.window.showInformationMessage(`Copied: ${conn.database}`);
+      } else {
+        vscode.window.showWarningMessage("Database name not available for this connection type");
+      }
     }
   );
 
@@ -671,9 +808,13 @@ ${info.version.split(',')[0]}
         vscode.window.showWarningMessage("No connection available");
         return;
       }
-      const hostPort = `${conn.host}:${conn.port}`;
-      await vscode.env.clipboard.writeText(hostPort);
-      vscode.window.showInformationMessage(`Copied: ${hostPort}`);
+      if ('host' in conn && 'port' in conn) {
+        const hostPort = `${conn.host}:${conn.port}`;
+        await vscode.env.clipboard.writeText(hostPort);
+        vscode.window.showInformationMessage(`Copied: ${hostPort}`);
+      } else {
+        vscode.window.showWarningMessage("Host/port not available for this connection type");
+      }
     }
   );
 
@@ -688,7 +829,7 @@ ${info.version.split(',')[0]}
       }
 
       await schemaExplorer.disconnectConnection(conn);
-      vscode.window.showInformationMessage(`Disconnected from ${conn.name || conn.database}`);
+      vscode.window.showInformationMessage(`Disconnected from ${formatConnectionDisplay(conn)}`);
     }
   );
 
@@ -702,13 +843,13 @@ ${info.version.split(',')[0]}
         return;
       }
 
-      vscode.window.showInformationMessage(`Reconnecting to ${conn.name || conn.database}...`);
+      vscode.window.showInformationMessage(`Reconnecting to ${formatConnectionDisplay(conn)}...`);
 
       const success = await schemaExplorer.reconnectConnection(conn);
       if (success) {
-        vscode.window.showInformationMessage(`Reconnected to ${conn.name || conn.database} successfully`);
+        vscode.window.showInformationMessage(`Reconnected to ${formatConnectionDisplay(conn)} successfully`);
       } else {
-        vscode.window.showErrorMessage(`Failed to reconnect to ${conn.name || conn.database}`);
+        vscode.window.showErrorMessage(`Failed to reconnect to ${formatConnectionDisplay(conn)}`);
       }
     }
   );
@@ -727,6 +868,11 @@ ${info.version.split(',')[0]}
       const targetClient = item?.connectionInfo
         ? await schemaExplorer.getOrCreateClient(item.connectionInfo)
         : client;
+
+      if (!targetClient) {
+        vscode.window.showWarningMessage('No client available');
+        return;
+      }
 
       await openQueryInPanel(context, targetClient, conn);
     }
@@ -747,6 +893,11 @@ ${info.version.split(',')[0]}
         ? await schemaExplorer.getOrCreateClient(item.connectionInfo)
         : client;
 
+      if (!targetClient) {
+        vscode.window.showWarningMessage('No client available');
+        return;
+      }
+
       await openERDiagramInPanel(context, targetClient, conn);
     }
   );
@@ -764,7 +915,7 @@ ${info.version.split(',')[0]}
       const securityInfo = await getConnectionSecurityInfo(context, activeConnectionName);
 
       const items = [
-        `Connection: ${connection.name || `${connection.host}:${connection.port}`}`,
+        `Connection: ${formatConnectionDisplay(connection)}`,
         `Password Saved: ${securityInfo.passwordSaved ? "✓ Yes (encrypted in OS keychain)" : "✗ No"}`,
         `SSL/TLS: ${securityInfo.sslEnabled ? "✓ Enabled" : "✗ Disabled"}`,
         "",
@@ -861,6 +1012,7 @@ ${info.version.split(',')[0]}
     copyTableNameCommand,
     copySchemaTableNameCommand,
     generateSelectCommand,
+    refreshTableCountCommand,
     copyColumnNameCommand,
     copyColumnDefinitionCommand,
     showDatabaseInfoCommand,
@@ -886,12 +1038,60 @@ export async function deactivate(): Promise<void> {
   }
 }
 
-function buildConnectionString(connection: ConnectionConfig): string {
-  const encodedUser = encodeURIComponent(connection.user);
-  const encodedPassword = connection.password ? `:${encodeURIComponent(connection.password)}` : "";
+/**
+ * Format a connection config for display purposes
+ */
+function formatConnectionDisplay(connection: DatabaseConnectionConfig): string {
+  if (connection.name) {
+    return connection.name;
+  }
+  if ('host' in connection && 'port' in connection && 'database' in connection) {
+    return `${connection.host}:${connection.port}/${connection.database}`;
+  }
+  if ('filePath' in connection) {
+    return connection.filePath;
+  }
+  return connection.dbType;
+}
+
+/**
+ * Format a connection config for detailed display
+ */
+function formatConnectionDetailedDisplay(connection: DatabaseConnectionConfig): string {
+  if ('host' in connection && 'port' in connection && 'database' in connection && 'user' in connection) {
+    return `${connection.user}@${connection.host}:${connection.port}/${connection.database}`;
+  }
+  if ('filePath' in connection) {
+    return connection.filePath;
+  }
+  return formatConnectionDisplay(connection);
+}
+
+function buildConnectionString(connection: DatabaseConnectionConfig): string {
+  // Only works for host-based databases
+  if (!('host' in connection) || !('port' in connection) || !('database' in connection) || !('user' in connection)) {
+    throw new Error('Connection string not supported for this database type');
+  }
+
+  const user = connection.user || '';  // Fallback for optional user (e.g., SQL Server Windows Auth)
+  const encodedUser = encodeURIComponent(user);
+  const password = ('password' in connection) ? connection.password : undefined;
+  const encodedPassword = password ? `:${encodeURIComponent(password)}` : "";
   const auth = `${encodedUser}${encodedPassword}@`;
   const host = connection.host;
   const port = connection.port;
   const database = encodeURIComponent(connection.database);
-  return `postgresql://${auth}${host}:${port}/${database}`;
+
+  // Format based on database type (SQLite already filtered out by guard above)
+  if (connection.dbType === 'postgres') {
+    return `postgresql://${auth}${host}:${port}/${database}`;
+  } else if (connection.dbType === 'mysql') {
+    return `mysql://${auth}${host}:${port}/${database}`;
+  } else if (connection.dbType === 'sqlserver') {
+    return `mssql://${auth}${host}:${port}/${database}`;
+  } else if (connection.dbType === 'mongodb') {
+    return `mongodb://${auth}${host}:${port}/${database}`;
+  } else {
+    throw new Error(`Unknown database type: ${(connection as any).dbType}`);
+  }
 }

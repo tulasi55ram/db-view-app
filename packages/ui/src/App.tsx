@@ -62,9 +62,11 @@ function App() {
 
   const vscode = getVsCodeApi();
 
-  // Request autocomplete data on mount
+  // Notify extension that webview is ready and request autocomplete data on mount
   useEffect(() => {
     if (vscode) {
+      console.log('[dbview-ui] Webview mounted, sending READY message');
+      vscode.postMessage({ type: "WEBVIEW_READY" });
       vscode.postMessage({ type: "GET_AUTOCOMPLETE_DATA" });
     }
   }, [vscode]);
@@ -573,7 +575,7 @@ function App() {
     }
 
     return null;
-  }, [tabManager, runQuery, formatSql, explainQuery, handleRefreshTable, vscode, requestTableRows, requestRowCount, queryHistory, autocompleteData]);
+  }, [tabManager.tabs, tabManager.activeTabId, tabManager, runQuery, formatSql, explainQuery, handleRefreshTable, vscode, requestTableRows, requestRowCount, queryHistory, autocompleteData]);
 
   return (
     <>
@@ -595,7 +597,12 @@ function App() {
             activeTabId={tabManager.activeTabId}
             onTabSelect={tabManager.switchToTab}
             onTabClose={tabManager.closeTab}
-            onNewQuery={tabManager.addQueryTab}
+            onNewQuery={() => {
+              // Get connection name from the active tab if available
+              const activeTab = tabManager.getActiveTab();
+              const connectionName = activeTab?.connectionName;
+              tabManager.addQueryTab(connectionName);
+            }}
             onCloseOtherTabs={tabManager.closeOtherTabs}
             onCloseAllTabs={tabManager.closeAllTabs}
           />

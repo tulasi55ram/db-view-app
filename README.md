@@ -116,6 +116,29 @@ Once the Extension Development Host is running:
 - `DBView: Switch Connection` - Switch between saved connections
 - `DBView: Manage Connections` - View/edit/delete saved connections
 
+## Configuration & Settings
+
+### Autocomplete Performance Settings
+
+DBView includes configurable limits to ensure fast autocomplete on large databases. If you have a database with hundreds or thousands of tables, you can adjust these settings in VS Code:
+
+**Quick Access:**
+1. Open Settings: `Ctrl+,` (or `Cmd+,` on macOS)
+2. Search for: `dbview autocomplete`
+3. Adjust the three available settings:
+   - **Max Tables Per Schema** (default: 200)
+   - **Max Total Tables** (default: 500)
+   - **Max Tables With Metadata** (default: 100)
+
+**📖 Full Documentation:** See [AUTOCOMPLETE_SETTINGS.md](./AUTOCOMPLETE_SETTINGS.md) for:
+- Detailed setting explanations
+- Recommended configurations by database size
+- Performance impact analysis
+- Troubleshooting guide
+- How to access tables beyond limits
+
+**Note:** All tables are always visible in the Schema Explorer sidebar, regardless of autocomplete limits.
+
 ## Building
 
 - Build everything (core, UI bundle, extension, desktop stub):

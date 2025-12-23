@@ -92,6 +92,11 @@
         "icon": "$(code)"
       },
       {
+        "command": "dbview.refreshTableCount",
+        "title": "Refresh Row Count",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "dbview.openSqlRunner",
         "title": "Open SQL Runner",
         "icon": "$(play)"
@@ -328,6 +333,11 @@
           "group": "inline@1"
         },
         {
+          "command": "dbview.refreshTableCount",
+          "when": "view == dbview.dbExplorer && viewItem == table",
+          "group": "inline@3"
+        },
+        {
           "command": "dbview.copyColumnName",
           "when": "view == dbview.dbExplorer && viewItem == column",
           "group": "copy@1"
@@ -338,16 +348,48 @@
           "group": "copy@2"
         }
       ]
+    },
+    "configuration": {
+      "title": "DBView",
+      "properties": {
+        "dbview.autocomplete.maxTablesPerSchema": {
+          "type": "number",
+          "default": 200,
+          "minimum": 10,
+          "maximum": 1000,
+          "description": "Maximum number of tables to fetch per schema for autocomplete (prevents overwhelming UI on large databases)"
+        },
+        "dbview.autocomplete.maxTotalTables": {
+          "type": "number",
+          "default": 500,
+          "minimum": 50,
+          "maximum": 2000,
+          "description": "Maximum total number of tables to fetch across all schemas for autocomplete"
+        },
+        "dbview.autocomplete.maxTablesWithMetadata": {
+          "type": "number",
+          "default": 100,
+          "minimum": 10,
+          "maximum": 500,
+          "description": "Maximum number of tables to fetch detailed column metadata for (rest will show table name only in autocomplete)"
+        }
+      }
     }
   },
   "scripts": {
     "build": "pnpm run compile",
     "compile": "tsc -p ./tsconfig.json",
     "watch": "tsc -w -p ./tsconfig.json",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run src/adapters/__tests__"
   },
   "dependencies": {
     "@dbview/core": "workspace:*",
+    "mysql2": "^3.16.0",
     "pg": "^8.11.5",
     "sql-formatter": "^15.6.12"
   },

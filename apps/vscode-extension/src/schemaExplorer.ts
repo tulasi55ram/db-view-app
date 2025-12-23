@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
-import type { ConnectionConfig } from "@dbview/core";
-import { PostgresClient, type ConnectionStatus, type ConnectionStatusEvent } from "./postgresClient";
+import type { ConnectionConfig, DatabaseConnectionConfig } from "@dbview/core";
+import type { DatabaseAdapter, ConnectionStatus, ConnectionStatusEvent } from "./adapters/DatabaseAdapter";
+import { DatabaseAdapterFactory } from "./adapters/DatabaseAdapterFactory";
 import { getAllSavedConnections, getActiveConnectionName } from "./connectionSettings";
 
 export interface TableIdentifier {
@@ -57,33 +58,74 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
   private statusListener: ((event: ConnectionStatusEvent) => void) | null = null;
 
   // Client cache for multiple connections (lazy-connect)
-  private clients: Map<string, PostgresClient> = new Map();
+  private clients: Map<string, DatabaseAdapter> = new Map();
   private clientStatuses: Map<string, ConnectionStatus> = new Map();
 
   constructor(
-    private client: PostgresClient,
-    private connection: ConnectionConfig | null = null,
+    private client: DatabaseAdapter | undefined,
+    private connection: ConnectionConfig | DatabaseConnectionConfig | null = null,
     private context: vscode.ExtensionContext
   ) {
     // Initialize status from client
-    this.connectionStatus = client.status;
+    this.connectionStatus = client?.status ?? 'disconnected';
     this.setupStatusListener();
 
     // Cache the initial client if we have a connection
-    if (connection) {
+    if (connection && client) {
       const key = this.getConnectionKey(connection);
       this.clients.set(key, client);
       this.clientStatuses.set(key, client.status);
     }
   }
 
-  private getConnectionKey(conn: ConnectionConfig): string {
-    // Include user to ensure uniqueness even for same host:port/database with different users
-    return conn.name || `${conn.user}@${conn.host}:${conn.port}/${conn.database}`;
+  private getConnectionKey(conn: ConnectionConfig | DatabaseConnectionConfig): string {
+    // For legacy ConnectionConfig without dbType
+    const dbType = 'dbType' in conn ? conn.dbType : 'postgres';
+
+    // Use name if available, otherwise generate a unique key based on connection details
+    if (conn.name) {
+      return `${dbType}:${conn.name}`;
+    }
+
+    // Generate key based on database type
+    switch (dbType) {
+      case 'sqlite':
+        return `${dbType}:${(conn as any).filePath}`;
+      case 'mongodb':
+        if ((conn as any).connectionString) {
+          return `${dbType}:${(conn as any).connectionString}`;
+        }
+        return `${dbType}:${(conn as any).user || 'anonymous'}@${(conn as any).host || 'localhost'}:${(conn as any).port || 27017}/${(conn as any).database}`;
+      case 'postgres':
+      case 'mysql':
+      case 'sqlserver':
+        // All have host:port/database structure
+        return `${dbType}:${(conn as any).user}@${(conn as any).host}:${(conn as any).port}/${(conn as any).database}`;
+      default:
+        // Future database types or legacy - use host:port/database pattern
+        return `${dbType}:${(conn as any).user}@${(conn as any).host}:${(conn as any).port}/${(conn as any).database}`;
+    }
+  }
+
+  private getConnectionDisplayName(conn: ConnectionConfig | DatabaseConnectionConfig): string {
+    if (conn.name) {
+      return conn.name;
+    }
+
+    if ('dbType' in conn && conn.dbType === 'sqlite') {
+      return conn.filePath;
+    }
+
+    // For all other types that have a database property
+    if ('database' in conn) {
+      return conn.database;
+    }
+
+    return 'Unknown';
   }
 
   // Public method to get or create a client for a specific connection
-  public async getOrCreateClient(conn: ConnectionConfig): Promise<PostgresClient> {
+  public async getOrCreateClient(conn: ConnectionConfig | DatabaseConnectionConfig): Promise<DatabaseAdapter> {
     const key = this.getConnectionKey(conn);
 
     // Check if we already have a client for this connection
@@ -91,12 +133,17 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       const existingClient = this.clients.get(key)!;
       const currentStatus = this.clientStatuses.get(key);
 
-      // If client exists but status is disconnected, we need to connect it
-      if (currentStatus === 'disconnected' || !currentStatus) {
-        console.log(`[dbview] Cached client for ${key} is disconnected, connecting...`);
+      // If client exists but status is disconnected or error, we need to reconnect it
+      // This handles both explicit disconnects and transient failures
+      if (currentStatus === 'disconnected' || currentStatus === 'error' || !currentStatus) {
+        console.log(`[dbview] Cached client for ${key} is ${currentStatus || 'unknown'}, attempting reconnect...`);
         this.clientStatuses.set(key, 'connecting');
 
         try {
+          // Connect to the database first (required for MySQL and other non-pooled adapters)
+          await existingClient.connect();
+          console.log(`[dbview] Cached client reconnected for ${key}`);
+
           const isAlive = await existingClient.ping();
           console.log(`[dbview] Ping result for cached client ${key}: ${isAlive}`);
           if (isAlive) {
@@ -113,9 +160,13 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       return existingClient;
     }
 
-    // Create new client
-    console.log(`[dbview] Creating new client for connection: ${key}`);
-    const newClient = new PostgresClient(conn);
+    // Create new client using factory
+    console.log(`[dbview] Creating new adapter for connection: ${key}`);
+    // Ensure connection has dbType for factory
+    const connectionConfig: DatabaseConnectionConfig = 'dbType' in conn
+      ? conn as DatabaseConnectionConfig
+      : { ...conn, dbType: 'postgres' as const };
+    const newClient = DatabaseAdapterFactory.create(connectionConfig);
 
     // Set up status listener for this client
     const listener = (event: ConnectionStatusEvent) => {
@@ -126,7 +177,7 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       // Show notification for connection errors
       if (event.status === 'error' && event.error) {
         vscode.window.showWarningMessage(
-          `dbview: ${conn.name || conn.database} - ${event.error.message}`,
+          `dbview: ${this.getConnectionDisplayName(conn)} - ${event.error.message}`,
           'Reconnect'
         ).then(selection => {
           if (selection === 'Reconnect') {
@@ -144,6 +195,10 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
 
     // Try to connect
     try {
+      // Connect to the database (required for MySQL and other non-pooled adapters)
+      await newClient.connect();
+      console.log(`[dbview] Client connected successfully for ${key}`);
+
       const isAlive = await newClient.ping();
       console.log(`[dbview] Ping result for ${key}: ${isAlive}`);
       if (isAlive) {
@@ -159,7 +214,7 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
     return newClient;
   }
 
-  private async reconnectClient(conn: ConnectionConfig): Promise<void> {
+  private async reconnectClient(conn: ConnectionConfig | DatabaseConnectionConfig): Promise<void> {
     const key = this.getConnectionKey(conn);
     const existingClient = this.clients.get(key);
 
@@ -174,18 +229,18 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
     this.emitter.fire();
   }
 
-  getClientForConnection(conn: ConnectionConfig): PostgresClient | undefined {
+  getClientForConnection(conn: ConnectionConfig | DatabaseConnectionConfig): DatabaseAdapter | undefined {
     const key = this.getConnectionKey(conn);
     return this.clients.get(key);
   }
 
-  getStatusForConnection(conn: ConnectionConfig): ConnectionStatus {
+  getStatusForConnection(conn: ConnectionConfig | DatabaseConnectionConfig): ConnectionStatus {
     const key = this.getConnectionKey(conn);
     return this.clientStatuses.get(key) || 'disconnected';
   }
 
   // Public method to disconnect a specific connection
-  async disconnectConnection(conn: ConnectionConfig): Promise<void> {
+  async disconnectConnection(conn: DatabaseConnectionConfig): Promise<void> {
     const key = this.getConnectionKey(conn);
     console.log(`[dbview] Disconnecting connection: ${key}`);
 
@@ -200,7 +255,7 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
   }
 
   // Public method to reconnect a specific connection
-  async reconnectConnection(conn: ConnectionConfig): Promise<boolean> {
+  async reconnectConnection(conn: DatabaseConnectionConfig): Promise<boolean> {
     const key = this.getConnectionKey(conn);
     console.log(`[dbview] Reconnecting connection: ${key}`);
 
@@ -218,7 +273,8 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
     this.emitter.fire();
 
     try {
-      const newClient = new PostgresClient(conn);
+      // Create new adapter using factory
+      const newClient = DatabaseAdapterFactory.create(conn);
 
       // Set up status listener
       const listener = (event: ConnectionStatusEvent) => {
@@ -229,20 +285,14 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
 
       this.clients.set(key, newClient);
 
-      const isAlive = await newClient.ping();
-      console.log(`[dbview] Reconnect ping result for ${key}: ${isAlive}`);
+      // Connect first to initialize the connection pool
+      await newClient.connect();
+      console.log(`[dbview] Connection ${key} reconnected successfully`);
 
-      if (isAlive) {
-        newClient.startHealthCheck();
-        this.clientStatuses.set(key, 'connected');
-        console.log(`[dbview] Connection ${key} reconnected successfully`);
-        this.emitter.fire();
-        return true;
-      } else {
-        this.clientStatuses.set(key, 'error');
-        this.emitter.fire();
-        return false;
-      }
+      // Start health check to monitor connection
+      newClient.startHealthCheck();
+      this.emitter.fire();
+      return true;
     } catch (error) {
       console.error(`[dbview] Failed to reconnect ${key}:`, error);
       this.clientStatuses.set(key, 'error');
@@ -252,6 +302,10 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
   }
 
   private setupStatusListener(): void {
+    if (!this.client) {
+      return;
+    }
+
     // Remove previous listener if exists
     if (this.statusListener) {
       this.client.removeListener('statusChange', this.statusListener);
@@ -288,19 +342,19 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
     });
   }
 
-  updateClient(client: PostgresClient, connection: ConnectionConfig | null = null): void {
+  updateClient(client: DatabaseAdapter | undefined, connection: ConnectionConfig | DatabaseConnectionConfig | null = null): void {
     // Remove listener from old client
-    if (this.statusListener) {
+    if (this.statusListener && this.client) {
       this.client.removeListener('statusChange', this.statusListener);
     }
 
     this.client = client;
     this.connection = connection;
     this.connectionError = null;
-    this.connectionStatus = client.status;
+    this.connectionStatus = client?.status ?? 'disconnected';
 
     // Cache the client
-    if (connection) {
+    if (connection && client) {
       const key = this.getConnectionKey(connection);
       this.clients.set(key, client);
       this.clientStatuses.set(key, client.status);
@@ -310,18 +364,24 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
     this.setupStatusListener();
 
     // Start health check for the new client
-    if (connection) {
+    if (connection && client) {
       client.startHealthCheck();
     }
   }
 
   // Invalidate cached client (call when connection is edited)
-  invalidateClient(connectionName: string): void {
-    const existingClient = this.clients.get(connectionName);
+  invalidateClient(conn: DatabaseConnectionConfig): void {
+    const key = this.getConnectionKey(conn);
+    console.log(`[dbview] Invalidating client cache for: ${key}`);
+    const existingClient = this.clients.get(key);
     if (existingClient) {
+      existingClient.stopHealthCheck();
       existingClient.disconnect();
-      this.clients.delete(connectionName);
-      this.clientStatuses.delete(connectionName);
+      this.clients.delete(key);
+      this.clientStatuses.delete(key);
+      console.log(`[dbview] Client cache invalidated for: ${key}`);
+    } else {
+      console.log(`[dbview] No cached client found for: ${key}`);
     }
   }
 
@@ -429,7 +489,7 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
     }
 
     // Helper to get client for any element's connection
-    const getClientForElement = async (el: SchemaTreeItem): Promise<PostgresClient | null> => {
+    const getClientForElement = async (el: SchemaTreeItem): Promise<DatabaseAdapter | null> => {
       const conn = el.connectionInfo;
       if (!conn) return null;
       return this.getClientForConnection(conn) || null;
@@ -499,22 +559,27 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
             );
           }
           case "views": {
+            if (!client.listViews) return [];
             const views = await client.listViews(schema);
             return views.map((name) => new SchemaTreeItem({ type: "view", schema, name }, conn));
           }
           case "materializedViews": {
+            if (!client.listMaterializedViews) return [];
             const matViews = await client.listMaterializedViews(schema);
             return matViews.map((name) => new SchemaTreeItem({ type: "materializedView", schema, name }, conn));
           }
           case "functions": {
+            if (!client.listFunctions) return [];
             const functions = await client.listFunctions(schema);
             return functions.map((name) => new SchemaTreeItem({ type: "function", schema, name }, conn));
           }
           case "procedures": {
+            if (!client.listProcedures) return [];
             const procedures = await client.listProcedures(schema);
             return procedures.map((name) => new SchemaTreeItem({ type: "procedure", schema, name }, conn));
           }
           case "types": {
+            if (!client.listTypes) return [];
             const types = await client.listTypes(schema);
             return types.map((name) => new SchemaTreeItem({ type: "typeNode", schema, name }, conn));
           }
@@ -566,11 +631,11 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
 }
 
 export class SchemaTreeItem extends vscode.TreeItem {
-  readonly connectionInfo: ConnectionConfig | null;
+  readonly connectionInfo: DatabaseConnectionConfig | null;
 
   constructor(
     public readonly node: NodeData,
-    connectionInfo?: ConnectionConfig | null,
+    connectionInfo?: DatabaseConnectionConfig | null,
     connectionStatus?: ConnectionStatus
   ) {
     super(getLabel(node, connectionInfo), getCollapsibleState(node));
@@ -694,7 +759,9 @@ export class SchemaTreeItem extends vscode.TreeItem {
     }
 
     if (isConnectionNode(node) && connectionInfo) {
-      const hostInfo = `${connectionInfo.host}:${connectionInfo.port}`;
+      const hostInfo = ('host' in connectionInfo && 'port' in connectionInfo)
+        ? `${connectionInfo.host}:${connectionInfo.port}`
+        : ('filePath' in connectionInfo ? connectionInfo.filePath : 'N/A');
       const readOnlyLabel = connectionInfo.readOnly ? " 🔒" : "";
 
       // Add connection status indicator
@@ -725,7 +792,17 @@ export class SchemaTreeItem extends vscode.TreeItem {
 
       this.description = (node.sizeInBytes ? formatBytes(node.sizeInBytes) : hostInfo) + readOnlyLabel + statusLabel;
       this.tooltip = new vscode.MarkdownString();
-      this.tooltip.appendMarkdown(`**${connectionInfo.name || connectionInfo.database}**\n\n`);
+
+      // Get connection name
+      let connName = 'Database';
+      if (connectionInfo.name) {
+        connName = connectionInfo.name;
+      } else if ('database' in connectionInfo) {
+        connName = connectionInfo.database;
+      } else if ('filePath' in connectionInfo) {
+        connName = connectionInfo.filePath;
+      }
+      this.tooltip.appendMarkdown(`**${connName}**\n\n`);
 
       // Show connection status in tooltip
       this.tooltip.appendMarkdown(`${statusEmoji} **Status:** ${connectionStatus || 'unknown'}\n\n`);
@@ -733,9 +810,15 @@ export class SchemaTreeItem extends vscode.TreeItem {
       if (connectionInfo.readOnly) {
         this.tooltip.appendMarkdown(`🔒 **Read-Only Mode** - Write operations are blocked\n\n`);
       }
-      this.tooltip.appendMarkdown(`🖥️ Host: \`${hostInfo}\`\n\n`);
-      this.tooltip.appendMarkdown(`📀 Database: \`${connectionInfo.database}\`\n\n`);
-      this.tooltip.appendMarkdown(`👤 User: \`${connectionInfo.user}\`\n\n`);
+      if ('host' in connectionInfo && 'port' in connectionInfo) {
+        this.tooltip.appendMarkdown(`🖥️ Host: \`${hostInfo}\`\n\n`);
+      }
+      if ('database' in connectionInfo) {
+        this.tooltip.appendMarkdown(`📀 Database: \`${connectionInfo.database}\`\n\n`);
+      }
+      if ('user' in connectionInfo) {
+        this.tooltip.appendMarkdown(`👤 User: \`${connectionInfo.user}\`\n\n`);
+      }
       if (node.sizeInBytes) {
         this.tooltip.appendMarkdown(`💾 Size: ${formatBytes(node.sizeInBytes)}\n\n`);
       }
@@ -761,12 +844,21 @@ export class SchemaTreeItem extends vscode.TreeItem {
   }
 }
 
-function getLabel(node: NodeData, connectionInfo?: ConnectionConfig | null): string {
+function getLabel(node: NodeData, connectionInfo?: DatabaseConnectionConfig | null): string {
   if (isWelcomeNode(node)) {
     return "Connect to Database";
   }
   if (isConnectionNode(node)) {
-    const baseName = connectionInfo ? (connectionInfo.name || connectionInfo.database) : "Postgres (default)";
+    let baseName = "Database";
+    if (connectionInfo) {
+      if (connectionInfo.name) {
+        baseName = connectionInfo.name;
+      } else if ('database' in connectionInfo) {
+        baseName = connectionInfo.database;
+      } else if ('filePath' in connectionInfo) {
+        baseName = connectionInfo.filePath;
+      }
+    }
     const readOnlyBadge = connectionInfo?.readOnly ? "🔒 " : "";
     if (node.sizeInBytes !== undefined) {
       return `${readOnlyBadge}${baseName} - ${formatBytes(node.sizeInBytes)}`;
