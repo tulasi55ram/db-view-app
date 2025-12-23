@@ -157,7 +157,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
 
-      const connKey = conn.name || `${conn.host}:${conn.port}/${conn.database}`;
+      const connKey = conn.name || `${conn.user}@${conn.host}:${conn.port}/${conn.database}`;
       console.log(`[dbview] openTable: Opening ${selection.schema}.${selection.table} for connection "${conn.name || conn.database}"`);
       console.log(`[dbview] openTable: Connection key will be: "${connKey}"`);
 

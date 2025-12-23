@@ -78,7 +78,8 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
   }
 
   private getConnectionKey(conn: ConnectionConfig): string {
-    return conn.name || `${conn.host}:${conn.port}/${conn.database}`;
+    // Include user to ensure uniqueness even for same host:port/database with different users
+    return conn.name || `${conn.user}@${conn.host}:${conn.port}/${conn.database}`;
   }
 
   // Public method to get or create a client for a specific connection
@@ -603,7 +604,7 @@ export class SchemaTreeItem extends vscode.TreeItem {
       this.command = {
         command: "dbview.openTable",
         title: "Open Table",
-        arguments: [{ schema: node.schema, table: node.table } as TableIdentifier]
+        arguments: [this]  // Pass the full SchemaTreeItem which includes connectionInfo
       };
     }
 

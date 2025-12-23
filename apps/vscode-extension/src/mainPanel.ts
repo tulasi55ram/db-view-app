@@ -12,7 +12,8 @@ const panelClients: Map<string, PostgresClient> = new Map();
 
 // Helper to get connection key - must match schemaExplorer.ts implementation
 function getConnectionKey(config: ConnectionConfig): string {
-  return config.name || `${config.host}:${config.port}/${config.database}`;
+  // Include user to ensure uniqueness even for same host:port/database with different users
+  return config.name || `${config.user}@${config.host}:${config.port}/${config.database}`;
 }
 
 export function updateWebviewTheme(): void {
