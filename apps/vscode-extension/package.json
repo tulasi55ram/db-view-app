@@ -37,7 +37,7 @@
       },
       {
         "command": "dbview.openTable",
-        "title": "DBView: Open Table"
+        "title": "Open Table Data"
       },
       {
         "command": "dbview.openSqlRunner",

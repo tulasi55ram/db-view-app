@@ -600,12 +600,10 @@ export class SchemaTreeItem extends vscode.TreeItem {
       if (sizeLabel) {
         this.tooltip.appendMarkdown(`💾 Size: ${sizeLabel}\n\n`);
       }
-      this.tooltip.appendMarkdown(`_Click to view data, expand to see columns_`);
-      this.command = {
-        command: "dbview.openTable",
-        title: "Open Table",
-        arguments: [this]  // Pass the full SchemaTreeItem which includes connectionInfo
-      };
+      this.tooltip.appendMarkdown(`_Click the icon or right-click → Open Table to view data_\n\n`);
+      this.tooltip.appendMarkdown(`_Expand (▶) to see columns_`);
+      // Don't set command property to avoid double-click issues
+      // Users can: 1) Click inline icon, 2) Right-click → Open Table, 3) Expand to see columns
     }
 
     if (isColumnNode(node)) {
