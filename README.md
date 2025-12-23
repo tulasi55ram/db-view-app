@@ -1,6 +1,13 @@
 # dbview.app Monorepo
 
-A modern PostgreSQL database viewer/editor for VS Code with shared React webview UI, reusable core logic, and a future Electron desktop shell.
+A modern multi-database viewer/editor for VS Code with shared React webview UI, reusable core logic, and a future Electron desktop shell.
+
+**Supported Databases:**
+- PostgreSQL
+- MySQL
+- SQL Server
+- SQLite
+- MongoDB
 
 ## Structure
 
@@ -87,12 +94,14 @@ Once the Extension Development Host is running:
 
 - Open Command Palette (`Cmd+Shift+P` on Mac, `Ctrl+Shift+P` on Windows/Linux)
 - Run: `DBView: Configure Connection`
-- Enter your PostgreSQL connection details:
+- Select your database type (PostgreSQL, MySQL, SQL Server, SQLite, or MongoDB)
+- Enter your connection details:
   - Host (e.g., `localhost`)
-  - Port (e.g., `5432`)
+  - Port (e.g., `5432` for PostgreSQL, `27017` for MongoDB)
   - Username
   - Password
   - Database name
+  - For MongoDB: Auth Database (default: `admin`)
 - Click **Test Connection** to verify
 - Click **Save** to store the connection
 

@@ -58,16 +58,58 @@ export function showConnectionConfigPanel(
             }
 
             const dbType = message.dbType || 'postgres';
-            const connection: DatabaseConnectionConfig = {
-              dbType,
-              name: message.name || undefined,
-              host: message.host,
-              port: parseInt(message.port, 10),
-              database: message.database,
-              user: message.user,
-              password,
-              readOnly: message.readOnly || false
-            } as DatabaseConnectionConfig;
+            let connection: DatabaseConnectionConfig;
+
+            if (dbType === 'sqlserver') {
+              // SQL Server-specific configuration
+              connection = {
+                dbType: 'sqlserver',
+                name: message.name || undefined,
+                host: message.host,
+                port: parseInt(message.port, 10) || 1433,
+                database: message.database,
+                user: message.user,
+                password,
+                authenticationType: 'sql', // Default to SQL Server authentication
+                encrypt: true,
+                trustServerCertificate: true, // For local development
+                readOnly: message.readOnly || false
+              };
+            } else if (dbType === 'sqlite') {
+              // SQLite-specific configuration
+              connection = {
+                dbType: 'sqlite',
+                name: message.name || undefined,
+                filePath: message.filePath,
+                mode: message.mode || 'readwrite',
+                readOnly: message.readOnly || false
+              };
+            } else if (dbType === 'mongodb') {
+              // MongoDB-specific configuration
+              connection = {
+                dbType: 'mongodb',
+                name: message.name || undefined,
+                host: message.host,
+                port: parseInt(message.port, 10) || 27017,
+                database: message.database,
+                user: message.user,
+                password,
+                authDatabase: message.authDatabase || 'admin',
+                readOnly: message.readOnly || false
+              };
+            } else {
+              // PostgreSQL, MySQL, and other databases
+              connection = {
+                dbType,
+                name: message.name || undefined,
+                host: message.host,
+                port: parseInt(message.port, 10),
+                database: message.database,
+                user: message.user,
+                password,
+                readOnly: message.readOnly || false
+              } as DatabaseConnectionConfig;
+            }
 
             const logConnection = { ...connection } as any;
             if ('password' in logConnection && logConnection.password) {
@@ -131,16 +173,58 @@ export function showConnectionConfigPanel(
               }
 
               const dbType = message.dbType || 'postgres';
-              const testConfig: DatabaseConnectionConfig = {
-                dbType,
-                name: message.name || undefined,
-                host: message.host,
-                port: parseInt(message.port, 10),
-                database: message.database,
-                user: message.user,
-                password: testPassword,
-                readOnly: message.readOnly || false
-              } as DatabaseConnectionConfig;
+              let testConfig: DatabaseConnectionConfig;
+
+              if (dbType === 'sqlserver') {
+                // SQL Server-specific configuration
+                testConfig = {
+                  dbType: 'sqlserver',
+                  name: message.name || undefined,
+                  host: message.host,
+                  port: parseInt(message.port, 10) || 1433,
+                  database: message.database,
+                  user: message.user,
+                  password: testPassword,
+                  authenticationType: 'sql',
+                  encrypt: true,
+                  trustServerCertificate: true,
+                  readOnly: message.readOnly || false
+                };
+              } else if (dbType === 'mongodb') {
+                // MongoDB-specific configuration
+                testConfig = {
+                  dbType: 'mongodb',
+                  name: message.name || undefined,
+                  host: message.host,
+                  port: parseInt(message.port, 10) || 27017,
+                  database: message.database,
+                  user: message.user,
+                  password: testPassword,
+                  authDatabase: message.authDatabase || 'admin',
+                  readOnly: message.readOnly || false
+                };
+              } else if (dbType === 'sqlite') {
+                // SQLite-specific configuration
+                testConfig = {
+                  dbType: 'sqlite',
+                  name: message.name || undefined,
+                  filePath: message.filePath,
+                  mode: message.mode || 'readwrite',
+                  readOnly: message.readOnly || false
+                };
+              } else {
+                // PostgreSQL, MySQL, and other databases
+                testConfig = {
+                  dbType,
+                  name: message.name || undefined,
+                  host: message.host,
+                  port: parseInt(message.port, 10),
+                  database: message.database,
+                  user: message.user,
+                  password: testPassword,
+                  readOnly: message.readOnly || false
+                } as DatabaseConnectionConfig;
+              }
 
               // Create adapter and test connection
               const adapter = DatabaseAdapterFactory.create(testConfig);
@@ -235,9 +319,15 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
 
   const defaultName = escapeHtml(defaults?.name ?? "");
   const defaultHost = escapeHtml((defaults && 'host' in defaults ? defaults.host : undefined) ?? "localhost");
-  const defaultPort = (defaults && 'port' in defaults ? defaults.port : undefined) ?? (dbType === 'mysql' ? 3306 : 5432);
-  const defaultDatabase = escapeHtml((defaults && 'database' in defaults ? defaults.database : undefined) ?? (dbType === 'mysql' ? 'mysql' : 'postgres'));
-  const defaultUser = escapeHtml((defaults && 'user' in defaults ? defaults.user : undefined) ?? (dbType === 'mysql' ? 'root' : 'postgres'));
+  const defaultPort = (defaults && 'port' in defaults ? defaults.port : undefined) ??
+    (dbType === 'mysql' ? 3306 : dbType === 'sqlserver' ? 1433 : 5432);
+  const defaultDatabase = escapeHtml((defaults && 'database' in defaults ? defaults.database : undefined) ??
+    (dbType === 'mysql' ? 'mysql' : dbType === 'sqlserver' ? 'dbview_dev' : 'postgres'));
+  const defaultUser = escapeHtml((defaults && 'user' in defaults ? defaults.user : undefined) ??
+    (dbType === 'mysql' ? 'root' : dbType === 'sqlserver' ? 'sa' : 'postgres'));
+  const defaultFilePath = escapeHtml((defaults && 'filePath' in defaults ? defaults.filePath : undefined) ?? "");
+  const defaultMode = (defaults && 'mode' in defaults ? defaults.mode : undefined) ?? 'readwrite';
+  const defaultAuthDatabase = escapeHtml((defaults && 'authDatabase' in defaults ? defaults.authDatabase : undefined) ?? "admin");
   const defaultReadOnly = defaults?.readOnly ?? false;
   const isEditing = Boolean(defaults?.name);
 
@@ -466,9 +556,9 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 <select id="dbType" name="dbType">
                     <option value="postgres" ${dbType === 'postgres' ? 'selected' : ''}>🐘 PostgreSQL</option>
                     <option value="mysql" ${dbType === 'mysql' ? 'selected' : ''}>🐬 MySQL</option>
-                    <option value="sqlserver" disabled>🗄️ SQL Server (Coming Soon)</option>
+                    <option value="sqlserver" ${dbType === 'sqlserver' ? 'selected' : ''}>🗄️ SQL Server</option>
                     <option value="sqlite" disabled>🪶 SQLite (Coming Soon)</option>
-                    <option value="mongodb" disabled>🍃 MongoDB (Coming Soon)</option>
+                    <option value="mongodb" ${dbType === 'mongodb' ? 'selected' : ''}>🍃 MongoDB</option>
                 </select>
                 <div class="help-text">Select the type of database you want to connect to</div>
             </div>
@@ -479,31 +569,56 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 <div class="help-text">Give this connection a name to save and switch between multiple connections</div>
             </div>
 
-            <div class="row">
+            <!-- SQLite-specific fields -->
+            <div class="form-group sqlite-fields" style="display: none;">
+                <label for="filePath">Database File Path</label>
+                <input type="text" id="filePath" name="filePath" value="${defaultFilePath}" placeholder="/path/to/database.db">
+                <div class="help-text">Full path to the SQLite database file</div>
+            </div>
+
+            <div class="form-group sqlite-fields" style="display: none;">
+                <label for="mode">Mode</label>
+                <select id="mode" name="mode">
+                    <option value="readwrite" ${defaultMode === 'readwrite' ? 'selected' : ''}>Read-Write</option>
+                    <option value="readonly" ${defaultMode === 'readonly' ? 'selected' : ''}>Read-Only</option>
+                    <option value="create" ${defaultMode === 'create' ? 'selected' : ''}>Create if not exists</option>
+                </select>
+                <div class="help-text">How to open the database file</div>
+            </div>
+
+            <!-- MongoDB-specific fields -->
+            <div class="form-group mongodb-fields" style="display: none;">
+                <label for="authDatabase">Authentication Database (optional)</label>
+                <input type="text" id="authDatabase" name="authDatabase" value="${defaultAuthDatabase || 'admin'}" placeholder="admin">
+                <div class="help-text">Database to authenticate against (default: admin)</div>
+            </div>
+
+            <!-- Server-based database fields -->
+            <div class="row server-fields">
                 <div class="form-group">
                     <label for="host">Host</label>
-                    <input type="text" id="host" name="host" value="${defaultHost}" required>
+                    <input type="text" id="host" name="host" value="${defaultHost}">
                     <div class="help-text">Database server hostname or IP address</div>
                 </div>
 
                 <div class="form-group">
                     <label for="port">Port</label>
-                    <input type="number" id="port" name="port" value="${defaultPort}" required>
+                    <input type="number" id="port" name="port" value="${defaultPort}">
                 </div>
             </div>
 
-            <div class="form-group">
+            <div class="form-group server-fields">
                 <label for="database">Database Name</label>
-                <input type="text" id="database" name="database" value="${defaultDatabase}" required>
+                <input type="text" id="database" name="database" value="${defaultDatabase}">
                 <div class="help-text">Name of the database to connect to</div>
             </div>
 
-            <div class="form-group">
+            <div class="form-group server-fields">
                 <label for="user">Username</label>
-                <input type="text" id="user" name="user" value="${defaultUser}" required>
+                <input type="text" id="user" name="user" value="${defaultUser}">
             </div>
 
-            <div class="form-group">
+            <div class="form-group server-fields">
                 <label for="password">Password</label>
                 <input type="password" id="password" name="password" autocomplete="off" placeholder="${isEditing ? "Leave empty to keep existing password" : ""}">
                 <div class="help-text">${isEditing ? "Leave empty to keep the existing password, or enter a new one to change it" : "Leave empty if no password is required"}</div>
@@ -572,7 +687,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
             sqlserver: {
                 name: 'SQL Server',
                 defaultPort: 1433,
-                defaultDatabase: 'master',
+                defaultDatabase: 'dbview_dev',
                 defaultUser: 'sa',
                 subtitle: 'Enter your SQL Server database connection details'
             },
@@ -599,36 +714,74 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
 
             if (!config) return;
 
+            // Show/hide fields based on database type
+            const isSQLite = selectedType === 'sqlite';
+            const isMongoDB = selectedType === 'mongodb';
+            const serverFields = document.querySelectorAll('.server-fields');
+            const sqliteFields = document.querySelectorAll('.sqlite-fields');
+            const mongodbFields = document.querySelectorAll('.mongodb-fields');
+
+            serverFields.forEach(field => {
+                field.style.display = isSQLite ? 'none' : '';
+                // Update required attribute for inputs
+                const inputs = field.querySelectorAll('input, select');
+                inputs.forEach(input => {
+                    if (isSQLite) {
+                        input.removeAttribute('required');
+                    }
+                });
+            });
+
+            sqliteFields.forEach(field => {
+                field.style.display = isSQLite ? '' : 'none';
+                // Update required attribute for SQLite file path
+                const filePathInput = field.querySelector('#filePath');
+                if (filePathInput) {
+                    if (isSQLite) {
+                        filePathInput.setAttribute('required', 'required');
+                    } else {
+                        filePathInput.removeAttribute('required');
+                    }
+                }
+            });
+
+            mongodbFields.forEach(field => {
+                field.style.display = isMongoDB ? '' : 'none';
+            });
+
             // Update subtitle
             if (subtitleElement) {
                 subtitleElement.textContent = config.subtitle;
             }
 
-            // Update default port if current port matches another database's default
-            const currentPort = parseInt(portInput.value, 10);
-            const isDefaultPort = Object.values(dbTypeConfig).some(c => c.defaultPort === currentPort);
+            // Only update server-based fields if not SQLite
+            if (!isSQLite) {
+                // Update default port if current port matches another database's default
+                const currentPort = parseInt(portInput.value, 10);
+                const isDefaultPort = Object.values(dbTypeConfig).some(c => c.defaultPort === currentPort);
 
-            if (!currentPort || isDefaultPort) {
-                portInput.value = config.defaultPort;
-            }
+                if (!currentPort || isDefaultPort) {
+                    portInput.value = config.defaultPort;
+                }
 
-            // Update database and user placeholders if they are empty or contain defaults
-            const currentDatabase = databaseInput.value.toLowerCase();
-            const isDefaultDatabase = Object.values(dbTypeConfig).some(c =>
-                c.defaultDatabase && currentDatabase === c.defaultDatabase.toLowerCase()
-            );
+                // Update database and user placeholders if they are empty or contain defaults
+                const currentDatabase = databaseInput.value.toLowerCase();
+                const isDefaultDatabase = Object.values(dbTypeConfig).some(c =>
+                    c.defaultDatabase && currentDatabase === c.defaultDatabase.toLowerCase()
+                );
 
-            if (!currentDatabase || isDefaultDatabase) {
-                databaseInput.value = config.defaultDatabase;
-            }
+                if (!currentDatabase || isDefaultDatabase) {
+                    databaseInput.value = config.defaultDatabase;
+                }
 
-            const currentUser = userInput.value.toLowerCase();
-            const isDefaultUser = Object.values(dbTypeConfig).some(c =>
-                c.defaultUser && currentUser === c.defaultUser.toLowerCase()
-            );
+                const currentUser = userInput.value.toLowerCase();
+                const isDefaultUser = Object.values(dbTypeConfig).some(c =>
+                    c.defaultUser && currentUser === c.defaultUser.toLowerCase()
+                );
 
-            if (!currentUser || isDefaultUser) {
-                userInput.value = config.defaultUser;
+                if (!currentUser || isDefaultUser) {
+                    userInput.value = config.defaultUser;
+                }
             }
 
             console.log('[dbview-webview] Database type changed to:', selectedType);
@@ -636,6 +789,9 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
 
         // Listen for database type changes
         dbTypeSelect.addEventListener('change', handleDatabaseTypeChange);
+
+        // Initialize fields based on current database type
+        handleDatabaseTypeChange();
 
         // Production database detection
         const productionKeywords = ['prod', 'production', 'live', 'main', 'master'];

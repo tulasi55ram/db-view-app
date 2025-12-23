@@ -381,6 +381,7 @@
     "compile": "tsc -p ./tsconfig.json",
     "watch": "tsc -w -p ./tsconfig.json",
     "package": "vsce package",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test:ui": "vitest --ui",
@@ -389,11 +390,17 @@
   },
   "dependencies": {
     "@dbview/core": "workspace:*",
+    "better-sqlite3": "12.5.0",
+    "mongodb": "6.12.0",
+    "mssql": "^12.2.0",
     "mysql2": "^3.16.0",
     "pg": "^8.11.5",
     "sql-formatter": "^15.6.12"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/mssql": "^9.1.8",
     "@types/node": "^20.11.17",
     "@types/pg": "^8.10.9",
     "@types/vscode": "^1.84.0",

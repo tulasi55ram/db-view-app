@@ -99,6 +99,9 @@ docker exec -it dbview-sqlserver /opt/mssql-tools/bin/sqlcmd -S localhost -U sa 
 # SQLite using sqlite3
 sqlite3 ./docker/sqlite/dbview.db
 
+# MongoDB using mongosh
+docker exec -it dbview-mongodb mongosh -u dbview -p dbview123 --authenticationDatabase admin dbview
+
 # Or use the DBView VS Code extension!
 ```
 
@@ -133,12 +136,14 @@ sqlite3 ./docker/sqlite/dbview.db
 - **Features**: 1020+ users, products, orders tables, file-based access
 - **Note**: No username/password required
 
-#### MongoDB (Future - Phase 7)
+#### MongoDB (Phase 7 - Ready)
 - **Host**: localhost
 - **Port**: 27017
-- **Database**: dbview_dev
+- **Database**: dbview (or admin for authentication)
 - **Username**: dbview
 - **Password**: dbview123
+- **Auth Database**: admin
+- **Features**: Users, products, orders collections, views, nested documents, arrays
 
 ## 📊 Database Schema Overview
 
@@ -521,6 +526,11 @@ Server=localhost,1433;Database=dbview_dev;User Id=sa;Password=DbView123!;TrustSe
 ./docker/sqlite/dbview.db
 ```
 
+### MongoDB
+```
+mongodb://dbview:dbview123@localhost:27017/dbview?authSource=admin
+```
+
 ## 📝 Quick Verification
 
 After starting the databases, verify they have 1020+ users:
@@ -537,9 +547,13 @@ docker exec -it dbview-sqlserver /opt/mssql-tools/bin/sqlcmd -S localhost -U sa 
 
 # SQLite
 sqlite3 ./docker/sqlite/dbview.db "SELECT COUNT(*) FROM users;"
+
+# MongoDB
+docker exec -it dbview-mongodb mongosh -u dbview -p dbview123 --authenticationDatabase admin dbview --eval "db.users.countDocuments()" --quiet
 ```
 
-All should return **1020** users!
+PostgreSQL, MySQL, SQL Server, and SQLite should return **1020** users!
+MongoDB should return **5** users with sample data (products: 5, orders: 4).
 
 ## 📚 Resources
 
@@ -547,5 +561,6 @@ All should return **1020** users!
 - [MySQL Documentation](https://dev.mysql.com/doc/)
 - [SQL Server Documentation](https://learn.microsoft.com/en-us/sql/sql-server/)
 - [SQLite Documentation](https://www.sqlite.org/docs.html)
+- [MongoDB Documentation](https://www.mongodb.com/docs/)
 - [Docker Compose Documentation](https://docs.docker.com/compose/)
 - [DBView Extension Repository](https://github.com/yourusername/db-view-app)

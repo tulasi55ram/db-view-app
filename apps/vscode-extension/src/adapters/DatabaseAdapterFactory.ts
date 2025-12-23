@@ -2,6 +2,9 @@ import type { DatabaseConnectionConfig } from "@dbview/core";
 import type { DatabaseAdapter } from "./DatabaseAdapter";
 import { PostgresAdapter } from "./PostgresAdapter";
 import { MySQLAdapter } from "./MySQLAdapter";
+import { SQLServerAdapter } from "./SQLServerAdapter";
+import { SQLiteAdapter } from "./SQLiteAdapter";
+import { MongoDBAdapter } from "./MongoDBAdapter";
 
 /**
  * Factory for creating database adapters based on connection type
@@ -26,13 +29,13 @@ export class DatabaseAdapterFactory {
         return new MySQLAdapter(config);
 
       case 'sqlserver':
-        throw new Error('SQL Server adapter not yet implemented. Coming in Phase 7.4!');
+        return new SQLServerAdapter(config);
 
       case 'sqlite':
-        throw new Error('SQLite adapter not yet implemented. Coming in Phase 7.3!');
+        return new SQLiteAdapter(config);
 
       case 'mongodb':
-        throw new Error('MongoDB adapter not yet implemented. Coming in Phase 7.5!');
+        return new MongoDBAdapter(config);
 
       default:
         // TypeScript exhaustiveness check
@@ -67,6 +70,6 @@ export class DatabaseAdapterFactory {
    * @returns Array of implemented database type strings
    */
   static getImplementedTypes(): string[] {
-    return ['postgres', 'mysql']; // Will be updated as we implement more adapters
+    return ['postgres', 'mysql', 'sqlserver', 'sqlite', 'mongodb'];
   }
 }

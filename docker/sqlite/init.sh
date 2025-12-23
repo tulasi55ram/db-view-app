@@ -98,13 +98,21 @@ EOF
 # Generate 1000 more users using a shell loop
 echo "Generating 1000 additional users..."
 
-FIRST_NAMES=("James" "Mary" "John" "Patricia" "Robert" "Jennifer" "Michael" "Linda" "William" "Barbara" "David" "Elizabeth" "Richard" "Susan" "Joseph" "Jessica" "Thomas" "Sarah" "Charles" "Karen" "Christopher" "Nancy" "Daniel" "Lisa" "Matthew" "Betty" "Anthony" "Margaret" "Mark" "Sandra" "Donald" "Ashley" "Steven" "Kimberly" "Paul" "Emily" "Andrew" "Donna" "Joshua" "Michelle" "Kenneth" "Dorothy" "Kevin" "Carol" "Brian" "Amanda" "George" "Melissa" "Timothy" "Deborah")
+# Use space-separated strings instead of bash arrays
+FIRST_NAMES="James Mary John Patricia Robert Jennifer Michael Linda William Barbara David Elizabeth Richard Susan Joseph Jessica Thomas Sarah Charles Karen Christopher Nancy Daniel Lisa Matthew Betty Anthony Margaret Mark Sandra Donald Ashley Steven Kimberly Paul Emily Andrew Donna Joshua Michelle Kenneth Dorothy Kevin Carol Brian Amanda George Melissa Timothy Deborah"
 
-LAST_NAMES=("Smith" "Johnson" "Williams" "Brown" "Jones" "Garcia" "Miller" "Davis" "Rodriguez" "Martinez" "Hernandez" "Lopez" "Gonzalez" "Wilson" "Anderson" "Thomas" "Taylor" "Moore" "Jackson" "Martin" "Lee" "Perez" "Thompson" "White" "Harris" "Sanchez" "Clark" "Ramirez" "Lewis" "Robinson" "Walker" "Young" "Allen" "King" "Wright" "Scott" "Torres" "Nguyen" "Hill" "Flores" "Green" "Adams" "Nelson" "Baker" "Hall" "Rivera" "Campbell" "Mitchell" "Carter" "Roberts")
+LAST_NAMES="Smith Johnson Williams Brown Jones Garcia Miller Davis Rodriguez Martinez Hernandez Lopez Gonzalez Wilson Anderson Thomas Taylor Moore Jackson Martin Lee Perez Thompson White Harris Sanchez Clark Ramirez Lewis Robinson Walker Young Allen King Wright Scott Torres Nguyen Hill Flores Green Adams Nelson Baker Hall Rivera Campbell Mitchell Carter Roberts"
 
-DEPARTMENTS=("Engineering" "Sales" "Marketing" "Support" "HR" "Finance" "Operations" "Design" "Product" "QA")
+DEPARTMENTS="Engineering Sales Marketing Support HR Finance Operations Design Product QA"
 
-ROLES=("user" "user" "user" "user" "moderator" "admin")
+ROLES="user user user user moderator admin"
+
+# Helper function to get nth word from a string
+get_word() {
+    local string="$1"
+    local index=$2
+    echo "$string" | awk -v idx="$index" '{print $(idx + 1)}'
+}
 
 for i in $(seq 1 1000); do
     first_idx=$((i % 50))
@@ -112,11 +120,11 @@ for i in $(seq 1 1000); do
     dept_idx=$((i % 10))
     role_idx=$((i % 6))
 
-    first_name="${FIRST_NAMES[$first_idx]}"
-    last_name="${LAST_NAMES[$last_idx]}"
+    first_name=$(get_word "$FIRST_NAMES" $first_idx)
+    last_name=$(get_word "$LAST_NAMES" $last_idx)
     full_name="${first_name} ${last_name}"
-    dept="${DEPARTMENTS[$dept_idx]}"
-    role="${ROLES[$role_idx]}"
+    dept=$(get_word "$DEPARTMENTS" $dept_idx)
+    role=$(get_word "$ROLES" $role_idx)
     level=$((1 + (i % 5)))
     is_active=1
 
