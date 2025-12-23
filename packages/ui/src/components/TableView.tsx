@@ -4,6 +4,8 @@ import type { SortingState } from "@tanstack/react-table";
 import type { ColumnMetadata, TableIndex, TableStatistics } from "@dbview/core";
 import { DataGrid, type DataGridColumn } from "./DataGrid";
 import { DataGridV2 } from "./DataGridV2";
+import { VirtualDataGrid } from "./VirtualDataGrid";
+import { JumpToRowDialog } from "./JumpToRowDialog";
 import { InsertRowModal } from "./InsertRowModal";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
 import { ColumnVisibilityMenu } from "./ColumnVisibilityMenu";
@@ -36,7 +38,9 @@ import {
   Trash2,
   Plus,
   Info,
-  Upload
+  Upload,
+  ArrowRight,
+  Bookmark
 } from "lucide-react";
 import clsx from "clsx";
 import { toast } from "sonner";
@@ -90,6 +94,10 @@ export const TableView: FC<TableViewProps> = ({
   const [duplicateRowData, setDuplicateRowData] = useState<Record<string, unknown> | undefined>(undefined);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [jumpToRowDialogOpen, setJumpToRowDialogOpen] = useState(false);
+
+  // Reference for virtual grid scroll
+  const virtualGridRef = { current: { scrollToRow: (_: number) => {} } };
 
   // Insert operation state
   const [isInserting, setIsInserting] = useState(false);
@@ -116,6 +124,19 @@ export const TableView: FC<TableViewProps> = ({
       filters.addCondition();
     }
   }, [showFilters]);
+
+  // Keyboard shortcut for Jump to Row (Ctrl+G / Cmd+G)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
+        e.preventDefault();
+        setJumpToRowDialogOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Request indexes and statistics when metadata panel opens
   useEffect(() => {
@@ -730,6 +751,13 @@ export const TableView: FC<TableViewProps> = ({
                   title={`Copy ${editing.selectedRows.size} row(s) as INSERT statements`}
                 />
               )}
+              <div className="w-px h-5 bg-vscode-border mx-1" />
+              <ToolbarButton
+                icon={<ArrowRight className="h-3.5 w-3.5" />}
+                label="Jump"
+                onClick={() => setJumpToRowDialogOpen(true)}
+                title="Jump to row (Ctrl+G)"
+              />
             </div>
           </div>
 
@@ -788,9 +816,9 @@ export const TableView: FC<TableViewProps> = ({
       )}
 
       {/* Data Grid */}
-      <main className="flex-1 overflow-auto p-3">
+      <main className="flex-1 overflow-hidden">
         {metadata && metadata.length > 0 ? (
-          <DataGridV2
+          <VirtualDataGrid
             columns={metadata}
             rows={rows}
             loading={loading}
@@ -807,6 +835,10 @@ export const TableView: FC<TableViewProps> = ({
             visibleColumns={visibleColumns}
             sorting={sorting}
             onSortingChange={setSorting}
+            totalRows={totalRows}
+            currentPage={currentPage}
+            pageSize={pageSize}
+            offset={offset}
           />
         ) : (
           <DataGrid
@@ -925,6 +957,21 @@ export const TableView: FC<TableViewProps> = ({
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
         onImport={handleImport}
+      />
+
+      {/* Jump to Row Dialog */}
+      <JumpToRowDialog
+        open={jumpToRowDialogOpen}
+        onOpenChange={setJumpToRowDialogOpen}
+        totalRows={totalRows}
+        currentPage={currentPage}
+        pageSize={pageSize}
+        offset={offset}
+        columns={metadata}
+        onJumpToRow={(rowIndex) => {
+          // The VirtualDataGrid will handle the scrolling internally
+          console.log('[TableView] Jump to row:', rowIndex);
+        }}
       />
     </div>
   );

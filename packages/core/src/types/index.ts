@@ -15,6 +15,7 @@ export interface ConnectionConfig {
   database: string;
   ssl?: boolean | SSLConfig; // Support both simple boolean and advanced config
   savePassword?: boolean; // Track if password should be saved
+  readOnly?: boolean; // Block all write operations (INSERT, UPDATE, DELETE)
 }
 
 export interface Column {
@@ -168,6 +169,7 @@ export interface BaseTab {
   type: TabType;
   title: string;
   createdAt: number;
+  connectionName?: string; // Which connection this tab belongs to
 }
 
 export interface TableTab extends BaseTab {

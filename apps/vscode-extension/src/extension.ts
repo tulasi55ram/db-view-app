@@ -2,12 +2,13 @@ import * as vscode from "vscode";
 import type { ConnectionConfig } from "@dbview/core";
 import { PostgresClient } from "./postgresClient";
 import { SchemaExplorerProvider, SchemaTreeItem, type TableIdentifier } from "./schemaExplorer";
-import { openTableInPanel, openQueryInPanel, openERDiagramInPanel } from "./mainPanel";
+import { openTableInPanel, openQueryInPanel, openERDiagramInPanel, updateWebviewTheme } from "./mainPanel";
 import {
   getStoredConnection,
   getAllSavedConnections,
   setActiveConnection,
   deleteConnection,
+  updateConnection,
   getActiveConnectionName,
   clearStoredConnection,
   isPasswordSaved,
@@ -17,6 +18,9 @@ import {
 } from "./connectionSettings";
 import { showConnectionConfigPanel } from "./connectionConfigPanel";
 
+// Module-level reference for cleanup on deactivate
+let schemaExplorerInstance: SchemaExplorerProvider | null = null;
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   console.log("[dbview] Extension activating...");
 
@@ -25,6 +29,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   let client = new PostgresClient(connection ?? undefined);
   const schemaExplorer = new SchemaExplorerProvider(client, connection, context);
+  schemaExplorerInstance = schemaExplorer; // Store for cleanup on deactivate
+
+  // Start health check if there's an initial connection
+  if (connection) {
+    // Do an initial ping to set connection status
+    client.ping().then(isAlive => {
+      if (isAlive) {
+        client.startHealthCheck();
+        console.log("[dbview] Initial connection verified, health check started");
+      } else {
+        console.log("[dbview] Initial connection failed, will show status in sidebar");
+      }
+      // Force refresh after ping to update status indicator
+      console.log("[dbview] Refreshing tree after initial ping, status:", client.status);
+      schemaExplorer.refresh();
+    }).catch(err => {
+      console.error("[dbview] Initial ping failed:", err);
+      schemaExplorer.refresh();
+    });
+  }
 
   // Helper to safely switch to a new client
   async function switchClient(newConnection: ConnectionConfig | null): Promise<void> {
@@ -84,14 +108,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const openTableCommand = vscode.commands.registerCommand(
     "dbview.openTable",
     async (target?: TableIdentifier | SchemaTreeItem) => {
+      console.log(`[dbview] ========== openTable COMMAND CALLED ==========`);
+      console.log(`[dbview] target type:`, target ? (('node' in target) ? 'SchemaTreeItem' : 'TableIdentifier') : 'undefined');
+
       // Handle both TableIdentifier (from tree item command) and SchemaTreeItem (from context menu)
       let selection: TableIdentifier;
+      let conn: ConnectionConfig | null = null;
+      let targetClient: PostgresClient | null = null;
 
       if (target && 'node' in target) {
         // It's a SchemaTreeItem from context menu
         const treeItem = target as SchemaTreeItem;
+        console.log(`[dbview] Tree item node type: ${treeItem.node.type}`);
+
         if (treeItem.node.type === 'table') {
           selection = { schema: treeItem.node.schema, table: treeItem.node.table };
+          // Get connection from tree item
+          conn = treeItem.connectionInfo ?? null;
+          console.log(`[dbview] openTable: Connection from tree item - Name: "${conn?.name}", Database: "${conn?.database}", Host: "${conn?.host}:${conn?.port}"`);
+
+          // Show visual notification
+          vscode.window.showInformationMessage(`Opening table from connection: ${conn?.name || 'unnamed'}`);
+
+          if (conn) {
+            targetClient = await schemaExplorer.getOrCreateClient(conn);
+          }
         } else {
           // Fallback if wrong node type
           vscode.window.showWarningMessage('Please select a table to open.');
@@ -100,18 +141,38 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       } else if (target && 'schema' in target && 'table' in target) {
         // It's a TableIdentifier
         selection = target as TableIdentifier;
+        conn = connection;
+        targetClient = client;
+        console.log(`[dbview] openTable: Using global connection - Name: "${conn?.name}", Database: "${conn?.database}"`);
       } else {
         // No target provided, use default
         selection = { schema: "public", table: "users" };
+        conn = connection;
+        targetClient = client;
+        console.log(`[dbview] openTable: Using default connection - Name: "${conn?.name}", Database: "${conn?.database}"`);
       }
 
-      await openTableInPanel(context, client, selection);
+      if (!conn || !targetClient) {
+        vscode.window.showWarningMessage('No connection available to open table');
+        return;
+      }
+
+      const connKey = conn.name || `${conn.host}:${conn.port}/${conn.database}`;
+      console.log(`[dbview] openTable: Opening ${selection.schema}.${selection.table} for connection "${conn.name || conn.database}"`);
+      console.log(`[dbview] openTable: Connection key will be: "${connKey}"`);
+
+      await openTableInPanel(context, targetClient, conn, selection);
+      console.log(`[dbview] ========== openTable COMMAND FINISHED ==========`);
     }
   );
 
-  const openSqlRunnerCommand = vscode.commands.registerCommand("dbview.openSqlRunner", () =>
-    openQueryInPanel(context, client)
-  );
+  const openSqlRunnerCommand = vscode.commands.registerCommand("dbview.openSqlRunner", () => {
+    if (!connection) {
+      vscode.window.showWarningMessage('No connection available');
+      return;
+    }
+    return openQueryInPanel(context, client, connection);
+  });
 
   const switchConnectionCommand = vscode.commands.registerCommand(
     "dbview.switchConnection",
@@ -260,10 +321,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const refreshConnectionCommand = vscode.commands.registerCommand(
     "dbview.refreshConnection",
     async (item?: SchemaTreeItem) => {
-      if (!connection || !item || item.node.type !== "connection") {
-        return;
-      }
-
+      // Works with or without tree item - just refresh the explorer
       schemaExplorer.refresh();
     }
   );
@@ -276,13 +334,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
 
-      const editedConnection = await showConnectionConfigPanel(context, item.connectionInfo);
+      const originalName = item.connectionInfo.name;
+      // Skip save in panel - we'll handle it with updateConnection to properly handle name changes
+      const editedConnection = await showConnectionConfigPanel(context, item.connectionInfo, { skipSave: true });
       if (!editedConnection) {
         return;
       }
 
+      // Use updateConnection to properly handle name changes
+      if (originalName && editedConnection.name) {
+        await updateConnection(context, originalName, editedConnection);
+
+        // If name changed, invalidate the old cached client
+        if (originalName !== editedConnection.name) {
+          schemaExplorer.invalidateClient(originalName);
+        }
+      }
+
+      // Always invalidate current client to force reconnect with new settings
+      if (editedConnection.name) {
+        schemaExplorer.invalidateClient(editedConnection.name);
+      }
+
       vscode.window.showInformationMessage("Connection updated successfully");
-      await switchClient(editedConnection);
+      schemaExplorer.refresh();
     }
   );
 
@@ -604,43 +679,75 @@ ${info.version.split(',')[0]}
 
   const disconnectConnectionCommand = vscode.commands.registerCommand(
     "dbview.disconnectConnection",
-    async () => {
-      if (!connection) {
-        vscode.window.showWarningMessage("No active connection to disconnect");
+    async (item?: SchemaTreeItem) => {
+      // Get connection from tree item or use global connection
+      const conn = item?.connectionInfo ?? connection;
+      if (!conn) {
+        vscode.window.showWarningMessage("No connection to disconnect");
         return;
       }
-      await client.disconnect();
-      vscode.window.showInformationMessage("Disconnected from database");
-      schemaExplorer.refresh();
+
+      await schemaExplorer.disconnectConnection(conn);
+      vscode.window.showInformationMessage(`Disconnected from ${conn.name || conn.database}`);
     }
   );
 
   const reconnectConnectionCommand = vscode.commands.registerCommand(
     "dbview.reconnectConnection",
-    async () => {
-      if (!connection) {
-        vscode.window.showWarningMessage("No connection configured");
+    async (item?: SchemaTreeItem) => {
+      // Get connection from tree item or use global connection
+      const conn = item?.connectionInfo ?? connection;
+      if (!conn) {
+        vscode.window.showWarningMessage("No connection to reconnect");
         return;
       }
-      await client.disconnect();
-      client = new PostgresClient(connection);
-      schemaExplorer.updateClient(client, connection);
-      schemaExplorer.refresh();
-      vscode.window.showInformationMessage("Reconnected to database");
+
+      vscode.window.showInformationMessage(`Reconnecting to ${conn.name || conn.database}...`);
+
+      const success = await schemaExplorer.reconnectConnection(conn);
+      if (success) {
+        vscode.window.showInformationMessage(`Reconnected to ${conn.name || conn.database} successfully`);
+      } else {
+        vscode.window.showErrorMessage(`Failed to reconnect to ${conn.name || conn.database}`);
+      }
     }
   );
 
   const newQueryFromConnectionCommand = vscode.commands.registerCommand(
     "dbview.newQueryFromConnection",
-    async () => {
-      await openQueryInPanel(context, client);
+    async (item?: SchemaTreeItem) => {
+      // Get connection from tree item or use global connection
+      const conn = item?.connectionInfo ?? connection;
+      if (!conn) {
+        vscode.window.showWarningMessage('No connection available');
+        return;
+      }
+
+      // Get the appropriate client
+      const targetClient = item?.connectionInfo
+        ? await schemaExplorer.getOrCreateClient(item.connectionInfo)
+        : client;
+
+      await openQueryInPanel(context, targetClient, conn);
     }
   );
 
   const openERDiagramCommand = vscode.commands.registerCommand(
     "dbview.openERDiagram",
-    async () => {
-      await openERDiagramInPanel(context, client);
+    async (item?: SchemaTreeItem) => {
+      // Get connection from tree item or use global connection
+      const conn = item?.connectionInfo ?? connection;
+      if (!conn) {
+        vscode.window.showWarningMessage('No connection available');
+        return;
+      }
+
+      // Get the appropriate client
+      const targetClient = item?.connectionInfo
+        ? await schemaExplorer.getOrCreateClient(item.connectionInfo)
+        : client;
+
+      await openERDiagramInPanel(context, targetClient, conn);
     }
   );
 
@@ -731,6 +838,12 @@ ${info.version.split(',')[0]}
     }
   );
 
+  // Theme change listener - update webview when VS Code theme changes
+  const themeChangeListener = vscode.window.onDidChangeActiveColorTheme(() => {
+    console.log("[dbview] Theme changed, updating webview");
+    updateWebviewTheme();
+  });
+
   context.subscriptions.push(
     configureConnectionCommand,
     addConnectionCommand,
@@ -759,14 +872,18 @@ ${info.version.split(',')[0]}
     newQueryFromConnectionCommand,
     showSecurityInfoCommand,
     clearPasswordCommand,
-    clearAllPasswordsCommand
+    clearAllPasswordsCommand,
+    themeChangeListener
   );
 
   console.log("[dbview] Extension activated successfully");
 }
 
-export function deactivate(): void {
-  // nothing to cleanup yet
+export async function deactivate(): Promise<void> {
+  // Cleanup all cached clients
+  if (schemaExplorerInstance) {
+    await schemaExplorerInstance.cleanupAllClients();
+  }
 }
 
 function buildConnectionString(connection: ConnectionConfig): string {

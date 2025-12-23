@@ -4,9 +4,11 @@ import { saveConnectionWithName } from "./connectionSettings";
 
 export function showConnectionConfigPanel(
   context: vscode.ExtensionContext,
-  defaults?: Partial<ConnectionConfig>
+  defaults?: Partial<ConnectionConfig>,
+  options?: { skipSave?: boolean }
 ): Promise<ConnectionConfig | null> {
   console.log("[dbview] showConnectionConfigPanel called with defaults:", defaults);
+  const skipSave = options?.skipSave ?? false;
 
   return new Promise((resolve) => {
     let resolved = false;
@@ -60,12 +62,15 @@ export function showConnectionConfigPanel(
               port: parseInt(message.port, 10),
               database: message.database,
               user: message.user,
-              password
+              password,
+              readOnly: message.readOnly || false
             };
 
             console.log("[dbview] Connection object created:", { ...connection, password: connection.password ? "***" : undefined });
 
-            if (message.saveConnection) {
+            if (skipSave) {
+              console.log("[dbview] Skipping save (caller will handle it)");
+            } else if (message.saveConnection) {
               console.log("[dbview] Saving connection...");
               if (connection.name?.trim()) {
                 console.log("[dbview] Saving with name:", connection.name);
@@ -124,7 +129,8 @@ export function showConnectionConfigPanel(
                 port: parseInt(message.port, 10),
                 database: message.database,
                 user: message.user,
-                password: testPassword
+                password: testPassword,
+                readOnly: message.readOnly || false
               };
 
               const { testConnection } = await import("./postgresClient");
@@ -200,9 +206,10 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
   const defaultPort = defaults?.port ?? 5432;
   const defaultDatabase = escapeHtml(defaults?.database ?? "postgres");
   const defaultUser = escapeHtml(defaults?.user ?? "postgres");
+  const defaultReadOnly = defaults?.readOnly ?? false;
   const isEditing = Boolean(defaults?.name);
 
-  console.log("[dbview] Webview defaults:", { defaultName, defaultHost, defaultPort, defaultDatabase, defaultUser, isEditing });
+  console.log("[dbview] Webview defaults:", { defaultName, defaultHost, defaultPort, defaultDatabase, defaultUser, defaultReadOnly, isEditing });
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -384,6 +391,12 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
             color: var(--vscode-badge-foreground);
         }
 
+        .status-message.warning {
+            background-color: var(--vscode-inputValidation-warningBackground);
+            color: var(--vscode-inputValidation-warningForeground);
+            border: 1px solid var(--vscode-inputValidation-warningBorder);
+        }
+
         .btn-test {
             background-color: transparent;
             color: var(--vscode-button-foreground);
@@ -447,6 +460,16 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
                 <label for="saveConnection">Save connection for future sessions</label>
             </div>
 
+            <div class="checkbox-group">
+                <input type="checkbox" id="readOnly" name="readOnly" ${defaultReadOnly ? "checked" : ""}>
+                <label for="readOnly">🔒 Read-only mode (block INSERT, UPDATE, DELETE)</label>
+            </div>
+            <div class="help-text" style="margin-top: -12px; margin-bottom: 16px; margin-left: 24px;">Enable for production databases to prevent accidental data changes</div>
+
+            <div id="productionWarning" class="status-message warning" style="display: none;">
+                ⚠️ This looks like a production database. Consider enabling read-only mode.
+            </div>
+
             <div id="statusMessage" class="status-message"></div>
 
             <div class="button-group">
@@ -466,7 +489,41 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
         const testBtn = document.getElementById('testBtn');
         const saveBtn = document.getElementById('saveBtn');
         const statusMessage = document.getElementById('statusMessage');
-        
+        const productionWarning = document.getElementById('productionWarning');
+        const nameInput = document.getElementById('name');
+        const hostInput = document.getElementById('host');
+        const databaseInput = document.getElementById('database');
+        const readOnlyCheckbox = document.getElementById('readOnly');
+
+        // Production database detection
+        const productionKeywords = ['prod', 'production', 'live', 'main', 'master'];
+
+        function checkProductionWarning() {
+            const name = nameInput.value.toLowerCase();
+            const host = hostInput.value.toLowerCase();
+            const database = databaseInput.value.toLowerCase();
+            const isReadOnly = readOnlyCheckbox.checked;
+
+            const isPossiblyProduction = productionKeywords.some(keyword =>
+                name.includes(keyword) || host.includes(keyword) || database.includes(keyword)
+            );
+
+            if (isPossiblyProduction && !isReadOnly) {
+                productionWarning.style.display = 'block';
+            } else {
+                productionWarning.style.display = 'none';
+            }
+        }
+
+        // Check on input changes
+        nameInput.addEventListener('input', checkProductionWarning);
+        hostInput.addEventListener('input', checkProductionWarning);
+        databaseInput.addEventListener('input', checkProductionWarning);
+        readOnlyCheckbox.addEventListener('change', checkProductionWarning);
+
+        // Initial check
+        checkProductionWarning();
+
         function submitForm({ forceSave = false } = {}) {
             console.log('[dbview-webview] submitForm called, forceSave:', forceSave);
             const formData = new FormData(form);
@@ -478,6 +535,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
             const password = formData.get('password');
             const saveConnectionCheckbox = formData.get('saveConnection') === 'on';
             const saveConnection = forceSave ? true : saveConnectionCheckbox;
+            const readOnly = formData.get('readOnly') === 'on';
 
             console.log('[dbview-webview] Form data:', { name, host, port, database, user, saveConnection });
 
@@ -510,7 +568,8 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
                 database,
                 user,
                 password,
-                saveConnection
+                saveConnection,
+                readOnly
             });
             console.log('[dbview-webview] Message posted');
         }
@@ -534,6 +593,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
             const database = formData.get('database');
             const user = formData.get('user');
             const password = formData.get('password');
+            const readOnly = formData.get('readOnly') === 'on';
 
             // Basic validation
             if (!host || !port || !database || !user) {
@@ -557,7 +617,8 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig>): string {
                 port,
                 database,
                 user,
-                password
+                password,
+                readOnly
             });
         });
 

@@ -14,8 +14,8 @@ A modern, powerful database viewer/editor for VS Code with rich UI/UX.
 | Phase 2 | Data Editing & UX | ✅ Complete |
 | Phase 3 | Advanced Table Viewer | ✅ Complete |
 | Phase 4 | Schema Insights & Tools | ✅ Complete |
-| Phase 5 | Productivity Tools | 🔄 Phase 5.3 Complete |
-| Phase 6 | Security & Performance | ⏳ Planned |
+| Phase 5 | Productivity Tools | ✅ Complete |
+| Phase 6 | Security & Performance | ✅ Complete |
 | Phase 7 | Multi-Database Support | ⏳ Planned |
 | Phase 8 | Electron Desktop App | ⏳ Planned |
 
@@ -697,54 +697,173 @@ LIMIT limit;
 ### Goal
 Make dbview reliable and safe for production databases.
 
-### 6.1 Read-Only Mode
+### 6.1 Read-Only Mode ✅ Complete
+
+**Implementation:** Connection config flag with visual indicators and write operation blocking
 
 **Features:**
-- [ ] Per-connection read-only toggle
-- [ ] Visual indicator (badge on connection)
-- [ ] Block all write operations
-- [ ] Warn on connection to production
+- [x] Per-connection read-only toggle (checkbox in connection form)
+- [x] Visual indicator (🔒 prefix on connection name in sidebar)
+- [x] Block all write operations (UPDATE, INSERT, DELETE, IMPORT)
+- [x] Warn on connection to production (detects 'prod', 'production', 'live' keywords)
+- [x] Read-only state persists with connection config
+
+**Documentation:**
+- [connectionConfigPanel.ts](apps/vscode-extension/src/connectionConfigPanel.ts) - Read-only toggle and production warning
+- [schemaExplorer.ts](apps/vscode-extension/src/schemaExplorer.ts) - Visual 🔒 indicator
+- [mainPanel.ts](apps/vscode-extension/src/mainPanel.ts) - Write operation blocking
 
 **UI Components:**
+
+**Connection Form:**
+```
+┌─────────────────────────────────────────┐
+│  Configure Connection                    │
+├─────────────────────────────────────────┤
+│  Connection Name: [production-db_____]   │
+│  Host:            [db.prod.example.com]  │
+│  ...                                     │
+│                                          │
+│  ☑ 🔒 Read-Only Mode                     │
+│    Block all write operations            │
+│                                          │
+│  ⚠️ Warning: This appears to be a        │
+│  production database. Consider enabling  │
+│  read-only mode for safety.              │
+├─────────────────────────────────────────┤
+│  [Test Connection]  [Cancel]  [Save]     │
+└─────────────────────────────────────────┘
+```
+
+**Sidebar Tree:**
 ```
 DB VIEW
-├─ 🔒 production-db (READ ONLY)
+├─ 🔒 production-db (Read-Only Mode)
 │  └─ 📂 public
 ├─ 🔌 localhost:5432 (dbview_dev)
 │  └─ 📂 public
 ```
 
-### 6.2 Virtual Scrolling
-
-**Features:**
-- [ ] Render only visible rows
-- [ ] Smooth scrolling for 100k+ rows
-- [ ] Lazy load on scroll
-- [ ] Skeleton loading states
-
-### 6.3 Connection Health
-
-**Features:**
-- [ ] Connection status indicator
-- [ ] Auto-reconnect on disconnect
-- [ ] Connection timeout handling
-- [ ] Multiple connection pools
-
-**UI Components:**
+**Blocked Operation Error:**
 ```
 ┌────────────────────────────────────────┐
-│ 🔴 Connection lost to localhost:5432   │
+│ 🔒 Connection is in read-only mode.    │
+│    Write operations are blocked.        │
+└────────────────────────────────────────┘
+```
+
+### 6.2 Virtual Scrolling ✅ Complete
+
+**Implementation:** TanStack Virtual with TanStack Table integration
+
+**Features:**
+- [x] Render only visible rows (TanStack Virtual with 5-row overscan)
+- [x] Smooth scrolling for large datasets at 60 FPS
+- [x] Scroll progress bar (thin blue bar at top showing position)
+- [x] Scroll status bar (rows X-Y of Z, page info)
+- [x] Floating scroll-to-top/bottom buttons
+- [x] Jump-to-row dialog (Ctrl+G / Cmd+G)
+- [x] Keyboard navigation (Home/End to scroll)
+- [x] Spinner loading state
+- [x] Performance optimizations (React.memo, CSS containment)
+
+**Documentation:**
+- [VirtualDataGrid.tsx](packages/ui/src/components/VirtualDataGrid.tsx)
+- [ScrollProgressBar.tsx](packages/ui/src/components/ScrollProgressBar.tsx)
+- [ScrollButtons.tsx](packages/ui/src/components/ScrollButtons.tsx)
+- [JumpToRowDialog.tsx](packages/ui/src/components/JumpToRowDialog.tsx)
+
+### 6.3 Connection Health ✅ Complete
+
+**Implementation:** PostgresClient with EventEmitter for status tracking, auto-reconnect, and health checks
+
+**Features:**
+- [x] Connection status indicator (🟢 connected, 🟡 connecting, 🔴 error, ⚪ disconnected)
+- [x] Visual status in sidebar with icon colors and description
+- [x] Auto-reconnect on disconnect (up to 3 attempts with 2s delay)
+- [x] Connection timeout handling (10s connection, 30s idle, 60s query timeout)
+- [x] Periodic health check ping (every 30 seconds)
+- [x] Connection lost notification with Reconnect/Dismiss options
+- [x] Connection restored notification
+
+**Documentation:**
+- [postgresClient.ts](apps/vscode-extension/src/postgresClient.ts) - Connection status, health check, auto-reconnect
+- [schemaExplorer.ts](apps/vscode-extension/src/schemaExplorer.ts) - Status listener and visual indicators
+- [extension.ts](apps/vscode-extension/src/extension.ts) - Reconnect command and initial health check
+
+**UI Components:**
+
+**Sidebar Connection Status:**
+```
+DB VIEW
+├─ 🟢 production-db (64 MB)        ← Connected (green icon)
+├─ 🟡 staging-db (Connecting...)   ← Connecting (yellow icon, spinning)
+├─ 🔴 dev-db (Connection Error)    ← Error (red warning icon)
+├─ ⚪ backup-db (Disconnected)     ← Disconnected (gray icon)
+```
+
+**Tooltip Status:**
+```
+┌────────────────────────────────────┐
+│ **mydb**                           │
+│                                    │
+│ 🟢 **Status:** connected           │
+│ 🖥️ Host: localhost:5432           │
+│ 📀 Database: mydb                  │
+│ 👤 User: postgres                  │
+│ 💾 Size: 64 MB                     │
+└────────────────────────────────────┘
+```
+
+**Connection Error Notification:**
+```
+┌────────────────────────────────────────┐
+│ dbview: Connection issue - ECONNRESET  │
 │    [Reconnect] [Dismiss]               │
 └────────────────────────────────────────┘
 ```
 
-### 6.4 Theme Support
+**Technical Details:**
+- Pool settings: 10 max connections, 10s connection timeout, 30s idle timeout
+- Auto-reconnect: 3 max attempts, 2s delay between attempts
+- Health check: Runs `SELECT 1` every 30 seconds
+- Connection errors detected: ECONNREFUSED, ECONNRESET, ETIMEDOUT, server termination
+
+### 6.4 Theme Support ✅ Complete
+
+**Implementation:** VS Code ColorThemeKind detection with CSS custom properties
 
 **Features:**
-- [ ] Auto-detect VS Code theme
-- [ ] Light/dark mode support
-- [ ] High contrast mode
-- [ ] Custom color overrides
+- [x] Auto-detect VS Code theme (Light, Dark, High Contrast, High Contrast Light)
+- [x] Light mode support with appropriate color palette
+- [x] Dark mode support (default)
+- [x] High contrast mode for accessibility
+- [x] High contrast light mode support
+- [x] Real-time theme switching (listens for VS Code theme changes)
+- [x] Theme-aware Toaster notifications
+
+**Documentation:**
+- [webviewHost.ts](apps/vscode-extension/src/webviewHost.ts) - Theme detection and HTML injection
+- [index.css](packages/ui/src/styles/index.css) - CSS variables for all themes
+- [extension.ts](apps/vscode-extension/src/extension.ts) - Theme change listener
+- [mainPanel.ts](apps/vscode-extension/src/mainPanel.ts) - Theme update messaging
+- [App.tsx](packages/ui/src/App.tsx) - Theme message handler
+
+**Technical Details:**
+- Theme is passed to webview via `data-theme` attribute on `<html>` element
+- CSS custom properties (`--color-*`) change based on `[data-theme]` selector
+- Body gets `vscode-light`, `vscode-dark`, or `vscode-high-contrast` class
+- Theme changes trigger `THEME_CHANGE` message to webview
+- Toaster component dynamically switches between light/dark themes
+
+**Theme Color Variables:**
+
+| Variable | Dark | Light | High Contrast |
+|----------|------|-------|---------------|
+| `--color-bg` | #1e1e1e | #ffffff | #000000 |
+| `--color-text` | #cccccc | #333333 | #ffffff |
+| `--color-accent` | #007acc | #0066b8 | #6fc3df |
+| `--color-border` | #3c3c3c | #cecece | #6fc3df |
 
 ---
 

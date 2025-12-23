@@ -11,7 +11,7 @@ export function useTabs() {
   }, []);
 
   // Add a new table tab
-  const addTableTab = useCallback((schema: string, table: string, limit: number = 100) => {
+  const addTableTab = useCallback((schema: string, table: string, limit: number = 100, connectionName?: string) => {
     const tabId = generateTabId();
     const newTab: TableTab = {
       id: tabId,
@@ -26,6 +26,7 @@ export function useTabs() {
       rows: [],
       loading: true,
       createdAt: Date.now(),
+      connectionName,
     };
 
     setTabs((prev) => [...prev, newTab]);
@@ -34,17 +35,18 @@ export function useTabs() {
   }, [generateTabId]);
 
   // Add a new query tab
-  const addQueryTab = useCallback(() => {
+  const addQueryTab = useCallback((connectionName?: string) => {
     const tabId = generateTabId();
     const newTab: QueryTab = {
       id: tabId,
       type: 'query',
-      title: 'New Query',
+      title: connectionName ? `Query - ${connectionName}` : 'New Query',
       sql: 'SELECT NOW();',
       columns: [],
       rows: [],
       loading: false,
       createdAt: Date.now(),
+      connectionName,
     };
 
     setTabs((prev) => [...prev, newTab]);
@@ -72,10 +74,10 @@ export function useTabs() {
   }, [generateTabId]);
 
   // Find or create table tab
-  const findOrCreateTableTab = useCallback((schema: string, table: string, limit: number = 100) => {
-    // Check if tab already exists for this table
+  const findOrCreateTableTab = useCallback((schema: string, table: string, limit: number = 100, connectionName?: string) => {
+    // Check if tab already exists for this table (and same connection)
     const existingTab = tabs.find(
-      (t) => t.type === 'table' && t.schema === schema && t.table === table
+      (t) => t.type === 'table' && t.schema === schema && t.table === table && t.connectionName === connectionName
     );
 
     if (existingTab) {
@@ -83,7 +85,7 @@ export function useTabs() {
       return existingTab.id;
     }
 
-    return addTableTab(schema, table, limit);
+    return addTableTab(schema, table, limit, connectionName);
   }, [tabs, addTableTab]);
 
   // Update tab data

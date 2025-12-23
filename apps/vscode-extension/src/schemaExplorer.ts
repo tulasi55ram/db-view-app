@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { ConnectionConfig } from "@dbview/core";
-import { PostgresClient } from "./postgresClient";
+import { PostgresClient, type ConnectionStatus, type ConnectionStatusEvent } from "./postgresClient";
+import { getAllSavedConnections, getActiveConnectionName } from "./connectionSettings";
 
 export interface TableIdentifier {
   schema: string;
@@ -52,22 +53,291 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.emitter.event;
   private connectionError: string | null = null;
+  private connectionStatus: ConnectionStatus = 'disconnected';
+  private statusListener: ((event: ConnectionStatusEvent) => void) | null = null;
+
+  // Client cache for multiple connections (lazy-connect)
+  private clients: Map<string, PostgresClient> = new Map();
+  private clientStatuses: Map<string, ConnectionStatus> = new Map();
 
   constructor(
     private client: PostgresClient,
     private connection: ConnectionConfig | null = null,
     private context: vscode.ExtensionContext
-  ) {}
+  ) {
+    // Initialize status from client
+    this.connectionStatus = client.status;
+    this.setupStatusListener();
+
+    // Cache the initial client if we have a connection
+    if (connection) {
+      const key = this.getConnectionKey(connection);
+      this.clients.set(key, client);
+      this.clientStatuses.set(key, client.status);
+    }
+  }
+
+  private getConnectionKey(conn: ConnectionConfig): string {
+    return conn.name || `${conn.host}:${conn.port}/${conn.database}`;
+  }
+
+  // Public method to get or create a client for a specific connection
+  public async getOrCreateClient(conn: ConnectionConfig): Promise<PostgresClient> {
+    const key = this.getConnectionKey(conn);
+
+    // Check if we already have a client for this connection
+    if (this.clients.has(key)) {
+      const existingClient = this.clients.get(key)!;
+      const currentStatus = this.clientStatuses.get(key);
+
+      // If client exists but status is disconnected, we need to connect it
+      if (currentStatus === 'disconnected' || !currentStatus) {
+        console.log(`[dbview] Cached client for ${key} is disconnected, connecting...`);
+        this.clientStatuses.set(key, 'connecting');
+
+        try {
+          const isAlive = await existingClient.ping();
+          console.log(`[dbview] Ping result for cached client ${key}: ${isAlive}`);
+          if (isAlive) {
+            existingClient.startHealthCheck();
+            this.clientStatuses.set(key, 'connected');
+            console.log(`[dbview] Status set to 'connected' for cached client ${key}`);
+          }
+        } catch (error) {
+          console.error(`[dbview] Failed to connect cached client ${key}:`, error);
+          this.clientStatuses.set(key, 'error');
+        }
+      }
+
+      return existingClient;
+    }
+
+    // Create new client
+    console.log(`[dbview] Creating new client for connection: ${key}`);
+    const newClient = new PostgresClient(conn);
+
+    // Set up status listener for this client
+    const listener = (event: ConnectionStatusEvent) => {
+      this.clientStatuses.set(key, event.status);
+      // Delayed refresh to avoid being ignored during getChildren()
+      setTimeout(() => this.emitter.fire(), 100);
+
+      // Show notification for connection errors
+      if (event.status === 'error' && event.error) {
+        vscode.window.showWarningMessage(
+          `dbview: ${conn.name || conn.database} - ${event.error.message}`,
+          'Reconnect'
+        ).then(selection => {
+          if (selection === 'Reconnect') {
+            this.reconnectClient(conn);
+          }
+        });
+      }
+    };
+
+    newClient.on('statusChange', listener);
+
+    // Cache the client first (so it's available during ping)
+    this.clients.set(key, newClient);
+    this.clientStatuses.set(key, 'connecting');
+
+    // Try to connect
+    try {
+      const isAlive = await newClient.ping();
+      console.log(`[dbview] Ping result for ${key}: ${isAlive}`);
+      if (isAlive) {
+        newClient.startHealthCheck();
+        this.clientStatuses.set(key, 'connected');
+        console.log(`[dbview] Status set to 'connected' for ${key}`);
+      }
+    } catch (error) {
+      console.error(`[dbview] Failed to connect to ${key}:`, error);
+      this.clientStatuses.set(key, 'error');
+    }
+
+    return newClient;
+  }
+
+  private async reconnectClient(conn: ConnectionConfig): Promise<void> {
+    const key = this.getConnectionKey(conn);
+    const existingClient = this.clients.get(key);
+
+    if (existingClient) {
+      await existingClient.disconnect();
+      this.clients.delete(key);
+      this.clientStatuses.delete(key);
+    }
+
+    // Create fresh client
+    await this.getOrCreateClient(conn);
+    this.emitter.fire();
+  }
+
+  getClientForConnection(conn: ConnectionConfig): PostgresClient | undefined {
+    const key = this.getConnectionKey(conn);
+    return this.clients.get(key);
+  }
+
+  getStatusForConnection(conn: ConnectionConfig): ConnectionStatus {
+    const key = this.getConnectionKey(conn);
+    return this.clientStatuses.get(key) || 'disconnected';
+  }
+
+  // Public method to disconnect a specific connection
+  async disconnectConnection(conn: ConnectionConfig): Promise<void> {
+    const key = this.getConnectionKey(conn);
+    console.log(`[dbview] Disconnecting connection: ${key}`);
+
+    const existingClient = this.clients.get(key);
+    if (existingClient) {
+      existingClient.stopHealthCheck();
+      await existingClient.disconnect();
+      this.clientStatuses.set(key, 'disconnected');
+      console.log(`[dbview] Connection ${key} disconnected, status set to 'disconnected'`);
+      this.emitter.fire();
+    }
+  }
+
+  // Public method to reconnect a specific connection
+  async reconnectConnection(conn: ConnectionConfig): Promise<boolean> {
+    const key = this.getConnectionKey(conn);
+    console.log(`[dbview] Reconnecting connection: ${key}`);
+
+    // Disconnect first if connected
+    const existingClient = this.clients.get(key);
+    if (existingClient) {
+      existingClient.stopHealthCheck();
+      await existingClient.disconnect();
+      this.clients.delete(key);
+      this.clientStatuses.delete(key);
+    }
+
+    // Reconnect
+    this.clientStatuses.set(key, 'connecting');
+    this.emitter.fire();
+
+    try {
+      const newClient = new PostgresClient(conn);
+
+      // Set up status listener
+      const listener = (event: ConnectionStatusEvent) => {
+        this.clientStatuses.set(key, event.status);
+        setTimeout(() => this.emitter.fire(), 100);
+      };
+      newClient.on('statusChange', listener);
+
+      this.clients.set(key, newClient);
+
+      const isAlive = await newClient.ping();
+      console.log(`[dbview] Reconnect ping result for ${key}: ${isAlive}`);
+
+      if (isAlive) {
+        newClient.startHealthCheck();
+        this.clientStatuses.set(key, 'connected');
+        console.log(`[dbview] Connection ${key} reconnected successfully`);
+        this.emitter.fire();
+        return true;
+      } else {
+        this.clientStatuses.set(key, 'error');
+        this.emitter.fire();
+        return false;
+      }
+    } catch (error) {
+      console.error(`[dbview] Failed to reconnect ${key}:`, error);
+      this.clientStatuses.set(key, 'error');
+      this.emitter.fire();
+      return false;
+    }
+  }
+
+  private setupStatusListener(): void {
+    // Remove previous listener if exists
+    if (this.statusListener) {
+      this.client.removeListener('statusChange', this.statusListener);
+    }
+
+    // Set up new status change listener
+    const listener = (event: ConnectionStatusEvent) => {
+      this.connectionStatus = event.status;
+      this.emitter.fire();
+
+      // Show notification for connection errors
+      if (event.status === 'error' && event.error) {
+        this.showConnectionErrorNotification(event.error.message);
+      } else if (event.status === 'connected' && this.connectionError) {
+        // Connection restored
+        this.connectionError = null;
+        vscode.window.showInformationMessage('dbview: Connection restored');
+      }
+    };
+
+    this.statusListener = listener;
+    this.client.on('statusChange', listener);
+  }
+
+  private showConnectionErrorNotification(errorMessage: string): void {
+    vscode.window.showWarningMessage(
+      `dbview: Connection issue - ${errorMessage}`,
+      'Reconnect',
+      'Dismiss'
+    ).then(selection => {
+      if (selection === 'Reconnect') {
+        vscode.commands.executeCommand('dbview.reconnectConnection');
+      }
+    });
+  }
 
   updateClient(client: PostgresClient, connection: ConnectionConfig | null = null): void {
-    console.log("[dbview] updateClient called with connection:", connection);
+    // Remove listener from old client
+    if (this.statusListener) {
+      this.client.removeListener('statusChange', this.statusListener);
+    }
+
     this.client = client;
     this.connection = connection;
     this.connectionError = null;
+    this.connectionStatus = client.status;
+
+    // Cache the client
+    if (connection) {
+      const key = this.getConnectionKey(connection);
+      this.clients.set(key, client);
+      this.clientStatuses.set(key, client.status);
+    }
+
+    // Set up listener on new client
+    this.setupStatusListener();
+
+    // Start health check for the new client
+    if (connection) {
+      client.startHealthCheck();
+    }
+  }
+
+  // Invalidate cached client (call when connection is edited)
+  invalidateClient(connectionName: string): void {
+    const existingClient = this.clients.get(connectionName);
+    if (existingClient) {
+      existingClient.disconnect();
+      this.clients.delete(connectionName);
+      this.clientStatuses.delete(connectionName);
+    }
+  }
+
+  // Cleanup all cached clients
+  async cleanupAllClients(): Promise<void> {
+    for (const [_key, client] of this.clients) {
+      await client.disconnect();
+    }
+    this.clients.clear();
+    this.clientStatuses.clear();
+  }
+
+  getConnectionStatus(): ConnectionStatus {
+    return this.connectionStatus;
   }
 
   refresh(): void {
-    console.log("[dbview] refresh called, firing tree data change event");
     this.connectionError = null;
     this.emitter.fire();
   }
@@ -77,25 +347,37 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
   }
 
   async getChildren(element?: SchemaTreeItem): Promise<SchemaTreeItem[]> {
-    console.log("[dbview] getChildren called, element:", element ? element.node.type : "root");
-    console.log("[dbview] Current connection:", this.connection);
-
     if (!element) {
-      // If no connection is configured, show welcome screen
-      if (!this.connection) {
-        console.log("[dbview] No connection, showing welcome node");
+      // Root level: show ALL saved connections
+      const allConnections = await getAllSavedConnections(this.context);
+
+      if (allConnections.length === 0) {
         return [new SchemaTreeItem({ type: "welcome" }, null)];
       }
-      console.log("[dbview] Returning connection node with connection:", this.connection);
 
-      // Get database size
-      try {
-        const sizeInBytes = await this.client.getDatabaseSize();
-        return [new SchemaTreeItem({ type: "connection", sizeInBytes }, this.connection)];
-      } catch (error) {
-        console.error("[dbview] Failed to get database size:", error);
-        return [new SchemaTreeItem({ type: "connection" }, this.connection)];
+      // Return a connection node for each saved connection
+      const connectionNodes: SchemaTreeItem[] = [];
+
+      for (const conn of allConnections) {
+        const status = this.getStatusForConnection(conn);
+        let sizeInBytes: number | undefined;
+
+        // Only try to get size if we have an active client for this connection
+        const existingClient = this.getClientForConnection(conn);
+        if (existingClient && status === 'connected') {
+          try {
+            sizeInBytes = await existingClient.getDatabaseSize();
+          } catch (error) {
+            console.error(`[dbview] Failed to get database size for ${conn.name}:`, error);
+          }
+        }
+
+        connectionNodes.push(
+          new SchemaTreeItem({ type: "connection", sizeInBytes }, conn, status)
+        );
       }
+
+      return connectionNodes;
     }
 
     if (isWelcomeNode(element.node)) {
@@ -103,15 +385,26 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
     }
 
     if (isConnectionNode(element.node)) {
-      console.log("[dbview] Fetching schemas from database...");
+      const conn = element.connectionInfo;
+      if (!conn) {
+        console.error("[dbview] Connection node has no connectionInfo");
+        return [];
+      }
+
       try {
-        const schemas = await this.client.listSchemas();
+        // Lazy-connect: get or create client for this specific connection
+        const client = await this.getOrCreateClient(conn);
+        const schemas = await client.listSchemas();
         this.connectionError = null;
-        console.log("[dbview] Schemas fetched:", schemas);
+
         if (schemas.length === 0) {
           vscode.window.showWarningMessage("dbview: No schemas found in database");
         }
-        return [new SchemaTreeItem({ type: "schemasContainer", count: schemas.length }, this.connection)];
+
+        // Schedule refresh to update connection status icon after tree expansion completes
+        setTimeout(() => this.emitter.fire(), 500);
+
+        return [new SchemaTreeItem({ type: "schemasContainer", count: schemas.length }, conn)];
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.connectionError = errorMessage;
@@ -134,10 +427,22 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       }
     }
 
+    // Helper to get client for any element's connection
+    const getClientForElement = async (el: SchemaTreeItem): Promise<PostgresClient | null> => {
+      const conn = el.connectionInfo;
+      if (!conn) return null;
+      return this.getClientForConnection(conn) || null;
+    };
+
     if (isSchemasContainerNode(element.node)) {
+      const conn = element.connectionInfo;
+      if (!conn) return [];
+      const client = await getClientForElement(element);
+      if (!client) return [];
+
       try {
-        const schemas = await this.client.listSchemas();
-        return schemas.map((schema) => new SchemaTreeItem({ type: "schema", schema }, this.connection));
+        const schemas = await client.listSchemas();
+        return schemas.map((schema) => new SchemaTreeItem({ type: "schema", schema }, conn));
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         vscode.window.showErrorMessage(`dbview: Failed to list schemas - ${errorMessage}`);
@@ -147,18 +452,23 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
     }
 
     if (isSchemaNode(element.node)) {
+      const conn = element.connectionInfo;
+      if (!conn) return [];
+      const client = await getClientForElement(element);
+      if (!client) return [];
+
       const schemaName = element.node.schema;
       try {
-        const counts = await this.client.getObjectCounts(schemaName);
+        const counts = await client.getObjectCounts(schemaName);
         const containers: SchemaTreeItem[] = [];
 
         // Always show all object types, even if count is 0
-        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "tables", count: counts.tables }, this.connection));
-        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "views", count: counts.views }, this.connection));
-        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "materializedViews", count: counts.materializedViews }, this.connection));
-        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "functions", count: counts.functions }, this.connection));
-        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "procedures", count: counts.procedures }, this.connection));
-        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "types", count: counts.types }, this.connection));
+        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "tables", count: counts.tables }, conn));
+        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "views", count: counts.views }, conn));
+        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "materializedViews", count: counts.materializedViews }, conn));
+        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "functions", count: counts.functions }, conn));
+        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "procedures", count: counts.procedures }, conn));
+        containers.push(new SchemaTreeItem({ type: "objectTypeContainer", schema: schemaName, objectType: "types", count: counts.types }, conn));
 
         return containers;
       } catch (error) {
@@ -170,37 +480,42 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
     }
 
     if (isObjectTypeContainerNode(element.node)) {
+      const conn = element.connectionInfo;
+      if (!conn) return [];
+      const client = await getClientForElement(element);
+      if (!client) return [];
+
       const { schema, objectType } = element.node;
       try {
         switch (objectType) {
           case "tables": {
-            const tables = await this.client.listTables(schema);
+            const tables = await client.listTables(schema);
             return tables.map((table) =>
               new SchemaTreeItem(
                 { type: "table", schema, table: table.name, sizeBytes: table.sizeBytes, rowCount: table.rowCount },
-                this.connection
+                conn
               )
             );
           }
           case "views": {
-            const views = await this.client.listViews(schema);
-            return views.map((name) => new SchemaTreeItem({ type: "view", schema, name }, this.connection));
+            const views = await client.listViews(schema);
+            return views.map((name) => new SchemaTreeItem({ type: "view", schema, name }, conn));
           }
           case "materializedViews": {
-            const matViews = await this.client.listMaterializedViews(schema);
-            return matViews.map((name) => new SchemaTreeItem({ type: "materializedView", schema, name }, this.connection));
+            const matViews = await client.listMaterializedViews(schema);
+            return matViews.map((name) => new SchemaTreeItem({ type: "materializedView", schema, name }, conn));
           }
           case "functions": {
-            const functions = await this.client.listFunctions(schema);
-            return functions.map((name) => new SchemaTreeItem({ type: "function", schema, name }, this.connection));
+            const functions = await client.listFunctions(schema);
+            return functions.map((name) => new SchemaTreeItem({ type: "function", schema, name }, conn));
           }
           case "procedures": {
-            const procedures = await this.client.listProcedures(schema);
-            return procedures.map((name) => new SchemaTreeItem({ type: "procedure", schema, name }, this.connection));
+            const procedures = await client.listProcedures(schema);
+            return procedures.map((name) => new SchemaTreeItem({ type: "procedure", schema, name }, conn));
           }
           case "types": {
-            const types = await this.client.listTypes(schema);
-            return types.map((name) => new SchemaTreeItem({ type: "typeNode", schema, name }, this.connection));
+            const types = await client.listTypes(schema);
+            return types.map((name) => new SchemaTreeItem({ type: "typeNode", schema, name }, conn));
           }
         }
       } catch (error) {
@@ -213,9 +528,14 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
 
     // Handle table expansion to show columns
     if (isTableNode(element.node)) {
+      const conn = element.connectionInfo;
+      if (!conn) return [];
+      const client = await getClientForElement(element);
+      if (!client) return [];
+
       const { schema, table } = element.node;
       try {
-        const columns = await this.client.listColumns(schema, table);
+        const columns = await client.listColumns(schema, table);
         return columns.map((col) =>
           new SchemaTreeItem(
             {
@@ -229,7 +549,7 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
               isForeignKey: col.isForeignKey,
               foreignKeyRef: col.foreignKeyRef
             },
-            this.connection
+            conn
           )
         );
       } catch (error) {
@@ -249,13 +569,17 @@ export class SchemaTreeItem extends vscode.TreeItem {
 
   constructor(
     public readonly node: NodeData,
-    connectionInfo?: ConnectionConfig | null
+    connectionInfo?: ConnectionConfig | null,
+    connectionStatus?: ConnectionStatus
   ) {
     super(getLabel(node, connectionInfo), getCollapsibleState(node));
     this.connectionInfo = connectionInfo ?? null;
 
     this.contextValue = node.type;
-    this.iconPath = new vscode.ThemeIcon(getIcon(node), getIconColor(node));
+    this.iconPath = new vscode.ThemeIcon(
+      getIcon(node, connectionStatus),
+      getIconColor(node, connectionStatus)
+    );
 
     if (isTableNode(node)) {
       const sizeLabel = typeof node.sizeBytes === "number" ? formatBytes(node.sizeBytes) : undefined;
@@ -372,9 +696,44 @@ export class SchemaTreeItem extends vscode.TreeItem {
 
     if (isConnectionNode(node) && connectionInfo) {
       const hostInfo = `${connectionInfo.host}:${connectionInfo.port}`;
-      this.description = node.sizeInBytes ? formatBytes(node.sizeInBytes) : hostInfo;
+      const readOnlyLabel = connectionInfo.readOnly ? " 🔒" : "";
+
+      // Add connection status indicator
+      let statusLabel = "";
+      let statusEmoji = "";
+      switch (connectionStatus) {
+        case 'connecting':
+          statusLabel = " 🟡 Connecting...";
+          statusEmoji = "🟡";
+          break;
+        case 'error':
+          statusLabel = " 🔴 Error";
+          statusEmoji = "🔴";
+          break;
+        case 'disconnected':
+          statusLabel = ""; // No label for disconnected - clean look
+          statusEmoji = "⚪";
+          break;
+        case 'connected':
+          statusLabel = " 🟢";
+          statusEmoji = "🟢";
+          break;
+        default:
+          statusLabel = "";
+          statusEmoji = "⚪";
+          break;
+      }
+
+      this.description = (node.sizeInBytes ? formatBytes(node.sizeInBytes) : hostInfo) + readOnlyLabel + statusLabel;
       this.tooltip = new vscode.MarkdownString();
       this.tooltip.appendMarkdown(`**${connectionInfo.name || connectionInfo.database}**\n\n`);
+
+      // Show connection status in tooltip
+      this.tooltip.appendMarkdown(`${statusEmoji} **Status:** ${connectionStatus || 'unknown'}\n\n`);
+
+      if (connectionInfo.readOnly) {
+        this.tooltip.appendMarkdown(`🔒 **Read-Only Mode** - Write operations are blocked\n\n`);
+      }
       this.tooltip.appendMarkdown(`🖥️ Host: \`${hostInfo}\`\n\n`);
       this.tooltip.appendMarkdown(`📀 Database: \`${connectionInfo.database}\`\n\n`);
       this.tooltip.appendMarkdown(`👤 User: \`${connectionInfo.user}\`\n\n`);
@@ -382,7 +741,11 @@ export class SchemaTreeItem extends vscode.TreeItem {
         this.tooltip.appendMarkdown(`💾 Size: ${formatBytes(node.sizeInBytes)}\n\n`);
       }
       this.tooltip.appendMarkdown(`---\n\n`);
-      this.tooltip.appendMarkdown(`_Right-click for more options_`);
+      if (connectionStatus === 'disconnected' || !connectionStatus) {
+        this.tooltip.appendMarkdown(`_Expand to connect • Right-click for options_`);
+      } else {
+        this.tooltip.appendMarkdown(`_Right-click for more options_`);
+      }
     }
 
     if (isWelcomeNode(node)) {
@@ -405,10 +768,11 @@ function getLabel(node: NodeData, connectionInfo?: ConnectionConfig | null): str
   }
   if (isConnectionNode(node)) {
     const baseName = connectionInfo ? (connectionInfo.name || connectionInfo.database) : "Postgres (default)";
+    const readOnlyBadge = connectionInfo?.readOnly ? "🔒 " : "";
     if (node.sizeInBytes !== undefined) {
-      return `${baseName} - ${formatBytes(node.sizeInBytes)}`;
+      return `${readOnlyBadge}${baseName} - ${formatBytes(node.sizeInBytes)}`;
     }
-    return baseName;
+    return `${readOnlyBadge}${baseName}`;
   }
   if (isSchemasContainerNode(node)) {
     return `Schemas (${node.count})`;
@@ -469,7 +833,8 @@ function formatRowCount(count: number): string {
 
 function getCollapsibleState(node: NodeData): vscode.TreeItemCollapsibleState {
   if (isConnectionNode(node)) {
-    return vscode.TreeItemCollapsibleState.Expanded;
+    // Start collapsed - user expands to connect (lazy-connect approach)
+    return vscode.TreeItemCollapsibleState.Collapsed;
   }
   if (isSchemasContainerNode(node)) {
     return vscode.TreeItemCollapsibleState.Expanded;
@@ -490,12 +855,23 @@ function getCollapsibleState(node: NodeData): vscode.TreeItemCollapsibleState {
   return vscode.TreeItemCollapsibleState.None;
 }
 
-function getIcon(node: NodeData): string {
+function getIcon(node: NodeData, connectionStatus?: ConnectionStatus): string {
   if (isWelcomeNode(node)) {
     return "plug";
   }
   if (isConnectionNode(node)) {
-    return "database";
+    // Show different icons based on connection status
+    switch (connectionStatus) {
+      case 'connecting':
+        return "sync~spin";
+      case 'error':
+        return "warning";
+      case 'disconnected':
+        return "debug-disconnect";
+      case 'connected':
+      default:
+        return "database";
+    }
   }
   if (isSchemasContainerNode(node)) {
     return "folder-library";
@@ -540,12 +916,23 @@ function getIcon(node: NodeData): string {
   return "file";
 }
 
-function getIconColor(node: NodeData): vscode.ThemeColor | undefined {
+function getIconColor(node: NodeData, connectionStatus?: ConnectionStatus): vscode.ThemeColor | undefined {
   if (isWelcomeNode(node)) {
     return new vscode.ThemeColor("charts.blue");
   }
   if (isConnectionNode(node)) {
-    return new vscode.ThemeColor("charts.green");
+    // Show different colors based on connection status
+    switch (connectionStatus) {
+      case 'connecting':
+        return new vscode.ThemeColor("charts.yellow");
+      case 'error':
+        return new vscode.ThemeColor("charts.red");
+      case 'disconnected':
+        return new vscode.ThemeColor("disabledForeground");
+      case 'connected':
+      default:
+        return new vscode.ThemeColor("charts.green");
+    }
   }
   if (isSchemasContainerNode(node)) {
     return new vscode.ThemeColor("charts.yellow");

@@ -1,25 +1,85 @@
 import * as vscode from "vscode";
 import { PostgresClient, type QueryResultSet } from "./postgresClient";
 import type { TableIdentifier } from "./schemaExplorer";
-import { getWebviewHtml } from "./webviewHost";
-import type { SavedView, FilterCondition, ColumnMetadata, TableInfo } from "@dbview/core";
+import { getWebviewHtml, getThemeKind, type ThemeKind } from "./webviewHost";
+import type { SavedView, FilterCondition, ColumnMetadata, TableInfo, ConnectionConfig } from "@dbview/core";
 import { format as formatSql } from "sql-formatter";
 
-let mainPanel: vscode.WebviewPanel | null = null;
+// Multi-panel support: one panel per connection
+const panels: Map<string, vscode.WebviewPanel> = new Map();
+const panelConfigs: Map<string, ConnectionConfig> = new Map();
+const panelClients: Map<string, PostgresClient> = new Map();
+
+// Helper to get connection key - must match schemaExplorer.ts implementation
+function getConnectionKey(config: ConnectionConfig): string {
+  return config.name || `${config.host}:${config.port}/${config.database}`;
+}
+
+export function updateWebviewTheme(): void {
+  const theme = getThemeKind();
+  // Update theme for all panels
+  for (const panel of panels.values()) {
+    panel.webview.postMessage({
+      type: "THEME_CHANGE",
+      theme
+    });
+  }
+}
+
+function isReadOnlyMode(config: ConnectionConfig): boolean {
+  return config.readOnly === true;
+}
+
+export function getPanelForConnection(connectionName: string): vscode.WebviewPanel | undefined {
+  return panels.get(connectionName);
+}
+
+export function getAllPanels(): vscode.WebviewPanel[] {
+  return Array.from(panels.values());
+}
+
+export function closePanelForConnection(connectionName: string): void {
+  const panel = panels.get(connectionName);
+  if (panel) {
+    panel.dispose(); // This will trigger disposal handler
+  }
+}
 
 export async function getOrCreateMainPanel(
   context: vscode.ExtensionContext,
-  client: PostgresClient
+  client: PostgresClient,
+  connectionConfig: ConnectionConfig
 ): Promise<vscode.WebviewPanel> {
-  if (mainPanel) {
-    mainPanel.reveal(vscode.ViewColumn.Active);
-    return mainPanel;
+  const key = getConnectionKey(connectionConfig);
+
+  console.log(`[dbview-mainPanel] ========== getOrCreateMainPanel CALLED ==========`);
+  console.log(`[dbview-mainPanel] Connection config:`, JSON.stringify({
+    name: connectionConfig.name,
+    database: connectionConfig.database,
+    host: connectionConfig.host,
+    port: connectionConfig.port
+  }, null, 2));
+  console.log(`[dbview-mainPanel] Generated connection key: "${key}"`);
+  console.log(`[dbview-mainPanel] Current panels map size: ${panels.size}`);
+  console.log(`[dbview-mainPanel] Current panel keys:`, Array.from(panels.keys()));
+
+  // If panel exists for this connection, reveal and return it
+  const existingPanel = panels.get(key);
+  if (existingPanel) {
+    console.log(`[dbview-mainPanel] ✓ REUSING existing panel for connection key: "${key}"`);
+    vscode.window.showInformationMessage(`[DEBUG] Reusing panel: ${key}`);
+    existingPanel.reveal(vscode.ViewColumn.Active);
+    return existingPanel;
   }
 
-  console.log(`[dbview] Creating main panel`);
-  mainPanel = vscode.window.createWebviewPanel(
+  // Create new panel for this connection
+  const connectionTitle = connectionConfig.name || connectionConfig.database;
+  console.log(`[dbview-mainPanel] ✓ CREATING NEW panel for connection: ${connectionTitle} (key: "${key}")`);
+  vscode.window.showInformationMessage(`[DEBUG] Creating NEW panel: ${connectionTitle}`);
+
+  const panel = vscode.window.createWebviewPanel(
     "dbview.mainView",
-    "DBView",
+    `DBView - ${connectionTitle}`,
     vscode.ViewColumn.Active,
     {
       enableScripts: true,
@@ -29,15 +89,28 @@ export async function getOrCreateMainPanel(
     }
   );
 
-  mainPanel.onDidDispose(() => {
-    console.log(`[dbview] Main panel disposed`);
-    mainPanel = null;
+  // Store panel, config, and client in maps
+  panels.set(key, panel);
+  panelConfigs.set(key, connectionConfig);
+  panelClients.set(key, client);
+
+  console.log(`[dbview-mainPanel] ✓ Panel stored in map with key: "${key}"`);
+  console.log(`[dbview-mainPanel] ✓ Panels map now has ${panels.size} panel(s)`);
+  console.log(`[dbview-mainPanel] ✓ All panel keys:`, Array.from(panels.keys()));
+
+  panel.onDidDispose(() => {
+    console.log(`[dbview-mainPanel] Panel disposed for connection: ${connectionTitle} (key: "${key}")`);
+    panels.delete(key);
+    panelConfigs.delete(key);
+    panelClients.delete(key);
+    console.log(`[dbview-mainPanel] Panels map now has ${panels.size} panel(s)`);
   });
 
-  mainPanel.webview.html = getWebviewHtml(mainPanel.webview, context.extensionUri);
+  panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri);
 
   // Handle messages from the webview
-  mainPanel.webview.onDidReceiveMessage(async (message: any) => {
+  // Message handler is a closure that captures client and connectionConfig for this specific panel
+  panel.webview.onDidReceiveMessage(async (message: any) => {
     try {
       const tabId = message.tabId;
 
@@ -54,7 +127,7 @@ export async function getOrCreateMainPanel(
 
           try {
             const result = await client.fetchTableRows(schema, table, { limit, offset, filters, filterLogic });
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "LOAD_TABLE_ROWS",
               tabId,
               schema,
@@ -77,14 +150,14 @@ export async function getOrCreateMainPanel(
             const filters = message.filters as FilterCondition[] | undefined;
             const filterLogic = (message.filterLogic as 'AND' | 'OR') ?? 'AND';
             const totalRows = await client.getTableRowCount(message.schema, message.table, { filters, filterLogic });
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "ROW_COUNT",
               tabId,
               totalRows
             });
           } catch (error) {
             console.error(`[dbview] Error getting row count:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "ROW_COUNT_ERROR",
               tabId,
               error: error instanceof Error ? error.message : String(error)
@@ -97,7 +170,7 @@ export async function getOrCreateMainPanel(
           console.log(`[dbview] Getting metadata for tab ${tabId}: ${message.schema}.${message.table}`);
           try {
             const metadata = await client.getTableMetadata(message.schema, message.table);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "TABLE_METADATA",
               tabId,
               columns: metadata
@@ -113,13 +186,13 @@ export async function getOrCreateMainPanel(
           console.log(`[dbview] Getting indexes for ${message.schema}.${message.table}`);
           try {
             const indexes = await client.getIndexes(message.schema, message.table);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "TABLE_INDEXES",
               indexes
             });
           } catch (error) {
             console.error(`[dbview] Error getting table indexes:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "TABLE_INDEXES",
               indexes: []
             });
@@ -131,13 +204,13 @@ export async function getOrCreateMainPanel(
           console.log(`[dbview] Getting statistics for ${message.schema}.${message.table}`);
           try {
             const statistics = await client.getTableStatistics(message.schema, message.table);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "TABLE_STATISTICS",
               statistics
             });
           } catch (error) {
             console.error(`[dbview] Error getting table statistics:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "TABLE_STATISTICS",
               statistics: undefined
             });
@@ -149,13 +222,13 @@ export async function getOrCreateMainPanel(
           console.log(`[dbview] Getting ER diagram for schemas:`, message.schemas);
           try {
             const diagramData = await client.getERDiagramData(message.schemas);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "ER_DIAGRAM_DATA",
               diagramData
             });
           } catch (error) {
             console.error(`[dbview] Error getting ER diagram:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "ER_DIAGRAM_ERROR",
               error: error instanceof Error ? error.message : String(error)
             });
@@ -165,6 +238,20 @@ export async function getOrCreateMainPanel(
 
         case "UPDATE_CELL": {
           console.log(`[dbview] Updating cell for tab ${tabId}: ${message.schema}.${message.table}`);
+
+          // Check for read-only mode
+          if (isReadOnlyMode(connectionConfig)) {
+            console.log(`[dbview] UPDATE blocked - connection is in read-only mode`);
+            panel.webview.postMessage({
+              type: "UPDATE_ERROR",
+              tabId,
+              error: "🔒 Connection is in read-only mode. Write operations are blocked.",
+              rowIndex: message.rowIndex,
+              column: message.column
+            });
+            break;
+          }
+
           try {
             await client.updateCell(
               message.schema,
@@ -173,7 +260,7 @@ export async function getOrCreateMainPanel(
               message.column,
               message.value
             );
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "UPDATE_SUCCESS",
               tabId,
               rowIndex: message.rowIndex
@@ -183,7 +270,7 @@ export async function getOrCreateMainPanel(
             // We'll need to implement this if needed
           } catch (error) {
             console.error(`[dbview] Error updating cell:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "UPDATE_ERROR",
               tabId,
               error: error instanceof Error ? error.message : String(error),
@@ -202,13 +289,24 @@ export async function getOrCreateMainPanel(
           console.log(`[dbview] Values to insert:`, JSON.stringify(message.values, null, 2));
           console.log(`[dbview] Number of columns: ${Object.keys(message.values).length}`);
 
+          // Check for read-only mode
+          if (isReadOnlyMode(connectionConfig)) {
+            console.log(`[dbview] INSERT blocked - connection is in read-only mode`);
+            panel.webview.postMessage({
+              type: "INSERT_ERROR",
+              tabId,
+              error: "🔒 Connection is in read-only mode. Write operations are blocked."
+            });
+            break;
+          }
+
           try {
             console.log(`[dbview] Calling client.insertRow...`);
             const newRow = await client.insertRow(message.schema, message.table, message.values);
             console.log(`[dbview] ========== INSERT SUCCESSFUL ==========`);
             console.log(`[dbview] Inserted row:`, newRow);
 
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "INSERT_SUCCESS",
               tabId,
               newRow
@@ -219,7 +317,7 @@ export async function getOrCreateMainPanel(
             console.error(`[dbview] Error inserting row:`, error);
             console.error(`[dbview] Error stack:`, error instanceof Error ? error.stack : 'No stack trace');
 
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "INSERT_ERROR",
               tabId,
               error: error instanceof Error ? error.message : String(error)
@@ -231,16 +329,28 @@ export async function getOrCreateMainPanel(
 
         case "DELETE_ROWS": {
           console.log(`[dbview] Deleting ${message.primaryKeys.length} row(s) for tab ${tabId}: ${message.schema}.${message.table}`);
+
+          // Check for read-only mode
+          if (isReadOnlyMode(connectionConfig)) {
+            console.log(`[dbview] DELETE blocked - connection is in read-only mode`);
+            panel.webview.postMessage({
+              type: "DELETE_ERROR",
+              tabId,
+              error: "🔒 Connection is in read-only mode. Write operations are blocked."
+            });
+            break;
+          }
+
           try {
             const deletedCount = await client.deleteRows(message.schema, message.table, message.primaryKeys);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "DELETE_SUCCESS",
               tabId,
               deletedCount
             });
           } catch (error) {
             console.error(`[dbview] Error deleting rows:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "DELETE_ERROR",
               tabId,
               error: error instanceof Error ? error.message : String(error)
@@ -253,7 +363,7 @@ export async function getOrCreateMainPanel(
           console.log(`[dbview] Running query for tab ${tabId}`);
           try {
             const result = await client.runQuery(message.sql);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "QUERY_RESULT",
               tabId,
               columns: result.columns,
@@ -261,7 +371,7 @@ export async function getOrCreateMainPanel(
             });
           } catch (error) {
             console.error(`[dbview] Error running query:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "QUERY_ERROR",
               tabId,
               message: error instanceof Error ? error.message : String(error)
@@ -290,7 +400,7 @@ export async function getOrCreateMainPanel(
             const updatedViews = [...existingViews, view];
             await context.workspaceState.update(key, updatedViews);
 
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "VIEWS_UPDATED",
               tabId,
               views: updatedViews
@@ -306,7 +416,7 @@ export async function getOrCreateMainPanel(
           const { schema, table } = message;
           const key = `dbview.views.${schema}.${table}`;
           const views = context.workspaceState.get<SavedView[]>(key, []);
-          mainPanel?.webview.postMessage({
+          panel.webview.postMessage({
             type: "VIEWS_LOADED",
             tabId,
             views
@@ -323,7 +433,7 @@ export async function getOrCreateMainPanel(
             const updatedViews = existingViews.filter(v => v.id !== viewId);
             await context.workspaceState.update(key, updatedViews);
 
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "VIEWS_UPDATED",
               tabId,
               views: updatedViews
@@ -382,7 +492,7 @@ export async function getOrCreateMainPanel(
               const updatedViews = [...existingViews, view];
               await context.workspaceState.update(key, updatedViews);
 
-              mainPanel?.webview.postMessage({
+              panel.webview.postMessage({
                 type: "VIEWS_UPDATED",
                 tabId,
                 views: updatedViews
@@ -436,7 +546,7 @@ export async function getOrCreateMainPanel(
               }
             }
 
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "AUTOCOMPLETE_DATA",
               schemas,
               tables,
@@ -459,14 +569,14 @@ export async function getOrCreateMainPanel(
               linesBetweenQueries: 2,
             });
 
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "SQL_FORMATTED",
               tabId,
               formattedSql: formatted
             });
           } catch (error) {
             console.error(`[dbview] Error formatting SQL:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "SQL_FORMATTED",
               tabId,
               error: error instanceof Error ? error.message : String(error)
@@ -486,14 +596,14 @@ export async function getOrCreateMainPanel(
             const explainOutput = result.rows[0]['QUERY PLAN'];
             const plan = Array.isArray(explainOutput) ? explainOutput[0] : explainOutput;
 
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "EXPLAIN_RESULT",
               tabId,
               plan
             });
           } catch (error) {
             console.error(`[dbview] Error explaining query:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "EXPLAIN_RESULT",
               tabId,
               plan: null,
@@ -518,21 +628,21 @@ export async function getOrCreateMainPanel(
               await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf-8'));
               console.log(`[dbview] Export successful: ${uri.fsPath}`);
               vscode.window.showInformationMessage(`Data exported to ${uri.fsPath}`);
-              mainPanel?.webview.postMessage({
+              panel.webview.postMessage({
                 type: "EXPORT_DATA_SUCCESS",
                 tabId,
                 filePath: uri.fsPath
               });
             } else {
               console.log(`[dbview] Export cancelled by user`);
-              mainPanel?.webview.postMessage({
+              panel.webview.postMessage({
                 type: "EXPORT_DATA_CANCELLED",
                 tabId
               });
             }
           } catch (error) {
             console.error(`[dbview] Error exporting data:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "EXPORT_DATA_ERROR",
               tabId,
               error: error instanceof Error ? error.message : String(error)
@@ -543,6 +653,18 @@ export async function getOrCreateMainPanel(
 
         case "IMPORT_DATA": {
           console.log(`[dbview] Importing data to ${message.schema}.${message.table}`);
+
+          // Check for read-only mode
+          if (isReadOnlyMode(connectionConfig)) {
+            console.log(`[dbview] IMPORT blocked - connection is in read-only mode`);
+            panel.webview.postMessage({
+              type: "IMPORT_DATA_ERROR",
+              tabId,
+              error: "🔒 Connection is in read-only mode. Write operations are blocked."
+            });
+            break;
+          }
+
           try {
             const { schema, table, rows } = message;
             let successCount = 0;
@@ -558,7 +680,7 @@ export async function getOrCreateMainPanel(
             }
 
             if (successCount > 0) {
-              mainPanel?.webview.postMessage({
+              panel.webview.postMessage({
                 type: "IMPORT_DATA_SUCCESS",
                 tabId,
                 insertedCount: successCount,
@@ -566,7 +688,7 @@ export async function getOrCreateMainPanel(
               });
               vscode.window.showInformationMessage(`Imported ${successCount} row(s)${errors.length > 0 ? ` with ${errors.length} error(s)` : ''}`);
             } else {
-              mainPanel?.webview.postMessage({
+              panel.webview.postMessage({
                 type: "IMPORT_DATA_ERROR",
                 tabId,
                 error: "No rows were imported",
@@ -575,7 +697,7 @@ export async function getOrCreateMainPanel(
             }
           } catch (error) {
             console.error(`[dbview] Error importing data:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "IMPORT_DATA_ERROR",
               tabId,
               error: error instanceof Error ? error.message : String(error)
@@ -589,13 +711,13 @@ export async function getOrCreateMainPanel(
           try {
             await vscode.env.clipboard.writeText(message.content);
             vscode.window.showInformationMessage('Copied to clipboard');
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "COPY_TO_CLIPBOARD_SUCCESS",
               tabId
             });
           } catch (error) {
             console.error(`[dbview] Error copying to clipboard:`, error);
-            mainPanel?.webview.postMessage({
+            panel.webview.postMessage({
               type: "COPY_TO_CLIPBOARD_ERROR",
               tabId,
               error: error instanceof Error ? error.message : String(error)
@@ -614,43 +736,50 @@ export async function getOrCreateMainPanel(
     }
   });
 
-  return mainPanel;
+  return panel;
 }
 
 export async function openTableInPanel(
   context: vscode.ExtensionContext,
   client: PostgresClient,
+  connectionConfig: ConnectionConfig,
   target: TableIdentifier
 ): Promise<void> {
-  const panel = await getOrCreateMainPanel(context, client);
+  const panel = await getOrCreateMainPanel(context, client, connectionConfig);
+  const connectionName = connectionConfig.name || connectionConfig.database;
 
   // Send message to open the table in a new tab
   panel.webview.postMessage({
     type: "OPEN_TABLE",
     schema: target.schema,
     table: target.table,
-    limit: 100
+    limit: 100,
+    connectionName
   });
 }
 
 export async function openQueryInPanel(
   context: vscode.ExtensionContext,
-  client: PostgresClient
+  client: PostgresClient,
+  connectionConfig: ConnectionConfig
 ): Promise<void> {
-  const panel = await getOrCreateMainPanel(context, client);
+  const panel = await getOrCreateMainPanel(context, client, connectionConfig);
+  const connectionName = connectionConfig.name || connectionConfig.database;
 
   // Send message to open a new query tab
   panel.webview.postMessage({
-    type: "OPEN_QUERY_TAB"
+    type: "OPEN_QUERY_TAB",
+    connectionName
   });
 }
 
 export async function openERDiagramInPanel(
   context: vscode.ExtensionContext,
   client: PostgresClient,
+  connectionConfig: ConnectionConfig,
   schemas?: string[]
 ): Promise<void> {
-  const panel = await getOrCreateMainPanel(context, client);
+  const panel = await getOrCreateMainPanel(context, client, connectionConfig);
 
   // If no schemas provided, get all available schemas
   let schemasToVisualize = schemas;

@@ -27,6 +27,8 @@ export interface SqlRunnerViewProps {
   error?: string;
   columns: DataGridColumn[];
   rows: Record<string, unknown>[];
+  // Connection info
+  connectionName?: string;
   // Autocomplete data
   schemas?: string[];
   tables?: TableInfo[];
@@ -61,6 +63,7 @@ export const SqlRunnerView: FC<SqlRunnerViewProps> = ({
   error,
   columns,
   rows,
+  connectionName,
   schemas = [],
   tables = [],
   columnMetadata = {},
@@ -94,7 +97,13 @@ export const SqlRunnerView: FC<SqlRunnerViewProps> = ({
           </div>
           <div>
             <h1 className="text-sm font-semibold text-vscode-text-bright">SQL Runner</h1>
-            <p className="text-xs text-vscode-text-muted">Execute ad-hoc queries</p>
+            <p className="text-xs text-vscode-text-muted">
+              {connectionName ? (
+                <span>Connected to <span className="text-vscode-accent font-medium">{connectionName}</span></span>
+              ) : (
+                'Execute ad-hoc queries'
+              )}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-3">

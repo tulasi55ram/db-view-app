@@ -10,9 +10,11 @@ import { useTabs } from "./hooks/useTabs";
 import { useQueryHistory } from "./hooks/useQueryHistory";
 import { getVsCodeApi } from "./vscode";
 
+type ThemeKind = 'light' | 'dark' | 'high-contrast' | 'high-contrast-light';
+
 type IncomingMessage =
-  | { type: "OPEN_TABLE"; schema: string; table: string; limit?: number }
-  | { type: "OPEN_QUERY_TAB" }
+  | { type: "OPEN_TABLE"; schema: string; table: string; limit?: number; connectionName?: string }
+  | { type: "OPEN_QUERY_TAB"; connectionName?: string }
   | { type: "OPEN_ER_DIAGRAM"; schemas: string[] }
   | { type: "LOAD_TABLE_ROWS"; tabId?: string; schema: string; table: string; columns: string[]; rows: Record<string, unknown>[]; limit?: number; offset?: number }
   | { type: "ROW_COUNT"; tabId?: string; totalRows: number }
@@ -33,12 +35,19 @@ type IncomingMessage =
   | { type: "AUTOCOMPLETE_DATA"; schemas: string[]; tables: TableInfo[]; columns: Record<string, ColumnMetadata[]> }
   | { type: "SQL_FORMATTED"; tabId: string; formattedSql: string; error?: string }
   | { type: "EXPLAIN_RESULT"; tabId: string; plan: ExplainPlan }
-  | { type: "EXPLAIN_ERROR"; tabId: string; error: string };
+  | { type: "EXPLAIN_ERROR"; tabId: string; error: string }
+  | { type: "THEME_CHANGE"; theme: ThemeKind };
 
 function App() {
   const tabManager = useTabs();
   const queryHistory = useQueryHistory();
   const queryStartTimes = useRef<Map<string, number>>(new Map());
+
+  // Theme state - detect initial theme from document
+  const [theme, setTheme] = useState<ThemeKind>(() => {
+    const htmlTheme = document.documentElement.getAttribute('data-theme');
+    return (htmlTheme as ThemeKind) || 'dark';
+  });
 
   // Autocomplete data state
   const [autocompleteData, setAutocompleteData] = useState<{
@@ -157,8 +166,8 @@ function App() {
 
       switch (message?.type) {
         case "OPEN_TABLE": {
-          console.log(`[dbview-ui] Opening table: ${message.schema}.${message.table}`);
-          const tabId = tabManager.findOrCreateTableTab(message.schema, message.table, message.limit ?? 100);
+          console.log(`[dbview-ui] Opening table: ${message.schema}.${message.table} on ${message.connectionName}`);
+          const tabId = tabManager.findOrCreateTableTab(message.schema, message.table, message.limit ?? 100, message.connectionName);
 
           // Request initial data
           requestTableRows(tabId, message.schema, message.table, message.limit ?? 100, 0);
@@ -167,8 +176,8 @@ function App() {
         }
 
         case "OPEN_QUERY_TAB": {
-          console.log(`[dbview-ui] Opening new query tab`);
-          tabManager.addQueryTab();
+          console.log(`[dbview-ui] Opening new query tab for ${message.connectionName}`);
+          tabManager.addQueryTab(message.connectionName);
           break;
         }
 
@@ -425,6 +434,18 @@ function App() {
           break;
         }
 
+        case "THEME_CHANGE": {
+          console.log(`[dbview-ui] Theme changed to: ${message.theme}`);
+          // Update the data-theme attribute on the HTML element
+          document.documentElement.setAttribute('data-theme', message.theme);
+          // Update body class for VS Code theme detection
+          const bodyClass = message.theme.startsWith('high-contrast') ? 'high-contrast' : message.theme;
+          document.body.className = `vscode-${bodyClass}`;
+          // Update theme state for components like Toaster
+          setTheme(message.theme);
+          break;
+        }
+
         default:
           break;
       }
@@ -469,6 +490,7 @@ function App() {
           error={activeTab.error}
           columns={activeTab.columns.map(toColumn)}
           rows={activeTab.rows}
+          connectionName={activeTab.connectionName}
           schemas={autocompleteData.schemas}
           tables={autocompleteData.tables}
           columnMetadata={autocompleteData.columns}
@@ -556,13 +578,13 @@ function App() {
   return (
     <>
       <Toaster
-        theme="dark"
+        theme={theme === 'light' || theme === 'high-contrast-light' ? 'light' : 'dark'}
         position="bottom-right"
         toastOptions={{
           style: {
-            background: 'var(--vscode-notifications-background)',
-            border: '1px solid var(--vscode-notifications-border)',
-            color: 'var(--vscode-notifications-foreground)',
+            background: 'var(--color-bg-light)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text)',
           },
         }}
       />

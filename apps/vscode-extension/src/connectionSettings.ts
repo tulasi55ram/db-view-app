@@ -247,6 +247,60 @@ export async function deleteConnection(
   }
 }
 
+/**
+ * Update an existing connection, handling name changes properly
+ */
+export async function updateConnection(
+  context: vscode.ExtensionContext,
+  originalName: string,
+  connection: ConnectionConfig
+): Promise<void> {
+  if (!connection.name?.trim()) {
+    throw new Error("Connection name is required");
+  }
+
+  const connections = context.globalState.get<ConnectionConfig[]>(CONNECTIONS_KEY) || [];
+
+  // Find by original name
+  const existingIndex = connections.findIndex(c => c.name === originalName);
+
+  // If name changed, delete old password
+  if (originalName !== connection.name) {
+    await context.secrets.delete(`dbview.connection.${originalName}.password`);
+  }
+
+  // Store new password in secrets if provided
+  if (connection.password) {
+    await context.secrets.store(`dbview.connection.${connection.name}.password`, connection.password);
+  }
+
+  // Remove password from the connection object before storing in globalState
+  const connectionToStore = { ...connection };
+  delete connectionToStore.password;
+
+  if (existingIndex >= 0) {
+    // Update existing connection
+    connections[existingIndex] = connectionToStore;
+  } else {
+    // Add new connection (shouldn't happen for edit, but fallback)
+    connections.push(connectionToStore);
+  }
+
+  await context.globalState.update(CONNECTIONS_KEY, connections);
+
+  // Also save as the legacy single connection for backward compatibility
+  const fullConnection = { ...connection };
+  await Promise.all([
+    context.globalState.update(STATE_KEYS.host, fullConnection.host),
+    context.globalState.update(STATE_KEYS.port, fullConnection.port),
+    context.globalState.update(STATE_KEYS.user, fullConnection.user),
+    context.globalState.update(STATE_KEYS.database, fullConnection.database)
+  ]);
+
+  // Set as active connection
+  await context.globalState.update(ACTIVE_CONNECTION_KEY, connection.name);
+}
+
 export async function getActiveConnectionName(
   context: vscode.ExtensionContext
 ): Promise<string | undefined> {

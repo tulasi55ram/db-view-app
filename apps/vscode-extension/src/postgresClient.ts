@@ -1,9 +1,18 @@
 import { Pool, type PoolConfig, type QueryResult, type QueryResultRow } from "pg";
 import type { ConnectionConfig, FilterCondition } from "@dbview/core";
+import { EventEmitter } from "events";
 
 export interface QueryResultSet {
   columns: string[];
   rows: Record<string, unknown>[];
+}
+
+export type ConnectionStatus = 'connected' | 'disconnected' | 'connecting' | 'error';
+
+export interface ConnectionStatusEvent {
+  status: ConnectionStatus;
+  message?: string;
+  error?: Error;
 }
 
 export interface ObjectCounts {
@@ -41,11 +50,19 @@ interface ColumnInfo {
   foreignKeyRef: string | null;
 }
 
-export class PostgresClient {
+export class PostgresClient extends EventEmitter {
   private readonly config: PoolConfig;
   private pool: Pool | undefined;
+  private _status: ConnectionStatus = 'disconnected';
+  private _lastError: Error | undefined;
+  private healthCheckInterval: NodeJS.Timeout | undefined;
+  private reconnectAttempts = 0;
+  private readonly maxReconnectAttempts = 3;
+  private readonly reconnectDelayMs = 2000;
+  private readonly healthCheckIntervalMs = 30000; // 30 seconds
 
   constructor(connection?: ConnectionConfig) {
+    super();
     this.config = connection ? toPoolConfig(connection) : DEFAULT_CONFIG;
     console.log("[dbview] PostgresClient created with config:", {
       host: this.config.host,
@@ -56,15 +73,119 @@ export class PostgresClient {
     });
   }
 
+  get status(): ConnectionStatus {
+    return this._status;
+  }
+
+  get lastError(): Error | undefined {
+    return this._lastError;
+  }
+
+  private setStatus(status: ConnectionStatus, message?: string, error?: Error): void {
+    const previousStatus = this._status;
+    this._status = status;
+    this._lastError = error;
+
+    if (previousStatus !== status) {
+      console.log(`[dbview] Connection status changed: ${previousStatus} → ${status}${message ? ` (${message})` : ''}`);
+      this.emit('statusChange', { status, message, error } as ConnectionStatusEvent);
+    }
+  }
+
+  /**
+   * Start periodic health checks
+   */
+  startHealthCheck(): void {
+    this.stopHealthCheck();
+    this.healthCheckInterval = setInterval(async () => {
+      await this.ping();
+    }, this.healthCheckIntervalMs);
+  }
+
+  /**
+   * Stop periodic health checks
+   */
+  stopHealthCheck(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = undefined;
+    }
+  }
+
+  /**
+   * Check if the connection is alive
+   */
+  async ping(): Promise<boolean> {
+    try {
+      const pool = this.pool ?? (this.pool = new Pool(this.config));
+      const client = await pool.connect();
+      try {
+        await client.query('SELECT 1');
+        if (this._status !== 'connected') {
+          this.setStatus('connected', 'Health check passed');
+          this.reconnectAttempts = 0;
+        }
+        return true;
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error("[dbview] Health check failed:", error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.setStatus('error', 'Health check failed', err);
+      return false;
+    }
+  }
+
+  /**
+   * Attempt to reconnect to the database
+   */
+  async reconnect(): Promise<boolean> {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.log(`[dbview] Max reconnect attempts (${this.maxReconnectAttempts}) reached`);
+      this.setStatus('disconnected', 'Max reconnect attempts reached');
+      return false;
+    }
+
+    this.reconnectAttempts++;
+    this.setStatus('connecting', `Reconnecting (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+
+    try {
+      // Close existing pool
+      if (this.pool) {
+        await this.pool.end().catch(() => {});
+        this.pool = undefined;
+      }
+
+      // Wait before reconnecting
+      await new Promise(resolve => setTimeout(resolve, this.reconnectDelayMs));
+
+      // Create new pool and test connection
+      this.pool = new Pool(this.config);
+      const client = await this.pool.connect();
+      try {
+        await client.query('SELECT 1');
+        this.setStatus('connected', 'Reconnected successfully');
+        this.reconnectAttempts = 0;
+        return true;
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error(`[dbview] Reconnect attempt ${this.reconnectAttempts} failed:`, error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.setStatus('error', `Reconnect failed`, err);
+      return false;
+    }
+  }
+
   async listSchemas(): Promise<string[]> {
-    console.log("[dbview] Executing listSchemas query...");
     const result = await this.query<{ schema_name: string }>(
       `select schema_name
        from information_schema.schemata
        where schema_name not in ('pg_catalog', 'information_schema')
        order by schema_name`
     );
-    console.log("[dbview] listSchemas query result:", result.rows.length, "schemas");
     return result.rows.map((row) => row.schema_name);
   }
 
@@ -504,18 +625,69 @@ export class PostgresClient {
 
   private async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
-    params: unknown[] = []
+    params: unknown[] = [],
+    retryOnError = true
   ): Promise<QueryResult<T>> {
-    console.log("[dbview] Executing query:", text.substring(0, 50) + "...");
-    const pool = this.pool ?? (this.pool = new Pool(this.config));
     try {
+      const pool = this.pool ?? (this.pool = new Pool(this.config));
       const result = await pool.query<T>(text, params);
-      console.log("[dbview] Query successful, rows:", result.rows.length);
+
+      // Mark as connected on successful query
+      if (this._status !== 'connected') {
+        this.setStatus('connected', 'Query executed successfully');
+        this.reconnectAttempts = 0;
+      }
+
       return result;
     } catch (error) {
       console.error("[dbview] Query failed:", error);
+
+      const err = error instanceof Error ? error : new Error(String(error));
+      const isConnectionError = this.isConnectionError(err);
+
+      if (isConnectionError) {
+        this.setStatus('error', 'Connection lost', err);
+
+        // Try to reconnect if this is a connection error and retry is allowed
+        if (retryOnError && this.reconnectAttempts < this.maxReconnectAttempts) {
+          console.log("[dbview] Attempting auto-reconnect...");
+          const reconnected = await this.reconnect();
+
+          if (reconnected) {
+            console.log("[dbview] Retrying query after reconnect...");
+            // Retry the query once after successful reconnect
+            return this.query<T>(text, params, false);
+          }
+        }
+      }
+
       throw error;
     }
+  }
+
+  /**
+   * Check if an error is a connection-related error
+   */
+  private isConnectionError(error: Error): boolean {
+    const connectionErrorPatterns = [
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'Connection terminated',
+      'Connection refused',
+      'Connection timed out',
+      'client has encountered a connection error',
+      'terminating connection due to administrator command',
+      'server closed the connection unexpectedly',
+      'SSL connection has been closed unexpectedly'
+    ];
+
+    const errorMessage = error.message.toLowerCase();
+    return connectionErrorPatterns.some(pattern =>
+      errorMessage.includes(pattern.toLowerCase())
+    );
   }
 
   // ============================================
@@ -873,6 +1045,8 @@ export class PostgresClient {
   }
 
   async disconnect(): Promise<void> {
+    this.stopHealthCheck();
+
     if (this.pool) {
       console.log("[dbview] Disconnecting PostgresClient pool...");
       try {
@@ -883,6 +1057,16 @@ export class PostgresClient {
       }
       this.pool = undefined;
     }
+
+    this.setStatus('disconnected', 'Disconnected');
+    this.reconnectAttempts = 0;
+  }
+
+  /**
+   * Reset reconnect attempts counter (e.g., after manual reconnect)
+   */
+  resetReconnectAttempts(): void {
+    this.reconnectAttempts = 0;
   }
 }
 
@@ -1044,7 +1228,13 @@ function toPoolConfig(connection: ConnectionConfig): PoolConfig {
     user: connection.user,
     password: connection.password ?? '',
     database: connection.database,
-    ssl: sslConfig
+    ssl: sslConfig,
+    // Connection timeout settings
+    connectionTimeoutMillis: 10000,  // 10 seconds to establish connection
+    idleTimeoutMillis: 30000,        // 30 seconds before idle connections are closed
+    max: 10,                          // Maximum number of clients in the pool
+    // Query timeout (optional - can be set per query if needed)
+    statement_timeout: 60000         // 60 seconds max query time
   };
 }
 

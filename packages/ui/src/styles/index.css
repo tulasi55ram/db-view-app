@@ -3,11 +3,15 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
-
   /* VS Code Theme Variables */
   --vscode-font-family: "Inter", "Segoe UI", system-ui, sans-serif;
   --vscode-font-mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
+}
+
+/* Dark Theme (default) */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
 
   /* Colors */
   --color-bg: #1e1e1e;
@@ -30,6 +34,87 @@
   --color-number: #b5cea8;
   --color-boolean: #569cd6;
   --color-json: #d7ba7d;
+}
+
+/* Light Theme */
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Colors */
+  --color-bg: #ffffff;
+  --color-bg-light: #f3f3f3;
+  --color-bg-lighter: #e8e8e8;
+  --color-bg-hover: #e4e6f1;
+  --color-bg-active: #cce8ff;
+  --color-border: #cecece;
+  --color-border-light: #dddddd;
+  --color-text: #333333;
+  --color-text-muted: #717171;
+  --color-text-bright: #000000;
+  --color-accent: #0066b8;
+  --color-success: #388a34;
+  --color-warning: #bf8803;
+  --color-error: #d32f2f;
+  --color-info: #0078d4;
+  --color-null: #0000ff;
+  --color-string: #a31515;
+  --color-number: #098658;
+  --color-boolean: #0000ff;
+  --color-json: #795e26;
+}
+
+/* High Contrast Theme */
+[data-theme="high-contrast"] {
+  color-scheme: dark;
+
+  /* Colors */
+  --color-bg: #000000;
+  --color-bg-light: #0a0a0a;
+  --color-bg-lighter: #1a1a1a;
+  --color-bg-hover: #2a2a2a;
+  --color-bg-active: #0066cc;
+  --color-border: #6fc3df;
+  --color-border-light: #6fc3df;
+  --color-text: #ffffff;
+  --color-text-muted: #d4d4d4;
+  --color-text-bright: #ffffff;
+  --color-accent: #6fc3df;
+  --color-success: #89d185;
+  --color-warning: #ffcc00;
+  --color-error: #ff6666;
+  --color-info: #6fc3df;
+  --color-null: #6fc3df;
+  --color-string: #ce9178;
+  --color-number: #b5cea8;
+  --color-boolean: #6fc3df;
+  --color-json: #d7ba7d;
+}
+
+/* High Contrast Light Theme */
+[data-theme="high-contrast-light"] {
+  color-scheme: light;
+
+  /* Colors */
+  --color-bg: #ffffff;
+  --color-bg-light: #f5f5f5;
+  --color-bg-lighter: #eeeeee;
+  --color-bg-hover: #d4d4d4;
+  --color-bg-active: #add6ff;
+  --color-border: #0f4a85;
+  --color-border-light: #0f4a85;
+  --color-text: #000000;
+  --color-text-muted: #292929;
+  --color-text-bright: #000000;
+  --color-accent: #0f4a85;
+  --color-success: #006600;
+  --color-warning: #8b6914;
+  --color-error: #a80000;
+  --color-info: #0f4a85;
+  --color-null: #0000cd;
+  --color-string: #a31515;
+  --color-number: #098658;
+  --color-boolean: #0000cd;
+  --color-json: #795e26;
 }
 
 html,
@@ -179,4 +264,58 @@ body {
   );
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
+}
+
+/* Virtual Scrolling Styles */
+.will-change-scroll {
+  will-change: scroll-position;
+}
+
+/* Smooth scrolling with reduced motion support */
+@media (prefers-reduced-motion: no-preference) {
+  .smooth-scroll {
+    scroll-behavior: smooth;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .smooth-scroll {
+    scroll-behavior: auto;
+  }
+}
+
+/* Virtual row optimization */
+.virtual-row {
+  contain: layout style;
+  will-change: transform;
+}
+
+/* Floating button animations */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.2s ease-out;
+}
+
+/* Scroll progress glow */
+@keyframes progress-glow {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.progress-glow {
+  animation: progress-glow 2s ease-in-out infinite;
 }
