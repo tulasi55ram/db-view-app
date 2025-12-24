@@ -1,21 +1,42 @@
 import * as vscode from "vscode";
 
-export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+export type ThemeKind = 'light' | 'dark' | 'high-contrast' | 'high-contrast-light';
+
+export function getThemeKind(): ThemeKind {
+  const themeKind = vscode.window.activeColorTheme.kind;
+  switch (themeKind) {
+    case vscode.ColorThemeKind.Light:
+      return 'light';
+    case vscode.ColorThemeKind.Dark:
+      return 'dark';
+    case vscode.ColorThemeKind.HighContrast:
+      return 'high-contrast';
+    case vscode.ColorThemeKind.HighContrastLight:
+      return 'high-contrast-light';
+    default:
+      return 'dark';
+  }
+}
+
+export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, theme?: ThemeKind): string {
   const webviewRoot = vscode.Uri.joinPath(extensionUri, "media", "webview");
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(webviewRoot, "main.js"));
   const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(webviewRoot, "style.css"));
   const nonce = getNonce();
+  const currentTheme = theme ?? getThemeKind();
 
   const csp = [
     "default-src 'none'",
     `style-src ${webview.cspSource} 'unsafe-inline'`,
     `img-src ${webview.cspSource} https: data:`,
     `font-src ${webview.cspSource}`,
-    `script-src 'nonce-${nonce}'`
+    `script-src 'nonce-${nonce}'`,
+    `worker-src blob:`,
+    `child-src blob:`
   ].join("; ");
 
   return /* html */ `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="${currentTheme}">
   <head>
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -23,7 +44,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     <link href="${styleUri}" rel="stylesheet" />
     <title>dbview</title>
   </head>
-  <body>
+  <body class="vscode-${currentTheme.startsWith('high-contrast') ? 'high-contrast' : currentTheme}">
     <div id="root"></div>
     <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
   </body>

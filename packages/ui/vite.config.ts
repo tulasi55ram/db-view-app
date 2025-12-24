@@ -3,7 +3,9 @@ import react from "@vitejs/plugin-react";
 import { resolve } from "path";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react()
+  ],
   base: "./",
   server: {
     host: "127.0.0.1",
