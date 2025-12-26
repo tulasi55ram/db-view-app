@@ -26,3 +26,5 @@ pnpm-debug.log*
 # misc
 coverage/
 tmp/
+
+.next/
