@@ -15,6 +15,13 @@ const electronAPI: ElectronAPI = {
   listSchemas: (connectionKey) => ipcRenderer.invoke("schema:list", connectionKey),
   listTables: (connectionKey, schema) => ipcRenderer.invoke("schema:getTables", connectionKey, schema),
   getHierarchy: (connectionKey) => ipcRenderer.invoke("schema:getHierarchy", connectionKey),
+  getObjectCounts: (connectionKey, schema) => ipcRenderer.invoke("schema:getObjectCounts", connectionKey, schema),
+  listViews: (connectionKey, schema) => ipcRenderer.invoke("schema:getViews", connectionKey, schema),
+  listMaterializedViews: (connectionKey, schema) => ipcRenderer.invoke("schema:getMaterializedViews", connectionKey, schema),
+  listFunctions: (connectionKey, schema) => ipcRenderer.invoke("schema:getFunctions", connectionKey, schema),
+  listProcedures: (connectionKey, schema) => ipcRenderer.invoke("schema:getProcedures", connectionKey, schema),
+  listTypes: (connectionKey, schema) => ipcRenderer.invoke("schema:getTypes", connectionKey, schema),
+  listColumns: (connectionKey, schema, table) => ipcRenderer.invoke("table:getColumns", connectionKey, schema, table),
 
   // Table operations
   loadTableRows: (params) => ipcRenderer.invoke("table:loadRows", params),

@@ -21,6 +21,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 600,
     title: "DBView",
+    icon: path.join(__dirname, "../../assets/icon-256.png"),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e1e1e" : "#ffffff",
     webPreferences: {
       preload: path.join(__dirname, "../preload/preload.js"),
@@ -40,7 +41,7 @@ function createWindow(): void {
   // Load the UI
   if (isDev) {
     // In development, load from Vite dev server
-    mainWindow.loadURL("http://localhost:5173").catch((err) => {
+    mainWindow.loadURL("http://localhost:5174").catch((err) => {
       console.error("Failed to load dev server:", err);
       console.log("Make sure to run 'pnpm dev:ui' in the UI package first");
     });
@@ -85,6 +86,12 @@ function setupIPC(connManager: ConnectionManager): void {
 
 // App lifecycle
 app.whenReady().then(() => {
+  // Set dock icon on macOS (using padded icon to match other dock icons)
+  if (process.platform === "darwin" && app.dock) {
+    const iconPath = path.join(__dirname, "../../assets/icon-padded.png");
+    app.dock.setIcon(iconPath);
+  }
+
   // Initialize connection manager after app is ready
   connectionManager = new ConnectionManager();
   setupIPC(connectionManager);

@@ -90,6 +90,77 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.getHierarchy();
   });
 
+  ipcMain.handle("schema:getObjectCounts", async (_event, connectionKey: string, schema: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    return adapter.getObjectCounts(schema);
+  });
+
+  ipcMain.handle("schema:getViews", async (_event, connectionKey: string, schema: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    if (!adapter.listViews) {
+      return [];
+    }
+    return adapter.listViews(schema);
+  });
+
+  ipcMain.handle("schema:getMaterializedViews", async (_event, connectionKey: string, schema: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    if (!adapter.listMaterializedViews) {
+      return [];
+    }
+    return adapter.listMaterializedViews(schema);
+  });
+
+  ipcMain.handle("schema:getFunctions", async (_event, connectionKey: string, schema: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    if (!adapter.listFunctions) {
+      return [];
+    }
+    return adapter.listFunctions(schema);
+  });
+
+  ipcMain.handle("schema:getProcedures", async (_event, connectionKey: string, schema: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    if (!adapter.listProcedures) {
+      return [];
+    }
+    return adapter.listProcedures(schema);
+  });
+
+  ipcMain.handle("schema:getTypes", async (_event, connectionKey: string, schema: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    if (!adapter.listTypes) {
+      return [];
+    }
+    return adapter.listTypes(schema);
+  });
+
+  ipcMain.handle("table:getColumns", async (_event, connectionKey: string, schema: string, table: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    return adapter.listColumns(schema, table);
+  });
+
   // ==================== Table Operations ====================
 
   ipcMain.handle("table:loadRows", async (_event, params: LoadTableRowsParams) => {

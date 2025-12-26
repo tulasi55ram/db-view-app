@@ -13,7 +13,7 @@ export interface SSLConfig {
 /**
  * Database types supported by dbview
  */
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlserver' | 'sqlite' | 'mongodb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlserver' | 'sqlite' | 'mongodb' | 'redis';
 
 /**
  * PostgreSQL connection configuration
@@ -100,6 +100,21 @@ export interface MongoDBConnectionConfig {
 }
 
 /**
+ * Redis connection configuration
+ */
+export interface RedisConnectionConfig {
+  dbType: 'redis';
+  name?: string;
+  host: string;
+  port: number;
+  database?: number; // Redis database index (0-15)
+  password?: string;
+  ssl?: boolean;
+  savePassword?: boolean;
+  readOnly?: boolean;
+}
+
+/**
  * Discriminated union of all database connection configurations
  */
 export type DatabaseConnectionConfig =
@@ -107,7 +122,8 @@ export type DatabaseConnectionConfig =
   | MySQLConnectionConfig
   | SQLServerConnectionConfig
   | SQLiteConnectionConfig
-  | MongoDBConnectionConfig;
+  | MongoDBConnectionConfig
+  | RedisConnectionConfig;
 
 /**
  * Legacy ConnectionConfig for backward compatibility
@@ -134,6 +150,10 @@ export function isSQLiteConfig(config: DatabaseConnectionConfig): config is SQLi
 
 export function isMongoDBConfig(config: DatabaseConnectionConfig): config is MongoDBConnectionConfig {
   return config.dbType === 'mongodb';
+}
+
+export function isRedisConfig(config: DatabaseConnectionConfig): config is RedisConnectionConfig {
+  return config.dbType === 'redis';
 }
 
 export interface Column {
@@ -424,6 +444,28 @@ export interface TableInfo {
   schema: string;
   name: string;
   rowCount?: number;
+  sizeBytes?: number;
+}
+
+// Column info for schema explorer tree
+export interface ColumnInfo {
+  name: string;
+  dataType: string;
+  isNullable: boolean;
+  defaultValue: string | null;
+  isPrimaryKey: boolean;
+  isForeignKey: boolean;
+  foreignKeyRef: string | null;
+}
+
+// Object counts per schema
+export interface ObjectCounts {
+  tables: number;
+  views: number;
+  materializedViews: number;
+  functions: number;
+  procedures: number;
+  types: number;
 }
 
 export interface AutocompleteData {

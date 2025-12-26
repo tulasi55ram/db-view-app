@@ -1,0 +1,541 @@
+import { useState } from "react";
+import { Loader2, CheckCircle2, XCircle, FolderOpen, X } from "lucide-react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { motion, AnimatePresence } from "framer-motion";
+import { getElectronAPI } from "@/electron";
+import type { DatabaseConnectionConfig } from "@dbview/core";
+import { cn } from "@/utils/cn";
+
+interface AddConnectionDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: () => void;
+}
+
+type DatabaseType = "postgres" | "mysql" | "sqlserver" | "sqlite" | "mongodb" | "redis";
+
+interface DatabaseTypeInfo {
+  value: DatabaseType;
+  label: string;
+  description: string;
+  color: string;
+}
+
+const DATABASE_TYPES: DatabaseTypeInfo[] = [
+  { value: "postgres", label: "PostgreSQL", description: "Advanced open-source database", color: "#336791" },
+  { value: "mysql", label: "MySQL", description: "Popular relational database", color: "#00758F" },
+  { value: "sqlserver", label: "SQL Server", description: "Microsoft SQL Server", color: "#CC2927" },
+  { value: "sqlite", label: "SQLite", description: "Embedded file database", color: "#003B57" },
+  { value: "mongodb", label: "MongoDB", description: "Document database", color: "#00ED64" },
+  { value: "redis", label: "Redis", description: "In-memory data store", color: "#DC382D" },
+];
+
+// Database Icon
+function DatabaseIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+    </svg>
+  );
+}
+
+// Form Field Component
+function FormField({
+  label,
+  children,
+  className
+}: {
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("space-y-1.5", className)}>
+      <label className="block text-[11px] font-medium text-text-secondary uppercase tracking-wider">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+// Input Component
+function StyledInput({
+  className,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      className={cn(
+        "w-full h-9 px-3 rounded-md text-sm",
+        "bg-neutral-900 border border-neutral-700",
+        "text-text-primary placeholder:text-neutral-500",
+        "transition-all duration-150",
+        "focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30",
+        "hover:border-neutral-600",
+        className
+      )}
+      {...props}
+    />
+  );
+}
+
+export function AddConnectionDialog({ open, onOpenChange, onSave }: AddConnectionDialogProps) {
+  const [dbType, setDbType] = useState<DatabaseType>("postgres");
+  const [name, setName] = useState("");
+  const [host, setHost] = useState("localhost");
+  const [port, setPort] = useState("5432");
+  const [database, setDatabase] = useState("");
+  const [user, setUser] = useState("");
+  const [password, setPassword] = useState("");
+  const [filePath, setFilePath] = useState("");
+  const [connectionString, setConnectionString] = useState("");
+  const [isTesting, setIsTesting] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const api = getElectronAPI();
+
+  const getDefaultPort = (type: DatabaseType): string => {
+    switch (type) {
+      case "postgres": return "5432";
+      case "mysql": return "3306";
+      case "sqlserver": return "1433";
+      case "mongodb": return "27017";
+      case "redis": return "6379";
+      default: return "";
+    }
+  };
+
+  const handleDbTypeChange = (type: DatabaseType) => {
+    setDbType(type);
+    setPort(getDefaultPort(type));
+    setTestResult(null);
+  };
+
+  const buildConfig = (): DatabaseConnectionConfig => {
+    const baseName = name || `${dbType}-${Date.now()}`;
+
+    switch (dbType) {
+      case "postgres":
+        return { dbType: "postgres", name: baseName, host, port: parseInt(port), database, user, password };
+      case "mysql":
+        return { dbType: "mysql", name: baseName, host, port: parseInt(port), database, user, password };
+      case "sqlserver":
+        return { dbType: "sqlserver", name: baseName, host, port: parseInt(port), database, user, password, authenticationType: "sql" as const };
+      case "sqlite":
+        return { dbType: "sqlite", name: baseName, filePath };
+      case "mongodb":
+        return { dbType: "mongodb", name: baseName, database: database || "test", connectionString: connectionString || `mongodb://${host}:${port}/${database || "test"}` };
+      case "redis":
+        return { dbType: "redis", name: baseName, host, port: parseInt(port), database: parseInt(database) || 0, password: password || undefined };
+      default:
+        throw new Error(`Unknown database type: ${dbType}`);
+    }
+  };
+
+  const handleTest = async () => {
+    if (!api) return;
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const config = buildConfig();
+      const result = await api.testConnection(config);
+      setTestResult(result);
+    } catch (error) {
+      setTestResult({ success: false, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!api) return;
+    setIsSaving(true);
+    try {
+      const config = buildConfig();
+      await api.saveConnection(config);
+      onSave();
+      resetForm();
+      onOpenChange(false);
+    } catch (error) {
+      setTestResult({ success: false, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleBrowseSqlite = async () => {
+    if (!api) return;
+    const result = await api.showOpenDialog({
+      filters: [
+        { name: "SQLite Database", extensions: ["db", "sqlite", "sqlite3"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+      properties: ["openFile"],
+    });
+    if (!result.canceled && result.filePaths.length > 0) {
+      setFilePath(result.filePaths[0]);
+    }
+  };
+
+  const resetForm = () => {
+    setName("");
+    setHost("localhost");
+    setPort(getDefaultPort(dbType));
+    setDatabase("");
+    setUser("");
+    setPassword("");
+    setFilePath("");
+    setConnectionString("");
+    setTestResult(null);
+  };
+
+  const currentDbInfo = DATABASE_TYPES.find(db => db.value === dbType)!;
+  const needsHostPort = ["postgres", "mysql", "sqlserver", "redis"].includes(dbType);
+  const needsDatabase = ["postgres", "mysql", "sqlserver", "mongodb"].includes(dbType);
+  const needsAuth = ["postgres", "mysql", "sqlserver"].includes(dbType);
+  const needsFilePath = dbType === "sqlite";
+  const needsConnectionString = dbType === "mongodb";
+
+  return (
+    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <AnimatePresence>
+        {open && (
+          <DialogPrimitive.Portal forceMount>
+            <DialogPrimitive.Overlay asChild>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm"
+              />
+            </DialogPrimitive.Overlay>
+            <DialogPrimitive.Content asChild>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.15, ease: "easeOut" }}
+                className={cn(
+                  "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
+                  "w-[680px] max-h-[85vh] overflow-hidden",
+                  "bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl",
+                  "focus:outline-none"
+                )}
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800">
+                  <div>
+                    <DialogPrimitive.Title className="text-base font-semibold text-text-primary">
+                      New Connection
+                    </DialogPrimitive.Title>
+                    <DialogPrimitive.Description className="text-xs text-text-tertiary mt-0.5">
+                      Connect to a database server
+                    </DialogPrimitive.Description>
+                  </div>
+                  <DialogPrimitive.Close asChild>
+                    <button
+                      className={cn(
+                        "w-7 h-7 flex items-center justify-center rounded-md",
+                        "text-text-tertiary hover:text-text-primary",
+                        "hover:bg-neutral-800 transition-colors"
+                      )}
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </DialogPrimitive.Close>
+                </div>
+
+                {/* Content */}
+                <div className="flex">
+                  {/* Left Panel - Database Types */}
+                  <div className="w-[200px] border-r border-neutral-800 p-3 bg-neutral-950/50">
+                    <div className="space-y-1">
+                      {DATABASE_TYPES.map((db) => (
+                        <button
+                          key={db.value}
+                          onClick={() => handleDbTypeChange(db.value)}
+                          className={cn(
+                            "w-full px-3 py-2.5 rounded-lg text-left transition-all duration-150",
+                            "flex items-center gap-3",
+                            dbType === db.value
+                              ? "bg-accent/10 border border-accent/30"
+                              : "hover:bg-neutral-800/50 border border-transparent"
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              "w-8 h-8 rounded-md flex items-center justify-center",
+                              dbType === db.value ? "bg-accent/20" : "bg-neutral-800"
+                            )}
+                            style={{
+                              backgroundColor: dbType === db.value ? `${db.color}20` : undefined,
+                              color: db.color
+                            }}
+                          >
+                            <DatabaseIcon className="w-4 h-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className={cn(
+                              "text-sm font-medium truncate",
+                              dbType === db.value ? "text-text-primary" : "text-text-secondary"
+                            )}>
+                              {db.label}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Right Panel - Connection Form */}
+                  <div className="flex-1 p-5 overflow-y-auto max-h-[calc(85vh-140px)]">
+                    {/* Connection Type Header */}
+                    <div className="flex items-center gap-3 mb-6 pb-4 border-b border-neutral-800">
+                      <div
+                        className="w-10 h-10 rounded-lg flex items-center justify-center"
+                        style={{ backgroundColor: `${currentDbInfo.color}20`, color: currentDbInfo.color }}
+                      >
+                        <DatabaseIcon className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-text-primary">{currentDbInfo.label}</h3>
+                        <p className="text-xs text-text-tertiary">{currentDbInfo.description}</p>
+                      </div>
+                    </div>
+
+                    {/* Form Fields */}
+                    <div className="space-y-4">
+                      {/* Connection Name */}
+                      <FormField label="Connection Name">
+                        <StyledInput
+                          type="text"
+                          value={name}
+                          onChange={(e) => setName(e.target.value)}
+                          placeholder={`My ${currentDbInfo.label} Connection`}
+                        />
+                      </FormField>
+
+                      {/* Host & Port */}
+                      {needsHostPort && (
+                        <div className="grid grid-cols-3 gap-3">
+                          <FormField label="Host" className="col-span-2">
+                            <StyledInput
+                              type="text"
+                              value={host}
+                              onChange={(e) => setHost(e.target.value)}
+                              placeholder="localhost"
+                            />
+                          </FormField>
+                          <FormField label="Port">
+                            <StyledInput
+                              type="text"
+                              value={port}
+                              onChange={(e) => setPort(e.target.value)}
+                              placeholder={getDefaultPort(dbType)}
+                            />
+                          </FormField>
+                        </div>
+                      )}
+
+                      {/* Database */}
+                      {needsDatabase && (
+                        <FormField label="Database">
+                          <StyledInput
+                            type="text"
+                            value={database}
+                            onChange={(e) => setDatabase(e.target.value)}
+                            placeholder="database_name"
+                          />
+                        </FormField>
+                      )}
+
+                      {/* Redis Database */}
+                      {dbType === "redis" && (
+                        <FormField label="Database Index (0-15)">
+                          <StyledInput
+                            type="number"
+                            min={0}
+                            max={15}
+                            value={database}
+                            onChange={(e) => setDatabase(e.target.value)}
+                            placeholder="0"
+                          />
+                        </FormField>
+                      )}
+
+                      {/* Authentication */}
+                      {needsAuth && (
+                        <div className="grid grid-cols-2 gap-3">
+                          <FormField label="Username">
+                            <StyledInput
+                              type="text"
+                              value={user}
+                              onChange={(e) => setUser(e.target.value)}
+                              placeholder={dbType === "postgres" ? "postgres" : "root"}
+                            />
+                          </FormField>
+                          <FormField label="Password">
+                            <StyledInput
+                              type="password"
+                              value={password}
+                              onChange={(e) => setPassword(e.target.value)}
+                              placeholder="••••••••"
+                            />
+                          </FormField>
+                        </div>
+                      )}
+
+                      {/* Redis Password */}
+                      {dbType === "redis" && (
+                        <FormField label="Password (optional)">
+                          <StyledInput
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="••••••••"
+                          />
+                        </FormField>
+                      )}
+
+                      {/* SQLite File Path */}
+                      {needsFilePath && (
+                        <FormField label="Database File">
+                          <div className="flex gap-2">
+                            <StyledInput
+                              type="text"
+                              value={filePath}
+                              onChange={(e) => setFilePath(e.target.value)}
+                              placeholder="/path/to/database.db"
+                              className="flex-1"
+                            />
+                            <button
+                              onClick={handleBrowseSqlite}
+                              className={cn(
+                                "h-9 px-3 rounded-md flex items-center gap-2",
+                                "bg-neutral-800 border border-neutral-700",
+                                "text-sm text-text-secondary hover:text-text-primary",
+                                "hover:bg-neutral-700 transition-colors"
+                              )}
+                            >
+                              <FolderOpen className="w-4 h-4" />
+                              Browse
+                            </button>
+                          </div>
+                        </FormField>
+                      )}
+
+                      {/* MongoDB Connection String */}
+                      {needsConnectionString && (
+                        <FormField label="Connection String (optional)">
+                          <StyledInput
+                            type="text"
+                            value={connectionString}
+                            onChange={(e) => setConnectionString(e.target.value)}
+                            placeholder="mongodb://localhost:27017/mydb"
+                          />
+                          <p className="text-[10px] text-text-tertiary mt-1">
+                            Leave empty to use host/port/database fields above
+                          </p>
+                        </FormField>
+                      )}
+
+                      {/* Test Result */}
+                      <AnimatePresence>
+                        {testResult && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            className={cn(
+                              "flex items-start gap-3 px-4 py-3 rounded-lg",
+                              testResult.success
+                                ? "bg-emerald-500/10 border border-emerald-500/20"
+                                : "bg-red-500/10 border border-red-500/20"
+                            )}
+                          >
+                            {testResult.success ? (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className={cn(
+                                "text-sm font-medium",
+                                testResult.success ? "text-emerald-400" : "text-red-400"
+                              )}>
+                                {testResult.success ? "Connection successful" : "Connection failed"}
+                              </p>
+                              <p className="text-xs text-text-tertiary mt-0.5 break-words">
+                                {testResult.message}
+                              </p>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-between px-5 py-4 border-t border-neutral-800 bg-neutral-950/30">
+                  <button
+                    onClick={handleTest}
+                    disabled={isTesting}
+                    className={cn(
+                      "h-9 px-4 rounded-md flex items-center gap-2",
+                      "text-sm font-medium",
+                      "bg-neutral-800 border border-neutral-700",
+                      "text-text-secondary hover:text-text-primary",
+                      "hover:bg-neutral-700 transition-colors",
+                      "disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
+                  >
+                    {isTesting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <div className="w-4 h-4 rounded-full border-2 border-current" />
+                    )}
+                    Test Connection
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <DialogPrimitive.Close asChild>
+                      <button
+                        className={cn(
+                          "h-9 px-4 rounded-md",
+                          "text-sm font-medium text-text-secondary",
+                          "hover:bg-neutral-800 transition-colors"
+                        )}
+                      >
+                        Cancel
+                      </button>
+                    </DialogPrimitive.Close>
+                    <button
+                      onClick={handleSave}
+                      disabled={isSaving}
+                      className={cn(
+                        "h-9 px-5 rounded-md flex items-center gap-2",
+                        "text-sm font-medium",
+                        "bg-accent hover:bg-accent/90",
+                        "text-white transition-colors",
+                        "disabled:opacity-50 disabled:cursor-not-allowed"
+                      )}
+                    >
+                      {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                      Save Connection
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </DialogPrimitive.Content>
+          </DialogPrimitive.Portal>
+        )}
+      </AnimatePresence>
+    </DialogPrimitive.Root>
+  );
+}

@@ -101,6 +101,27 @@ export interface TableIndex {
   definition: string;
 }
 
+// Column info for tree view
+export interface ColumnInfo {
+  name: string;
+  dataType: string;
+  isNullable: boolean;
+  defaultValue: string | null;
+  isPrimaryKey: boolean;
+  isForeignKey: boolean;
+  foreignKeyRef: string | null;
+}
+
+// Object counts for schema
+export interface ObjectCounts {
+  tables: number;
+  views: number;
+  materializedViews: number;
+  functions: number;
+  procedures: number;
+  types: number;
+}
+
 export interface ExplainPlan {
   Plan: any;
   "Planning Time": number;
@@ -278,6 +299,13 @@ export interface ElectronAPI {
   listSchemas(connectionKey: string): Promise<string[]>;
   listTables(connectionKey: string, schema: string): Promise<TableInfo[]>;
   getHierarchy(connectionKey: string): Promise<any>;
+  getObjectCounts(connectionKey: string, schema: string): Promise<ObjectCounts>;
+  listViews(connectionKey: string, schema: string): Promise<string[]>;
+  listMaterializedViews(connectionKey: string, schema: string): Promise<string[]>;
+  listFunctions(connectionKey: string, schema: string): Promise<string[]>;
+  listProcedures(connectionKey: string, schema: string): Promise<string[]>;
+  listTypes(connectionKey: string, schema: string): Promise<string[]>;
+  listColumns(connectionKey: string, schema: string, table: string): Promise<ColumnInfo[]>;
 
   // Table operations
   loadTableRows(params: LoadTableRowsParams): Promise<TableDataResult>;

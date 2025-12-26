@@ -5,7 +5,12 @@
   "packageManager": "pnpm@8.15.0",
   "scripts": {
     "dev:extension": "bash -lc 'pnpm --filter @dbview/core watch & pnpm --filter @dbview/ui dev & pnpm --filter @dbview/vscode-extension watch'",
+    "dev:desktop": "bash -lc 'pnpm --filter @dbview/desktop-ui dev & pnpm --filter @dbview/desktop dev'",
+    "dev:desktop-ui": "pnpm --filter @dbview/desktop-ui dev",
     "build:extension": "pnpm --filter @dbview/ui build && pnpm --filter @dbview/vscode-extension build",
-    "build": "pnpm run -r build"
+    "build:desktop": "pnpm --filter @dbview/desktop-ui build && pnpm --filter @dbview/desktop build",
+    "build": "pnpm run -r build",
+    "clean:desktop": "pnpm --filter @dbview/desktop clean && pnpm --filter @dbview/desktop-ui clean",
+    "rebuild:desktop": "pnpm run clean:desktop && pnpm run build:desktop"
   }
 }
