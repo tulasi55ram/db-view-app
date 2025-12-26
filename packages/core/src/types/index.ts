@@ -29,6 +29,7 @@ export interface PostgresConnectionConfig {
   ssl?: boolean | SSLConfig;
   savePassword?: boolean;
   readOnly?: boolean;
+  color?: string;
 }
 
 /**
@@ -46,6 +47,7 @@ export interface MySQLConnectionConfig {
   charset?: string; // Default: 'utf8mb4'
   savePassword?: boolean;
   readOnly?: boolean;
+  color?: string;
 }
 
 /**
@@ -66,6 +68,7 @@ export interface SQLServerConnectionConfig {
   encrypt?: boolean; // Default: true
   savePassword?: boolean;
   readOnly?: boolean;
+  color?: string;
 }
 
 /**
@@ -77,6 +80,7 @@ export interface SQLiteConnectionConfig {
   filePath: string; // Path to .db/.sqlite/.sqlite3 file
   mode?: 'readonly' | 'readwrite' | 'create';
   readOnly?: boolean;
+  color?: string;
 }
 
 /**
@@ -97,6 +101,7 @@ export interface MongoDBConnectionConfig {
   ssl?: boolean;
   savePassword?: boolean;
   readOnly?: boolean;
+  color?: string;
 }
 
 /**
@@ -112,6 +117,7 @@ export interface RedisConnectionConfig {
   ssl?: boolean;
   savePassword?: boolean;
   readOnly?: boolean;
+  color?: string;
 }
 
 /**

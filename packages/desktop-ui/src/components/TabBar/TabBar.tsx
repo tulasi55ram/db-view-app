@@ -1,8 +1,6 @@
 import { useRef, useState, useMemo, useEffect, useCallback } from "react";
 import { Table2, FileCode, X, Plus, Workflow, Database } from "lucide-react";
 import { cn } from "@/utils/cn";
-import { IconButton } from "@/primitives";
-import { Tooltip } from "@/primitives/Tooltip";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -14,6 +12,7 @@ interface Tab {
   table?: string;
   connectionKey?: string; // Unique identifier for the connection
   connectionName?: string; // Display name for the connection
+  connectionColor?: string; // Custom color for the connection
   isDirty?: boolean;
 }
 
@@ -93,23 +92,24 @@ export function TabBar({
 
   // Group tabs by connection
   const connectionGroups = useMemo((): ConnectionGroup[] => {
-    const groups = new Map<string, { connectionName: string; tabs: Tab[] }>();
+    const groups = new Map<string, { connectionName: string; tabs: Tab[]; customColor?: string }>();
 
     tabs.forEach((tab) => {
       const key = tab.connectionKey || 'no-connection';
       const name = tab.connectionName || 'No Connection';
 
       if (!groups.has(key)) {
-        groups.set(key, { connectionName: name, tabs: [] });
+        groups.set(key, { connectionName: name, tabs: [], customColor: tab.connectionColor });
       }
       groups.get(key)!.tabs.push(tab);
     });
 
-    return Array.from(groups.entries()).map(([connectionKey, { connectionName, tabs }]) => ({
+    return Array.from(groups.entries()).map(([connectionKey, { connectionName, tabs, customColor }]) => ({
       connectionKey,
       connectionName,
       tabs,
-      color: getConnectionColor(connectionName),
+      // Use custom color if available, otherwise use smart color assignment
+      color: customColor || getConnectionColor(connectionName),
     }));
   }, [tabs]);
 
@@ -211,7 +211,7 @@ export function TabBar({
                       exit={{ opacity: 0, width: 0 }}
                       transition={{ duration: 0.15 }}
                       className={cn(
-                        "flex items-center gap-1.5 h-7 px-2.5 mr-1 rounded-md cursor-pointer",
+                        "group flex items-center gap-1.5 h-7 px-2.5 mr-1 rounded-md cursor-pointer",
                         "transition-colors duration-fast flex-shrink-0 text-xs font-medium",
                         isActive
                           ? "bg-bg-primary text-text-primary shadow-sm"
@@ -242,6 +242,23 @@ export function TabBar({
                       )}>
                         {group.tabs.length}
                       </span>
+
+                      {/* Close button */}
+                      <div
+                        className={cn(
+                          "w-4 h-4 flex items-center justify-center rounded flex-shrink-0",
+                          "hover:bg-bg-active transition-all cursor-pointer",
+                          isActive
+                            ? "opacity-70 hover:opacity-100"
+                            : "opacity-0 group-hover:opacity-70 hover:!opacity-100"
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCloseConnectionTabs(group.connectionKey);
+                        }}
+                      >
+                        <X className="w-3 h-3" />
+                      </div>
                     </motion.div>
                   </ContextMenu.Trigger>
 
@@ -379,14 +396,13 @@ export function TabBar({
 
         {/* New Query Button */}
         <div className="flex-shrink-0 px-2 border-l border-border">
-          <Tooltip content="New Query">
-            <IconButton
-              icon={<Plus className="w-3.5 h-3.5" />}
-              size="sm"
-              aria-label="New query"
-              onClick={onNewQuery}
-            />
-          </Tooltip>
+          <button
+            onClick={onNewQuery}
+            className="h-7 px-3 rounded flex items-center gap-1.5 bg-accent hover:bg-accent/90 text-white text-xs font-medium transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            New Query
+          </button>
         </div>
       </div>
     </div>

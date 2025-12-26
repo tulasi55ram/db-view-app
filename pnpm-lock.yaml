@@ -203,6 +203,9 @@ importers:
       '@codemirror/language':
         specifier: ^6.10.6
         version: 6.12.1
+      '@codemirror/search':
+        specifier: ^6.5.8
+        version: 6.5.11
       '@codemirror/state':
         specifier: ^6.5.3
         version: 6.5.3

@@ -1,13 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Loader2, CheckCircle2, XCircle, FolderOpen, ArrowLeft } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getElectronAPI } from "@/electron";
 import type { DatabaseConnectionConfig } from "@dbview/core";
 import { cn } from "@/utils/cn";
+import { ColorPicker } from "@/components/ColorPicker";
 
 interface AddConnectionViewProps {
   onSave: () => void;
   onCancel?: () => void;
+  editingConnectionKey?: string | null;
 }
 
 type DatabaseType = "postgres" | "mysql" | "sqlserver" | "sqlite" | "mongodb" | "redis";
@@ -87,7 +89,8 @@ function StyledInput({
   );
 }
 
-export function AddConnectionView({ onSave, onCancel }: AddConnectionViewProps) {
+export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: AddConnectionViewProps) {
+  const isEditMode = !!editingConnectionKey;
   const [dbType, setDbType] = useState<DatabaseType>("postgres");
   const [name, setName] = useState("");
   const [host, setHost] = useState("localhost");
@@ -97,11 +100,88 @@ export function AddConnectionView({ onSave, onCancel }: AddConnectionViewProps) 
   const [password, setPassword] = useState("");
   const [filePath, setFilePath] = useState("");
   const [connectionString, setConnectionString] = useState("");
+  const [color, setColor] = useState("#3B82F6"); // Default blue
   const [isTesting, setIsTesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingConnection, setIsLoadingConnection] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const api = getElectronAPI();
+
+  // Load existing connection data in edit mode
+  useEffect(() => {
+    if (!isEditMode || !editingConnectionKey || !api) return;
+
+    setIsLoadingConnection(true);
+    api.getConnections()
+      .then((connections) => {
+        const connection = connections.find((c: any) => {
+          const key = c.config.name
+            ? `${c.config.dbType}:${c.config.name}`
+            : c.config.host
+            ? `${c.config.dbType}:${c.config.user}@${c.config.host}:${c.config.port}/${c.config.database}`
+            : `${c.config.dbType}:${JSON.stringify(c.config)}`;
+          return key === editingConnectionKey;
+        });
+
+        if (connection) {
+          const config = connection.config;
+
+          // Set database type first
+          setDbType(config.dbType as DatabaseType);
+          setPort(getDefaultPort(config.dbType as DatabaseType));
+
+          // Set common fields
+          setName(config.name || "");
+          setColor(config.color || "#3B82F6");
+
+          // Set type-specific fields
+          if ((config as any).host) {
+            setHost((config as any).host);
+            setPort(String((config as any).port || ""));
+          }
+          if ((config as any).database) {
+            setDatabase((config as any).database);
+          }
+          if ((config as any).user) {
+            setUser((config as any).user);
+          }
+          // Don't load password for security
+          if ((config as any).filePath) {
+            setFilePath((config as any).filePath);
+          }
+          if ((config as any).connectionString) {
+            setConnectionString((config as any).connectionString);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load connection:", err);
+        setTestResult({ success: false, message: "Failed to load connection data" });
+      })
+      .finally(() => {
+        setIsLoadingConnection(false);
+      });
+  }, [isEditMode, editingConnectionKey, api]);
+
+  // Smart color suggestions based on connection name (only in create mode)
+  useEffect(() => {
+    if (isEditMode) return; // Don't auto-change color in edit mode
+
+    const nameLower = name.toLowerCase();
+    if (nameLower.includes("prod") || nameLower.includes("production")) {
+      setColor("#EF4444"); // Red for production
+    } else if (nameLower.includes("staging") || nameLower.includes("stage")) {
+      setColor("#F59E0B"); // Amber for staging
+    } else if (nameLower.includes("dev") || nameLower.includes("development")) {
+      setColor("#22C55E"); // Green for development
+    } else if (nameLower.includes("test") || nameLower.includes("qa")) {
+      setColor("#EAB308"); // Yellow for testing
+    } else if (nameLower.includes("local")) {
+      setColor("#06B6D4"); // Cyan for local
+    }
+    // If name doesn't match any pattern, keep the currently selected color
+  }, [name, isEditMode]);
 
   const getDefaultPort = (type: DatabaseType): string => {
     switch (type) {
@@ -125,17 +205,17 @@ export function AddConnectionView({ onSave, onCancel }: AddConnectionViewProps) 
 
     switch (dbType) {
       case "postgres":
-        return { dbType: "postgres", name: baseName, host, port: parseInt(port), database, user, password };
+        return { dbType: "postgres", name: baseName, host, port: parseInt(port), database, user, password, color };
       case "mysql":
-        return { dbType: "mysql", name: baseName, host, port: parseInt(port), database, user, password };
+        return { dbType: "mysql", name: baseName, host, port: parseInt(port), database, user, password, color };
       case "sqlserver":
-        return { dbType: "sqlserver", name: baseName, host, port: parseInt(port), database, user, password, authenticationType: "sql" as const };
+        return { dbType: "sqlserver", name: baseName, host, port: parseInt(port), database, user, password, authenticationType: "sql" as const, color };
       case "sqlite":
-        return { dbType: "sqlite", name: baseName, filePath };
+        return { dbType: "sqlite", name: baseName, filePath, color };
       case "mongodb":
-        return { dbType: "mongodb", name: baseName, database: database || "test", connectionString: connectionString || `mongodb://${host}:${port}/${database || "test"}` };
+        return { dbType: "mongodb", name: baseName, database: database || "test", connectionString: connectionString || `mongodb://${host}:${port}/${database || "test"}`, color };
       case "redis":
-        return { dbType: "redis", name: baseName, host, port: parseInt(port), database: parseInt(database) || 0, password: password || undefined };
+        return { dbType: "redis", name: baseName, host, port: parseInt(port), database: parseInt(database) || 0, password: password || undefined, color };
       default:
         throw new Error(`Unknown database type: ${dbType}`);
     }
@@ -206,8 +286,12 @@ export function AddConnectionView({ onSave, onCancel }: AddConnectionViewProps) 
               Back
             </button>
           )}
-          <h2 className="text-lg font-semibold text-text-primary">New Connection</h2>
-          <p className="text-sm text-text-tertiary mt-1">Choose a database type</p>
+          <h2 className="text-lg font-semibold text-text-primary">
+            {isEditMode ? "Edit Connection" : "New Connection"}
+          </h2>
+          <p className="text-sm text-text-tertiary mt-1">
+            {isEditMode ? "Update connection settings" : "Choose a database type"}
+          </p>
         </div>
 
         {/* Database Type List */}
@@ -216,13 +300,15 @@ export function AddConnectionView({ onSave, onCancel }: AddConnectionViewProps) 
             {DATABASE_TYPES.map((db) => (
               <button
                 key={db.value}
-                onClick={() => handleDbTypeChange(db.value)}
+                onClick={() => !isEditMode && handleDbTypeChange(db.value)}
+                disabled={isEditMode}
                 className={cn(
                   "w-full px-4 py-3 rounded-lg text-left transition-all duration-150",
                   "flex items-center gap-4",
                   dbType === db.value
                     ? "bg-accent/10 ring-1 ring-accent/30"
-                    : "hover:bg-bg-hover"
+                    : "hover:bg-bg-hover",
+                  isEditMode && "opacity-50 cursor-not-allowed"
                 )}
               >
                 <div
@@ -270,7 +356,15 @@ export function AddConnectionView({ onSave, onCancel }: AddConnectionViewProps) 
         </div>
 
         {/* Form Content */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto relative">
+          {isLoadingConnection && (
+            <div className="absolute inset-0 bg-bg-primary/80 flex items-center justify-center z-10">
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="w-8 h-8 animate-spin text-accent" />
+                <p className="text-sm text-text-secondary">Loading connection...</p>
+              </div>
+            </div>
+          )}
           <div className="max-w-xl px-8 py-6 space-y-5">
             {/* Connection Name */}
             <FormField label="Connection Name" hint="Optional">
@@ -281,6 +375,13 @@ export function AddConnectionView({ onSave, onCancel }: AddConnectionViewProps) 
                 placeholder={`My ${currentDbInfo.label} Database`}
               />
             </FormField>
+
+            {/* Connection Color */}
+            <ColorPicker
+              value={color}
+              onChange={setColor}
+              label="Connection Color"
+            />
 
             {/* Host & Port */}
             {needsHostPort && (
@@ -486,7 +587,7 @@ export function AddConnectionView({ onSave, onCancel }: AddConnectionViewProps) 
               )}
             >
               {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
-              Save Connection
+              {isEditMode ? "Update Connection" : "Save Connection"}
             </button>
           </div>
         </div>

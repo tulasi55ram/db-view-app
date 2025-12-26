@@ -4,6 +4,16 @@ import type { DatabaseConnectionConfig } from "@dbview/core";
 // Connection config without password (passwords stored in keytar)
 export type StoredConnectionConfig = Omit<DatabaseConnectionConfig, "password">;
 
+export interface QueryHistoryEntry {
+  id: string;
+  sql: string;
+  executedAt: number;
+  duration?: number;
+  rowCount?: number;
+  success: boolean;
+  error?: string;
+}
+
 interface StoreSchema {
   connections: StoredConnectionConfig[];
   activeConnectionName: string | null;
@@ -16,6 +26,8 @@ interface StoreSchema {
   recentSqliteFiles: string[];
   sidebarWidth: number;
   sidebarVisible: boolean;
+  // Query history per connection (last 10 queries per connection)
+  queryHistory: Record<string, QueryHistoryEntry[]>;
 }
 
 // Lazy-initialized store (electron-store requires app.getPath which isn't available at module load)
@@ -35,6 +47,7 @@ function getStore(): Store<StoreSchema> {
         recentSqliteFiles: [],
         sidebarWidth: 260,
         sidebarVisible: true,
+        queryHistory: {},
       },
     });
   }
@@ -117,4 +130,38 @@ export function getSidebarVisible(): boolean {
 
 export function setSidebarVisible(visible: boolean): void {
   getStore().set("sidebarVisible", visible);
+}
+
+// Query History management
+export function getQueryHistory(connectionKey: string): QueryHistoryEntry[] {
+  const allHistory = getStore().get("queryHistory", {});
+  return allHistory[connectionKey] || [];
+}
+
+export function addQueryHistoryEntry(connectionKey: string, entry: QueryHistoryEntry): void {
+  const allHistory = getStore().get("queryHistory", {});
+  const connectionHistory = allHistory[connectionKey] || [];
+
+  // Add new entry at the end
+  connectionHistory.push(entry);
+
+  // Keep only last 10 queries
+  const updatedHistory = connectionHistory.slice(-10);
+
+  allHistory[connectionKey] = updatedHistory;
+  getStore().set("queryHistory", allHistory);
+}
+
+export function clearQueryHistory(connectionKey: string): void {
+  const allHistory = getStore().get("queryHistory", {});
+  delete allHistory[connectionKey];
+  getStore().set("queryHistory", allHistory);
+}
+
+export function deleteQueryHistoryEntry(connectionKey: string, entryId: string): void {
+  const allHistory = getStore().get("queryHistory", {});
+  const connectionHistory = allHistory[connectionKey] || [];
+
+  allHistory[connectionKey] = connectionHistory.filter(entry => entry.id !== entryId);
+  getStore().set("queryHistory", allHistory);
 }

@@ -667,9 +667,45 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Query Execution ====================
 
+  /**
+   * Check if SQL query has a LIMIT clause
+   */
+  private hasLimitClause(sql: string): boolean {
+    // Remove comments and normalize whitespace
+    const normalized = sql
+      .replace(/--[^\n]*\n/g, ' ') // Remove single-line comments
+      .replace(/\/\*[\s\S]*?\*\//g, ' ') // Remove multi-line comments
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .trim()
+      .toLowerCase();
+
+    // Check for LIMIT clause (should be near the end)
+    return /\blimit\s+\d+/.test(normalized);
+  }
+
   async runQuery(sql: string): Promise<QueryResultSet> {
-    const result = await this.query(sql);
-    return createResultSet(result);
+    const DEFAULT_LIMIT = 1000;
+    let executedSql = sql;
+    let limitApplied = false;
+
+    // Check if query already has a LIMIT clause
+    if (!this.hasLimitClause(sql)) {
+      // Auto-append LIMIT for safety
+      executedSql = `${sql.trim()}\nLIMIT ${DEFAULT_LIMIT}`;
+      limitApplied = true;
+    }
+
+    const result = await this.query(executedSql);
+    const resultSet = createResultSet(result);
+
+    // Add metadata about limiting
+    if (limitApplied) {
+      resultSet.limitApplied = true;
+      resultSet.limit = DEFAULT_LIMIT;
+      resultSet.hasMore = result.rows.length === DEFAULT_LIMIT;
+    }
+
+    return resultSet;
   }
 
   async explainQuery(sql: string): Promise<ExplainPlan> {

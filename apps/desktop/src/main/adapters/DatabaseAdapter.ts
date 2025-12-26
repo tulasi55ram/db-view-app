@@ -25,6 +25,9 @@ export interface ConnectionStatusEvent {
 export interface QueryResultSet {
   columns: string[];
   rows: Record<string, unknown>[];
+  limitApplied?: boolean; // Whether an automatic LIMIT was applied
+  limit?: number; // The limit value that was applied
+  hasMore?: boolean; // Whether there are potentially more rows
 }
 
 /**

@@ -167,6 +167,17 @@ export interface AutocompleteData {
   columns: Record<string, ColumnMetadata[]>;
 }
 
+// Query history entry
+export interface QueryHistoryEntry {
+  id: string;
+  sql: string;
+  executedAt: number;
+  duration?: number;
+  rowCount?: number;
+  success: boolean;
+  error?: string;
+}
+
 // Load table rows params
 export interface LoadTableRowsParams {
   connectionKey: string;
@@ -343,6 +354,12 @@ export interface ElectronAPI {
   // File dialogs
   showSaveDialog(options: SaveDialogOptions): Promise<DialogResult>;
   showOpenDialog(options: OpenDialogOptions): Promise<DialogResult>;
+
+  // Query history
+  getQueryHistory(connectionKey: string): Promise<QueryHistoryEntry[]>;
+  addQueryHistoryEntry(connectionKey: string, entry: QueryHistoryEntry): Promise<void>;
+  clearQueryHistory(connectionKey: string): Promise<void>;
+  deleteQueryHistoryEntry(connectionKey: string, entryId: string): Promise<void>;
 
   // Theme
   getTheme(): Promise<"light" | "dark">;

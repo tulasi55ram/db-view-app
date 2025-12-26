@@ -5,8 +5,9 @@ import { AppShell } from "@/layout";
 import { Sidebar } from "@/components/Sidebar";
 import { TabBar } from "@/components/TabBar";
 import { TableView } from "@/components/TableView";
+import { QueryView } from "@/components/QueryView";
 import { AddConnectionView } from "@/components/AddConnectionView";
-import { Database, Plus } from "lucide-react";
+import { HomeView } from "@/components/HomeView";
 
 // Tab types
 interface Tab {
@@ -17,7 +18,18 @@ interface Tab {
   table?: string;
   connectionKey?: string; // Unique identifier for the connection
   connectionName?: string; // Display name for the connection
+  connectionColor?: string; // Custom color for the connection
   isDirty?: boolean;
+
+  // Query-specific fields
+  sql?: string;
+  columns?: string[];
+  rows?: Record<string, unknown>[];
+  loading?: boolean;
+  error?: string;
+  limitApplied?: boolean; // Whether an automatic LIMIT was applied
+  limit?: number; // The limit value that was applied
+  hasMore?: boolean; // Whether there are potentially more rows
 }
 
 function AppContent() {
@@ -25,7 +37,31 @@ function AppContent() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [showAddConnection, setShowAddConnection] = useState(false);
+  const [editingConnectionKey, setEditingConnectionKey] = useState<string | null>(null);
   const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0);
+  const [expandConnectionKey, setExpandConnectionKey] = useState<string | null>(null);
+
+  const api = (window as any).electronAPI;
+
+  // Helper to get connection color
+  const getConnectionColor = useCallback(async (connectionKey: string): Promise<string | undefined> => {
+    if (!api) return undefined;
+    try {
+      const connections = await api.getConnections();
+      const conn = connections.find((c: any) => {
+        const key = c.config.name
+          ? `${c.config.dbType}:${c.config.name}`
+          : c.config.host
+          ? `${c.config.dbType}:${c.config.user}@${c.config.host}:${c.config.port}/${c.config.database}`
+          : `${c.config.dbType}:${JSON.stringify(c.config)}`;
+        return key === connectionKey;
+      });
+      return conn?.config?.color;
+    } catch (error) {
+      console.error("Failed to get connection color:", error);
+      return undefined;
+    }
+  }, [api]);
 
   // Tab management
   const addTab = useCallback((tab: Omit<Tab, "id">) => {
@@ -56,9 +92,13 @@ function AppContent() {
     setActiveTabId(null);
   }, []);
 
+  const updateQueryTab = useCallback((tabId: string, updates: Partial<Tab>) => {
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, ...updates } : t)));
+  }, []);
+
   // Handlers
   const handleTableSelect = useCallback(
-    (connectionKey: string, connectionName: string, schema: string, table: string) => {
+    async (connectionKey: string, connectionName: string, schema: string, table: string) => {
       setShowAddConnection(false);
       const existingTab = tabs.find(
         (t) => t.type === "table" && t.connectionKey === connectionKey && t.schema === schema && t.table === table
@@ -68,6 +108,7 @@ function AppContent() {
         return;
       }
 
+      const connectionColor = await getConnectionColor(connectionKey);
       addTab({
         type: "table",
         title: table,
@@ -75,39 +116,71 @@ function AppContent() {
         table,
         connectionKey,
         connectionName,
+        connectionColor,
       });
     },
-    [tabs, addTab]
+    [tabs, addTab, getConnectionColor]
   );
 
   const handleQueryOpen = useCallback(
-    (connectionKey: string, connectionName: string) => {
+    async (connectionKey: string, connectionName: string) => {
       setShowAddConnection(false);
+      const connectionColor = await getConnectionColor(connectionKey);
       addTab({
         type: "query",
         title: "New Query",
         connectionKey,
         connectionName,
+        connectionColor,
+        sql: "",
+        columns: [],
+        rows: [],
+        loading: false,
       });
     },
-    [addTab]
+    [addTab, getConnectionColor]
   );
 
-  const handleNewQuery = useCallback(() => {
+  const handleNewQuery = useCallback(async () => {
     const activeTab = tabs.find((t) => t.id === activeTabId);
+    const connectionColor = activeTab?.connectionKey
+      ? await getConnectionColor(activeTab.connectionKey)
+      : undefined;
     addTab({
       type: "query",
       title: "New Query",
       connectionKey: activeTab?.connectionKey,
       connectionName: activeTab?.connectionName,
+      connectionColor,
+      sql: "",
+      columns: [],
+      rows: [],
+      loading: false,
     });
   }, [tabs, activeTabId, addTab]);
 
   const handleAddConnectionSave = useCallback(() => {
     setShowAddConnection(false);
+    setEditingConnectionKey(null);
     // Trigger sidebar refresh to show the new connection
     setSidebarRefreshTrigger((prev) => prev + 1);
   }, []);
+
+  const handleEditConnection = useCallback((connectionKey: string) => {
+    setEditingConnectionKey(connectionKey);
+    setShowAddConnection(true);
+  }, []);
+
+  const handleBrowseConnection = useCallback(
+    (connectionKey: string) => {
+      setShowAddConnection(false);
+      // Trigger sidebar expansion for this connection
+      setExpandConnectionKey(connectionKey);
+      // Reset after a short delay to allow re-triggering if needed
+      setTimeout(() => setExpandConnectionKey(null), 100);
+    },
+    []
+  );
 
   // Render main content
   const renderContent = () => {
@@ -116,33 +189,26 @@ function AppContent() {
       return (
         <AddConnectionView
           onSave={handleAddConnectionSave}
-          onCancel={() => setShowAddConnection(false)}
+          onCancel={() => {
+            setShowAddConnection(false);
+            setEditingConnectionKey(null);
+          }}
+          editingConnectionKey={editingConnectionKey}
         />
       );
     }
 
     const activeTab = tabs.find((t) => t.id === activeTabId);
 
-    // Empty state - no tabs open
+    // Empty state - no tabs open - show home view
     if (!activeTab) {
       return (
-        <div className="flex-1 flex flex-col items-center justify-center text-text-secondary">
-          <div className="w-20 h-20 rounded-2xl bg-bg-tertiary flex items-center justify-center mb-6">
-            <Database className="w-10 h-10 opacity-30" />
-          </div>
-          <h2 className="text-xl font-semibold text-text-primary mb-2">Welcome to DBView</h2>
-          <p className="text-sm text-text-tertiary mb-6 text-center max-w-md">
-            Connect to a database to start exploring your data,<br />
-            or select a table from the sidebar.
-          </p>
-          <button
-            onClick={() => setShowAddConnection(true)}
-            className="h-10 px-5 rounded-lg flex items-center gap-2 bg-accent hover:bg-accent/90 text-white text-sm font-medium transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            New Connection
-          </button>
-        </div>
+        <HomeView
+          onAddConnection={() => setShowAddConnection(true)}
+          onQueryOpen={handleQueryOpen}
+          onEditConnection={handleEditConnection}
+          onBrowseConnection={handleBrowseConnection}
+        />
       );
     }
 
@@ -157,19 +223,18 @@ function AppContent() {
       );
     }
 
-    // Placeholder for other tab types (query, er-diagram)
+    // Render query tab
+    if (activeTab.type === "query") {
+      return <QueryView tab={activeTab} onTabUpdate={updateQueryTab} />;
+    }
+
+    // Placeholder for ER diagram
     return (
       <div className="flex-1 flex items-center justify-center text-text-secondary">
         <div className="text-center">
-          <p className="text-lg mb-2">
-            {activeTab.type === "query" ? "Query Editor" : "ER Diagram"}
-          </p>
-          <p className="text-sm text-text-tertiary">
-            {activeTab.title}
-          </p>
-          <p className="text-xs text-text-tertiary mt-2">
-            (Coming soon)
-          </p>
+          <p className="text-lg mb-2">ER Diagram</p>
+          <p className="text-sm text-text-tertiary">{activeTab.title}</p>
+          <p className="text-xs text-text-tertiary mt-2">(Coming soon)</p>
         </div>
       </div>
     );
@@ -195,7 +260,9 @@ function AppContent() {
             onTableSelect={handleTableSelect}
             onQueryOpen={handleQueryOpen}
             onAddConnection={() => setShowAddConnection(true)}
+            onEditConnection={handleEditConnection}
             refreshTrigger={sidebarRefreshTrigger}
+            expandConnectionKey={expandConnectionKey}
           />
         }
       >

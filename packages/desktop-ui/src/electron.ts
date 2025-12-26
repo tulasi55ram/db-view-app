@@ -49,7 +49,7 @@ export interface ElectronAPI {
   deleteRows(params: DeleteRowsParams): Promise<number>;
 
   // Query operations
-  runQuery(params: RunQueryParams): Promise<{ columns: string[]; rows: Record<string, unknown>[] }>;
+  runQuery(params: RunQueryParams): Promise<QueryResult>;
   formatSql(sql: string): Promise<string>;
   explainQuery(params: ExplainQueryParams): Promise<ExplainPlan>;
 
@@ -74,6 +74,12 @@ export interface ElectronAPI {
   // File dialogs
   showSaveDialog(options: SaveDialogOptions): Promise<DialogResult>;
   showOpenDialog(options: OpenDialogOptions): Promise<DialogResult>;
+
+  // Query history
+  getQueryHistory(connectionKey: string): Promise<QueryHistoryEntry[]>;
+  addQueryHistoryEntry(connectionKey: string, entry: QueryHistoryEntry): Promise<void>;
+  clearQueryHistory(connectionKey: string): Promise<void>;
+  deleteQueryHistoryEntry(connectionKey: string, entryId: string): Promise<void>;
 
   // Theme
   getTheme(): Promise<"light" | "dark">;
@@ -149,6 +155,14 @@ export interface RunQueryParams {
   sql: string;
 }
 
+export interface QueryResult {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  limitApplied?: boolean;
+  limit?: number;
+  hasMore?: boolean;
+}
+
 export interface ExplainQueryParams {
   connectionKey: string;
   sql: string;
@@ -210,6 +224,16 @@ export interface OpenDialogOptions {
 export interface DialogResult {
   canceled: boolean;
   filePaths: string[];
+}
+
+export interface QueryHistoryEntry {
+  id: string;
+  sql: string;
+  executedAt: number;
+  duration?: number;
+  rowCount?: number;
+  success: boolean;
+  error?: string;
 }
 
 // Declare the global window interface extension

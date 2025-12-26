@@ -60,6 +60,12 @@ const electronAPI: ElectronAPI = {
   showSaveDialog: (options) => ipcRenderer.invoke("dialog:showSave", options),
   showOpenDialog: (options) => ipcRenderer.invoke("dialog:showOpen", options),
 
+  // Query history
+  getQueryHistory: (connectionKey) => ipcRenderer.invoke("queryHistory:get", connectionKey),
+  addQueryHistoryEntry: (connectionKey, entry) => ipcRenderer.invoke("queryHistory:add", connectionKey, entry),
+  clearQueryHistory: (connectionKey) => ipcRenderer.invoke("queryHistory:clear", connectionKey),
+  deleteQueryHistoryEntry: (connectionKey, entryId) => ipcRenderer.invoke("queryHistory:delete", connectionKey, entryId),
+
   // Theme
   getTheme: () => ipcRenderer.invoke("theme:get"),
 

@@ -10,6 +10,7 @@ import {
   Unplug,
   Play,
   Trash2,
+  Edit,
   Eye,
   Layers,
   Code2,
@@ -33,6 +34,7 @@ interface ConnectionInfo {
     host?: string;
     port?: number;
     database?: string;
+    color?: string;
   };
   status: "connected" | "disconnected" | "connecting" | "error";
   error?: string;
@@ -89,6 +91,7 @@ interface TreeNode {
   children?: TreeNode[];
   status?: ConnectionInfo["status"];
   dbType?: string;
+  color?: string; // Connection color
   isLoading?: boolean;
   // Table metadata
   rowCount?: number;
@@ -105,7 +108,9 @@ interface SidebarProps {
   onTableSelect: (connectionKey: string, connectionName: string, schema: string, table: string) => void;
   onQueryOpen: (connectionKey: string, connectionName: string) => void;
   onAddConnection: () => void;
+  onEditConnection: (connectionKey: string) => void;
   refreshTrigger?: number;
+  expandConnectionKey?: string | null; // Connection to expand when Browse is clicked
 }
 
 // Helper to format bytes
@@ -124,7 +129,7 @@ function formatRowCount(count: number): string {
   return `${(count / 1000000).toFixed(1)}M rows`;
 }
 
-export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, refreshTrigger }: SidebarProps) {
+export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditConnection, refreshTrigger, expandConnectionKey }: SidebarProps) {
   const [connections, setConnections] = useState<ConnectionInfo[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
@@ -163,6 +168,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, refreshTr
         connectionName: name,
         status: conn.status,
         dbType: conn.config.dbType,
+        color: conn.config.color,
         children: [],
       };
     });
@@ -431,6 +437,19 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, refreshTr
     [expandedNodes, api]
   );
 
+  // Handle expandConnectionKey prop - expand connection when Browse is clicked
+  useEffect(() => {
+    if (!expandConnectionKey || treeData.length === 0) return;
+
+    const connectionNode = treeData.find((node) => node.connectionKey === expandConnectionKey);
+    if (!connectionNode) return;
+
+    // Only expand if not already expanded
+    if (!expandedNodes.has(connectionNode.id)) {
+      toggleNode(connectionNode);
+    }
+  }, [expandConnectionKey, treeData, expandedNodes, toggleNode]);
+
   const handleTableClick = (node: TreeNode) => {
     if ((node.type === "table" || node.type === "view") && node.connectionKey && node.connectionName && node.schema) {
       // For tables, use node.table; for views, use node.name
@@ -598,13 +617,21 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, refreshTr
           <ContextMenu.Trigger>
             <div
               className={cn(
-                "flex items-center gap-1.5 px-2 py-1 cursor-pointer text-sm",
+                "flex items-center gap-1.5 px-2 py-1 cursor-pointer text-sm relative",
                 "hover:bg-bg-hover transition-colors duration-fast",
                 "select-none group"
               )}
               style={{ paddingLeft: `${depth * 12 + 8}px` }}
               onClick={handleNodeClick}
             >
+              {/* Color indicator for connections */}
+              {node.type === "connection" && node.color && (
+                <div
+                  className="absolute left-0 top-0 bottom-0 w-0.5"
+                  style={{ backgroundColor: node.color }}
+                />
+              )}
+
               {/* Expand/Collapse Icon */}
               {hasChildren ? (
                 isLoading ? (
@@ -626,6 +653,14 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, refreshTr
                 )
               ) : (
                 <span className="w-3.5 flex-shrink-0" />
+              )}
+
+              {/* Connection color dot (optional, as an alternative to the left bar) */}
+              {node.type === "connection" && node.color && (
+                <div
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: node.color }}
+                />
               )}
 
               {/* Node Icon */}
@@ -659,6 +694,14 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, refreshTr
                 >
                   <Play className="w-3.5 h-3.5" />
                   New Query
+                </ContextMenu.Item>
+
+                <ContextMenu.Item
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                  onSelect={() => node.connectionKey && onEditConnection(node.connectionKey)}
+                >
+                  <Edit className="w-3.5 h-3.5" />
+                  Edit Connection
                 </ContextMenu.Item>
 
                 {node.status === "connected" && (

@@ -18,7 +18,16 @@ import type {
   SaveDialogOptions,
   OpenDialogOptions,
 } from "../../preload/api";
-import { getAllConnections, saveConnection, deleteConnectionConfig } from "../services/SettingsStore";
+import {
+  getAllConnections,
+  saveConnection,
+  deleteConnectionConfig,
+  getQueryHistory,
+  addQueryHistoryEntry,
+  clearQueryHistory,
+  deleteQueryHistoryEntry,
+  type QueryHistoryEntry
+} from "../services/SettingsStore";
 import { passwordStore } from "../services/PasswordStore";
 import type { DatabaseConnectionConfig, SavedView } from "@dbview/core";
 
@@ -434,5 +443,23 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     });
 
     return { canceled: result.canceled, filePaths: result.filePaths };
+  });
+
+  // ==================== Query History ====================
+
+  ipcMain.handle("queryHistory:get", async (_event, connectionKey: string) => {
+    return getQueryHistory(connectionKey);
+  });
+
+  ipcMain.handle("queryHistory:add", async (_event, connectionKey: string, entry: QueryHistoryEntry) => {
+    addQueryHistoryEntry(connectionKey, entry);
+  });
+
+  ipcMain.handle("queryHistory:clear", async (_event, connectionKey: string) => {
+    clearQueryHistory(connectionKey);
+  });
+
+  ipcMain.handle("queryHistory:delete", async (_event, connectionKey: string, entryId: string) => {
+    deleteQueryHistoryEntry(connectionKey, entryId);
   });
 }
