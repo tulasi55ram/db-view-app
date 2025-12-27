@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
-import { Loader2, CheckCircle2, XCircle, FolderOpen, ArrowLeft } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { Loader2, CheckCircle2, XCircle, FolderOpen, ArrowLeft, Lock, AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getElectronAPI } from "@/electron";
-import type { DatabaseConnectionConfig } from "@dbview/core";
+import type { DatabaseConnectionConfig } from "@dbview/types";
 import { cn } from "@/utils/cn";
 import { ColorPicker } from "@/components/ColorPicker";
 
@@ -100,13 +100,35 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
   const [password, setPassword] = useState("");
   const [filePath, setFilePath] = useState("");
   const [connectionString, setConnectionString] = useState("");
+  const [authDatabase, setAuthDatabase] = useState("");
+  // SSL/Security options
+  const [ssl, setSsl] = useState(false);
+  const [sslMode, setSslMode] = useState<"disable" | "require" | "verify-ca" | "verify-full">("require");
+  // SQL Server specific
+  const [instanceName, setInstanceName] = useState("");
+  const [authenticationType, setAuthenticationType] = useState<"sql" | "windows">("sql");
+  const [domain, setDomain] = useState("");
+  const [encrypt, setEncrypt] = useState(true);
+  const [trustServerCertificate, setTrustServerCertificate] = useState(false);
+  // Redis ACL
+  const [redisUsername, setRedisUsername] = useState("");
   const [color, setColor] = useState("#3B82F6"); // Default blue
+  const [readOnly, setReadOnly] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingConnection, setIsLoadingConnection] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const api = getElectronAPI();
+
+  // Detect if connection appears to be production
+  const isLikelyProduction = useMemo(() => {
+    const productionKeywords = ['prod', 'production', 'live', 'prd'];
+    const valuesToCheck = [name.toLowerCase(), host.toLowerCase(), database.toLowerCase()];
+    return valuesToCheck.some(value =>
+      productionKeywords.some(keyword => value.includes(keyword))
+    );
+  }, [name, host, database]);
 
   // Load existing connection data in edit mode
   useEffect(() => {
@@ -152,6 +174,12 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           }
           if ((config as any).connectionString) {
             setConnectionString((config as any).connectionString);
+          }
+          if ((config as any).authDatabase) {
+            setAuthDatabase((config as any).authDatabase);
+          }
+          if ((config as any).readOnly !== undefined) {
+            setReadOnly((config as any).readOnly);
           }
         }
       })
@@ -205,17 +233,79 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
 
     switch (dbType) {
       case "postgres":
-        return { dbType: "postgres", name: baseName, host, port: parseInt(port), database, user, password, color };
+        return {
+          dbType: "postgres",
+          name: baseName,
+          host,
+          port: parseInt(port),
+          database,
+          user,
+          password,
+          ssl: ssl || undefined,
+          sslMode: ssl ? sslMode : undefined,
+          color,
+          readOnly
+        };
       case "mysql":
-        return { dbType: "mysql", name: baseName, host, port: parseInt(port), database, user, password, color };
+        return {
+          dbType: "mysql",
+          name: baseName,
+          host,
+          port: parseInt(port),
+          database,
+          user,
+          password,
+          ssl: ssl || undefined,
+          color,
+          readOnly
+        };
       case "sqlserver":
-        return { dbType: "sqlserver", name: baseName, host, port: parseInt(port), database, user, password, authenticationType: "sql" as const, color };
+        return {
+          dbType: "sqlserver",
+          name: baseName,
+          host,
+          port: parseInt(port),
+          database,
+          user: authenticationType === "sql" ? user : undefined,
+          password: authenticationType === "sql" ? password : undefined,
+          instanceName: instanceName || undefined,
+          authenticationType,
+          domain: authenticationType === "windows" ? domain : undefined,
+          encrypt,
+          trustServerCertificate,
+          color,
+          readOnly
+        };
       case "sqlite":
-        return { dbType: "sqlite", name: baseName, filePath, color };
+        return { dbType: "sqlite", name: baseName, filePath, color, readOnly };
       case "mongodb":
-        return { dbType: "mongodb", name: baseName, database: database || "test", connectionString: connectionString || `mongodb://${host}:${port}/${database || "test"}`, color };
+        return {
+          dbType: "mongodb",
+          name: baseName,
+          host,
+          port: parseInt(port),
+          database: database || "test",
+          user: user || undefined,
+          password: password || undefined,
+          authDatabase: authDatabase || undefined,
+          connectionString: connectionString || undefined,
+          ssl: ssl || undefined,
+          color,
+          readOnly
+        };
       case "redis":
-        return { dbType: "redis", name: baseName, host, port: parseInt(port), database: parseInt(database) || 0, password: password || undefined, color };
+        return {
+          dbType: "redis",
+          name: baseName,
+          host,
+          port: parseInt(port),
+          database: parseInt(database) || 0,
+          username: redisUsername || undefined,
+          password: password || undefined,
+          ssl: ssl || undefined,
+          color,
+          readOnly
+        };
       default:
         throw new Error(`Unknown database type: ${dbType}`);
     }
@@ -265,9 +355,9 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
   };
 
   const currentDbInfo = DATABASE_TYPES.find(db => db.value === dbType)!;
-  const needsHostPort = ["postgres", "mysql", "sqlserver", "redis"].includes(dbType);
+  const needsHostPort = ["postgres", "mysql", "sqlserver", "mongodb", "redis"].includes(dbType);
   const needsDatabase = ["postgres", "mysql", "sqlserver", "mongodb"].includes(dbType);
-  const needsAuth = ["postgres", "mysql", "sqlserver"].includes(dbType);
+  const needsAuth = ["postgres", "mysql", "sqlserver", "mongodb"].includes(dbType);
   const needsFilePath = dbType === "sqlite";
   const needsConnectionString = dbType === "mongodb";
 
@@ -405,6 +495,18 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
               </div>
             )}
 
+            {/* SQL Server Instance Name */}
+            {dbType === "sqlserver" && (
+              <FormField label="Instance Name" hint="Optional">
+                <StyledInput
+                  type="text"
+                  value={instanceName}
+                  onChange={(e) => setInstanceName(e.target.value)}
+                  placeholder="e.g., SQLEXPRESS"
+                />
+              </FormField>
+            )}
+
             {/* Database */}
             {needsDatabase && (
               <FormField label="Database">
@@ -431,38 +533,100 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
               </FormField>
             )}
 
-            {/* Authentication */}
-            {needsAuth && (
-              <div className="grid grid-cols-2 gap-4">
-                <FormField label="Username">
-                  <StyledInput
-                    type="text"
-                    value={user}
-                    onChange={(e) => setUser(e.target.value)}
-                    placeholder={dbType === "postgres" ? "postgres" : "root"}
-                  />
-                </FormField>
-                <FormField label="Password">
-                  <StyledInput
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter password"
-                  />
-                </FormField>
-              </div>
+            {/* SQL Server Authentication Type */}
+            {dbType === "sqlserver" && (
+              <FormField label="Authentication">
+                <select
+                  value={authenticationType}
+                  onChange={(e) => setAuthenticationType(e.target.value as "sql" | "windows")}
+                  className={cn(
+                    "w-full h-10 px-3 rounded-lg text-sm",
+                    "bg-bg-tertiary border border-border",
+                    "text-text-primary",
+                    "focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  )}
+                >
+                  <option value="sql">SQL Server Authentication</option>
+                  <option value="windows">Windows Authentication</option>
+                </select>
+              </FormField>
             )}
 
-            {/* Redis Password */}
-            {dbType === "redis" && (
-              <FormField label="Password" hint="Optional">
+            {/* Authentication */}
+            {needsAuth && (dbType !== "sqlserver" || authenticationType === "sql") && (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField label="Username" hint={dbType === "mongodb" ? "Optional" : undefined}>
+                    <StyledInput
+                      type="text"
+                      value={user}
+                      onChange={(e) => setUser(e.target.value)}
+                      placeholder={dbType === "postgres" ? "postgres" : dbType === "mongodb" ? "admin" : "root"}
+                    />
+                  </FormField>
+                  <FormField label="Password" hint={dbType === "mongodb" ? "Optional" : undefined}>
+                    <StyledInput
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter password"
+                    />
+                  </FormField>
+                </div>
+                {/* MongoDB Auth Database */}
+                {dbType === "mongodb" && (
+                  <FormField label="Auth Database" hint="Optional - defaults to admin">
+                    <StyledInput
+                      type="text"
+                      value={authDatabase}
+                      onChange={(e) => setAuthDatabase(e.target.value)}
+                      placeholder="admin"
+                    />
+                  </FormField>
+                )}
+              </>
+            )}
+
+            {/* SQL Server Windows Authentication Domain */}
+            {dbType === "sqlserver" && authenticationType === "windows" && (
+              <FormField label="Domain" hint="Optional">
                 <StyledInput
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter password"
+                  type="text"
+                  value={domain}
+                  onChange={(e) => setDomain(e.target.value)}
+                  placeholder="MYDOMAIN"
                 />
+                <p className="text-xs text-text-tertiary mt-1">
+                  Uses current Windows credentials if not specified
+                </p>
               </FormField>
+            )}
+
+            {/* Redis Authentication (ACL) */}
+            {dbType === "redis" && (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField label="Username" hint="Optional">
+                    <StyledInput
+                      type="text"
+                      value={redisUsername}
+                      onChange={(e) => setRedisUsername(e.target.value)}
+                      placeholder="default"
+                    />
+                  </FormField>
+                  <FormField label="Password" hint="Optional">
+                    <StyledInput
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter password"
+                    />
+                  </FormField>
+                </div>
+                <p className="text-xs text-text-tertiary -mt-2">
+                  Redis 6+ supports ACL with username. Leave username empty for legacy auth.
+                </p>
+              </>
             )}
 
             {/* SQLite File Path */}
@@ -494,15 +658,134 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
 
             {/* MongoDB Connection String */}
             {needsConnectionString && (
-              <FormField label="Connection String" hint="Optional - overrides above fields">
+              <FormField label="Connection String" hint="Optional - overrides host/port/auth">
                 <StyledInput
                   type="text"
                   value={connectionString}
                   onChange={(e) => setConnectionString(e.target.value)}
-                  placeholder="mongodb://localhost:27017/mydb"
+                  placeholder="mongodb://user:pass@host:27017/db?authSource=admin"
                 />
               </FormField>
             )}
+
+            {/* SSL/Security Section */}
+            {["postgres", "mysql", "mongodb", "redis"].includes(dbType) && (
+              <div className="space-y-3 pt-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={ssl}
+                    onChange={(e) => setSsl(e.target.checked)}
+                    className="rounded cursor-pointer accent-accent"
+                  />
+                  <span className="text-sm text-text-secondary">
+                    Use SSL/TLS encryption
+                  </span>
+                </label>
+                {/* PostgreSQL SSL Mode */}
+                {dbType === "postgres" && ssl && (
+                  <FormField label="SSL Mode">
+                    <select
+                      value={sslMode}
+                      onChange={(e) => setSslMode(e.target.value as typeof sslMode)}
+                      className={cn(
+                        "w-full h-10 px-3 rounded-lg text-sm",
+                        "bg-bg-tertiary border border-border",
+                        "text-text-primary",
+                        "focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                      )}
+                    >
+                      <option value="require">Require (encrypt, no verify)</option>
+                      <option value="verify-ca">Verify CA (validate certificate)</option>
+                      <option value="verify-full">Verify Full (validate + hostname)</option>
+                      <option value="disable">Disable</option>
+                    </select>
+                    <p className="text-xs text-text-tertiary mt-1">
+                      verify-full recommended for production
+                    </p>
+                  </FormField>
+                )}
+              </div>
+            )}
+
+            {/* SQL Server Security Options */}
+            {dbType === "sqlserver" && (
+              <div className="space-y-3 pt-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={encrypt}
+                    onChange={(e) => setEncrypt(e.target.checked)}
+                    className="rounded cursor-pointer accent-accent"
+                  />
+                  <span className="text-sm text-text-secondary">
+                    Encrypt connection
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={trustServerCertificate}
+                    onChange={(e) => setTrustServerCertificate(e.target.checked)}
+                    className="rounded cursor-pointer accent-accent"
+                  />
+                  <span className="text-sm text-text-secondary">
+                    Trust server certificate
+                  </span>
+                </label>
+                <p className="text-xs text-text-tertiary">
+                  Enable "Trust server certificate" for self-signed certs (dev only)
+                </p>
+              </div>
+            )}
+
+            {/* Read-Only Mode Section */}
+            <div className="pt-4 mt-2 border-t border-border">
+              {/* Read-Only Mode Toggle */}
+              <label className="flex items-start gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={readOnly}
+                  onChange={(e) => setReadOnly(e.target.checked)}
+                  className="mt-1 rounded cursor-pointer accent-accent"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <Lock className={cn("w-4 h-4", readOnly ? "text-accent" : "text-text-tertiary")} />
+                    <span className={cn("text-sm font-medium", readOnly ? "text-text-primary" : "text-text-secondary")}>
+                      Read-Only Mode
+                    </span>
+                  </div>
+                  <p className="text-xs text-text-tertiary mt-0.5">
+                    Block all write operations (INSERT, UPDATE, DELETE)
+                  </p>
+                </div>
+              </label>
+
+              {/* Production Warning */}
+              <AnimatePresence>
+                {isLikelyProduction && !readOnly && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mt-3"
+                  >
+                    <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-medium text-amber-400">
+                          Production Database Detected
+                        </p>
+                        <p className="text-[10px] text-amber-400/80 mt-0.5">
+                          This appears to be a production database. Consider enabling read-only mode to prevent accidental data modifications.
+                        </p>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
             {/* Test Result */}
             <AnimatePresence>

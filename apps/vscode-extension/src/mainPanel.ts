@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
-import type { DatabaseAdapter, QueryResultSet } from "./adapters/DatabaseAdapter";
+import type { DatabaseAdapter, QueryResultSet } from "@dbview/adapters";
 import type { TableIdentifier } from "./schemaExplorer";
 import { getWebviewHtml, getThemeKind, type ThemeKind } from "./webviewHost";
-import type { SavedView, FilterCondition, ColumnMetadata, TableInfo, DatabaseConnectionConfig } from "@dbview/core";
+import type { SavedView, FilterCondition, ColumnMetadata, TableInfo, DatabaseConnectionConfig } from "@dbview/types";
 import { format as formatSql } from "sql-formatter";
 
 // Get autocomplete performance limits from VS Code settings
@@ -945,7 +945,7 @@ export async function openERDiagramInPanel(
         case 'mysql':
         case 'sqlserver':
         case 'mongodb':
-          schemasToVisualize = ['database' in connectionConfig ? connectionConfig.database : 'default'];
+          schemasToVisualize = ['database' in connectionConfig && connectionConfig.database !== undefined ? String(connectionConfig.database) : 'default'];
           break;
         case 'sqlite':
           schemasToVisualize = ['main'];

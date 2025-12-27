@@ -5,9 +5,22 @@ node_modules/
 # build outputs
 apps/vscode-extension/dist/
 apps/vscode-extension/media/webview/
-packages/core/dist/
-packages/ui/dist/
 apps/desktop/dist/
+packages/types/dist/
+packages/adapters/dist/
+packages/ui/dist/
+packages/desktop-ui/dist/
+packages/utils/dist/
+
+# compiled files in source directories (should not be committed)
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
+apps/*/src/**/*.js
+apps/*/src/**/*.d.ts
+apps/*/src/**/*.d.ts.map
+!**/*.config.js
+!**/vitest.setup.js
 
 # editor / tooling
 .vscode/

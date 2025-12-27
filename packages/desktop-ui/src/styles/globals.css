@@ -20,7 +20,17 @@
 
   --border-default: #303030;
   --border-subtle: #262626;
-  --border-focus: #3b82f6;
+  --border-focus: #60a5fa;
+
+  /* Accent colors - brighter for dark theme visibility */
+  --accent: #60a5fa;
+  --accent-hover: #3b82f6;
+  --accent-muted: #2563eb;
+
+  /* Status colors */
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --error: #f87171;
 
   /* Scrollbar */
   --scrollbar-track: transparent;
@@ -42,6 +52,16 @@
   --border-default: #e5e5e5;
   --border-subtle: #f0f0f0;
   --border-focus: #3b82f6;
+
+  /* Accent colors - standard for light theme */
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-muted: #1d4ed8;
+
+  /* Status colors */
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
 
   --scrollbar-track: transparent;
   --scrollbar-thumb: rgba(0, 0, 0, 0.15);

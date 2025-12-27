@@ -1,7 +1,7 @@
 // MongoDB Initialization Script
 
 // Connect to dbview database
-db = db.getSiblingDB('dbview');
+db = db.getSiblingDB('dbview_dev');
 
 // Create users collection
 db.createCollection('users');

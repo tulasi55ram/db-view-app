@@ -22,22 +22,22 @@ const config: Config = {
           900: "#171717",
           950: "#0a0a0a",
         },
-        // Accent colors
+        // Accent colors - using CSS variables for theme support
         accent: {
-          DEFAULT: "#3b82f6",
-          hover: "#2563eb",
-          muted: "#1d4ed8",
+          DEFAULT: "var(--accent)",
+          hover: "var(--accent-hover)",
+          muted: "var(--accent-muted)",
         },
         success: {
-          DEFAULT: "#22c55e",
+          DEFAULT: "var(--success)",
           muted: "#16a34a",
         },
         warning: {
-          DEFAULT: "#f59e0b",
+          DEFAULT: "var(--warning)",
           muted: "#d97706",
         },
         error: {
-          DEFAULT: "#ef4444",
+          DEFAULT: "var(--error)",
           muted: "#dc2626",
         },
         info: {

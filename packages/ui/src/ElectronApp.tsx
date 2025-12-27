@@ -17,7 +17,7 @@ import { SqlRunnerView } from "./components/SqlRunnerView";
 import { ERDiagramPanel } from "./components/ERDiagramPanel";
 import { useTabs } from "./hooks/useTabs";
 import { useQueryHistory } from "./hooks/useQueryHistory";
-import type { ColumnMetadata, TableTab, QueryTab, ERDiagramTab, TableInfo, ExplainPlan } from "@dbview/core";
+import type { ColumnMetadata, TableTab, QueryTab, ERDiagramTab, TableInfo, ExplainPlan } from "@dbview/types";
 import type { DataGridColumn } from "./components/DataGrid";
 
 type ThemeKind = "light" | "dark";

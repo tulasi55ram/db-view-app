@@ -9,7 +9,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@dbview/core": "workspace:^",
+    "@dbview/types": "workspace:^",
+    "@dbview/adapters": "workspace:^",
     "better-sqlite3": "12.5.0",
     "electron": "^28.2.1",
     "electron-store": "8",

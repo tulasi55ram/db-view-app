@@ -26,17 +26,20 @@ import {
   addQueryHistoryEntry,
   clearQueryHistory,
   deleteQueryHistoryEntry,
-  type QueryHistoryEntry
+  getFilterPresets,
+  saveFilterPreset,
+  deleteFilterPreset,
+  getTabsState,
+  saveTabsState,
+  getSavedViews,
+  saveSavedView,
+  deleteSavedView,
+  type QueryHistoryEntry,
+  type FilterPreset,
+  type TabsState
 } from "../services/SettingsStore";
 import { passwordStore } from "../services/PasswordStore";
-import type { DatabaseConnectionConfig, SavedView } from "@dbview/core";
-
-// In-memory storage for saved views (could be moved to electron-store)
-const savedViews: Map<string, SavedView[]> = new Map();
-
-function getViewKey(schema: string, table: string): string {
-  return `${schema}.${table}`;
-}
+import type { DatabaseConnectionConfig } from "@dbview/types";
 
 /**
  * Register all IPC handlers
@@ -182,6 +185,9 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
       offset: params.offset,
       filters: params.filters,
       filterLogic: params.filterLogic,
+      orderBy: params.orderBy,
+      sortColumn: params.sortColumn,
+      sortDirection: params.sortDirection,
     });
   });
 
@@ -282,43 +288,32 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.explainQuery(params.sql);
   });
 
-  // ==================== Saved Views ====================
+  // ==================== Saved Views (persisted to disk) ====================
 
   ipcMain.handle("views:getAll", async (_event, params: GetViewsParams) => {
-    const key = getViewKey(params.schema, params.table);
-    return savedViews.get(key) || [];
+    return getSavedViews(params.schema, params.table);
   });
 
   ipcMain.handle("views:save", async (_event, params: SaveViewParams) => {
-    const key = getViewKey(params.schema, params.table);
-    const views = savedViews.get(key) || [];
-
-    // If setting as default, unset other defaults
-    if (params.view.isDefault) {
-      views.forEach((v) => {
-        if (v.id !== params.view.id) {
-          v.isDefault = false;
-        }
-      });
-    }
-
-    const existingIndex = views.findIndex((v) => v.id === params.view.id);
-    if (existingIndex >= 0) {
-      views[existingIndex] = params.view;
-    } else {
-      views.push(params.view);
-    }
-
-    savedViews.set(key, views);
+    saveSavedView(params.schema, params.table, params.view);
   });
 
   ipcMain.handle("views:delete", async (_event, params: DeleteViewParams) => {
-    const key = getViewKey(params.schema, params.table);
-    const views = savedViews.get(key) || [];
-    savedViews.set(
-      key,
-      views.filter((v) => v.id !== params.viewId)
-    );
+    deleteSavedView(params.schema, params.table, params.viewId);
+  });
+
+  // ==================== Filter Presets ====================
+
+  ipcMain.handle("filterPresets:getAll", async (_event, params: { schema: string; table: string }) => {
+    return getFilterPresets(params.schema, params.table);
+  });
+
+  ipcMain.handle("filterPresets:save", async (_event, params: { schema: string; table: string; preset: FilterPreset }) => {
+    saveFilterPreset(params.schema, params.table, params.preset);
+  });
+
+  ipcMain.handle("filterPresets:delete", async (_event, params: { schema: string; table: string; presetId: string }) => {
+    deleteFilterPreset(params.schema, params.table, params.presetId);
   });
 
   // ==================== ER Diagram ====================
@@ -419,6 +414,10 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     clipboard.writeText(text);
   });
 
+  ipcMain.handle("clipboard:read", async () => {
+    return clipboard.readText();
+  });
+
   // ==================== File Dialogs ====================
 
   ipcMain.handle("dialog:showSave", async (_event, options: SaveDialogOptions) => {
@@ -461,5 +460,15 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
 
   ipcMain.handle("queryHistory:delete", async (_event, connectionKey: string, entryId: string) => {
     deleteQueryHistoryEntry(connectionKey, entryId);
+  });
+
+  // ==================== Tabs Persistence ====================
+
+  ipcMain.handle("tabs:load", async () => {
+    return getTabsState();
+  });
+
+  ipcMain.handle("tabs:save", async (_event, state: TabsState) => {
+    saveTabsState(state);
   });
 }

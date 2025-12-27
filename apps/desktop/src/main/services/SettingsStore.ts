@@ -1,5 +1,5 @@
 import Store from "electron-store";
-import type { DatabaseConnectionConfig } from "@dbview/core";
+import type { DatabaseConnectionConfig } from "@dbview/types";
 
 // Connection config without password (passwords stored in keytar)
 export type StoredConnectionConfig = Omit<DatabaseConnectionConfig, "password">;
@@ -12,6 +12,66 @@ export interface QueryHistoryEntry {
   rowCount?: number;
   success: boolean;
   error?: string;
+}
+
+export interface FilterPreset {
+  id: string;
+  name: string;
+  filters: Array<{
+    id: string;
+    columnName: string;
+    operator: string;
+    value: unknown;
+  }>;
+  logic: "AND" | "OR";
+  createdAt: number;
+}
+
+// Persisted tab state
+export interface PersistedTab {
+  id: string;
+  type: "table" | "query" | "er-diagram";
+  title: string;
+  schema?: string;
+  table?: string;
+  connectionKey?: string;
+  connectionName?: string;
+  connectionColor?: string;
+  // Query-specific
+  sql?: string;
+}
+
+export interface TabsState {
+  tabs: PersistedTab[];
+  activeTabId: string | null;
+}
+
+// Saved view state (filters, sorting, visible columns)
+export interface SavedViewState {
+  filters: Array<{
+    id: string;
+    columnName: string;
+    operator: string;
+    value: unknown;
+  }>;
+  filterLogic: "AND" | "OR";
+  sorting: Array<{
+    columnName: string;
+    direction: "asc" | "desc";
+  }>;
+  visibleColumns: string[];
+}
+
+export interface SavedView {
+  id: string;
+  name: string;
+  description?: string;
+  schema: string;
+  table: string;
+  state: SavedViewState;
+  createdAt: number;
+  updatedAt: number;
+  isDefault?: boolean;
 }
 
 interface StoreSchema {
@@ -28,6 +88,12 @@ interface StoreSchema {
   sidebarVisible: boolean;
   // Query history per connection (last 10 queries per connection)
   queryHistory: Record<string, QueryHistoryEntry[]>;
+  // Filter presets per table (key: "schema.table")
+  filterPresets: Record<string, FilterPreset[]>;
+  // Saved views per table (key: "schema.table")
+  savedViews: Record<string, SavedView[]>;
+  // Persisted tabs state
+  tabsState: TabsState | null;
 }
 
 // Lazy-initialized store (electron-store requires app.getPath which isn't available at module load)
@@ -48,6 +114,9 @@ function getStore(): Store<StoreSchema> {
         sidebarWidth: 260,
         sidebarVisible: true,
         queryHistory: {},
+        filterPresets: {},
+        savedViews: {},
+        tabsState: null,
       },
     });
   }
@@ -164,4 +233,96 @@ export function deleteQueryHistoryEntry(connectionKey: string, entryId: string):
 
   allHistory[connectionKey] = connectionHistory.filter(entry => entry.id !== entryId);
   getStore().set("queryHistory", allHistory);
+}
+
+// Filter Presets management
+function getPresetKey(schema: string, table: string): string {
+  return `${schema}.${table}`;
+}
+
+export function getFilterPresets(schema: string, table: string): FilterPreset[] {
+  const allPresets = getStore().get("filterPresets", {});
+  const key = getPresetKey(schema, table);
+  return allPresets[key] || [];
+}
+
+export function saveFilterPreset(schema: string, table: string, preset: FilterPreset): void {
+  const allPresets = getStore().get("filterPresets", {});
+  const key = getPresetKey(schema, table);
+  const tablePresets = allPresets[key] || [];
+
+  // Check if preset with same name exists
+  const existingIndex = tablePresets.findIndex(p => p.name === preset.name);
+  if (existingIndex >= 0) {
+    tablePresets[existingIndex] = preset;
+  } else {
+    tablePresets.push(preset);
+  }
+
+  allPresets[key] = tablePresets;
+  getStore().set("filterPresets", allPresets);
+}
+
+export function deleteFilterPreset(schema: string, table: string, presetId: string): void {
+  const allPresets = getStore().get("filterPresets", {});
+  const key = getPresetKey(schema, table);
+  const tablePresets = allPresets[key] || [];
+
+  allPresets[key] = tablePresets.filter(p => p.id !== presetId);
+  getStore().set("filterPresets", allPresets);
+}
+
+// Tabs persistence
+export function getTabsState(): TabsState | null {
+  return getStore().get("tabsState", null);
+}
+
+export function saveTabsState(state: TabsState): void {
+  getStore().set("tabsState", state);
+}
+
+// Saved Views management
+function getViewKey(schema: string, table: string): string {
+  return `${schema}.${table}`;
+}
+
+export function getSavedViews(schema: string, table: string): SavedView[] {
+  const allViews = getStore().get("savedViews", {});
+  const key = getViewKey(schema, table);
+  return allViews[key] || [];
+}
+
+export function saveSavedView(schema: string, table: string, view: SavedView): void {
+  const allViews = getStore().get("savedViews", {});
+  const key = getViewKey(schema, table);
+  const tableViews = allViews[key] || [];
+
+  // If setting as default, unset other defaults
+  if (view.isDefault) {
+    tableViews.forEach((v) => {
+      if (v.id !== view.id) {
+        v.isDefault = false;
+      }
+    });
+  }
+
+  // Check if view with same id exists
+  const existingIndex = tableViews.findIndex((v) => v.id === view.id);
+  if (existingIndex >= 0) {
+    tableViews[existingIndex] = view;
+  } else {
+    tableViews.push(view);
+  }
+
+  allViews[key] = tableViews;
+  getStore().set("savedViews", allViews);
+}
+
+export function deleteSavedView(schema: string, table: string, viewId: string): void {
+  const allViews = getStore().get("savedViews", {});
+  const key = getViewKey(schema, table);
+  const tableViews = allViews[key] || [];
+
+  allViews[key] = tableViews.filter((v) => v.id !== viewId);
+  getStore().set("savedViews", allViews);
 }

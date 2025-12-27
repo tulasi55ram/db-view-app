@@ -1,5 +1,5 @@
 import { FC } from 'react';
-import type { FilterCondition } from '@dbview/core';
+import type { FilterCondition } from '@dbview/types';
 import { X, Filter, ChevronRight, Edit } from 'lucide-react';
 import { OPERATOR_LABELS } from '../utils/filterOperators';
 import clsx from 'clsx';

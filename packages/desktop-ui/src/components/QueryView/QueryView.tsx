@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
-import { Play, Wand2, History } from "lucide-react";
+import { Play, Wand2, History, Activity } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SqlEditor } from "./SqlEditor";
 import { QueryResultsGrid } from "./QueryResultsGrid";
 import { QueryHistoryPanel } from "./QueryHistoryPanel";
+import { ExplainPlanPanel } from "./ExplainPlanPanel";
 import { getElectronAPI, type QueryHistoryEntry } from "@/electron";
 import { toast } from "sonner";
-import type { TableInfo, ColumnMetadata } from "@dbview/core";
+import type { TableInfo, ColumnMetadata, ExplainPlan } from "@dbview/types";
 
 export interface QueryViewProps {
   tab: {
@@ -52,6 +53,10 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
   });
   const [showHistory, setShowHistory] = useState(false);
   const [persistedHistory, setPersistedHistory] = useState<QueryHistoryEntry[]>([]);
+  const [showExplainPanel, setShowExplainPanel] = useState(false);
+  const [explainPlan, setExplainPlan] = useState<ExplainPlan | null>(null);
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainError, setExplainError] = useState<string | undefined>();
 
   const api = getElectronAPI();
 
@@ -200,6 +205,63 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     }
   }, [tab.connectionKey, api]);
 
+  // Handle toggle star for query history
+  const handleToggleStar = useCallback(async (entryId: string) => {
+    if (!tab.connectionKey || !api) return;
+
+    try {
+      // Find the entry and toggle its starred status
+      const entry = persistedHistory.find((e) => e.id === entryId);
+      if (!entry) return;
+
+      const newStarredValue = !entry.starred;
+
+      // Update the local state optimistically
+      setPersistedHistory((prev) =>
+        prev.map((e) => (e.id === entryId ? { ...e, starred: newStarredValue } : e))
+      );
+
+      // Persist to backend if API supports it
+      if (api.toggleQueryHistoryStar) {
+        await api.toggleQueryHistoryStar(tab.connectionKey, entryId, newStarredValue);
+      }
+    } catch (error: any) {
+      toast.error(`Failed to update star: ${error.message}`);
+      // Revert on error
+      setPersistedHistory((prev) =>
+        prev.map((e) => (e.id === entryId ? { ...e, starred: !e.starred } : e))
+      );
+    }
+  }, [tab.connectionKey, api, persistedHistory]);
+
+  // Handle explain query
+  const handleExplainQuery = useCallback(async () => {
+    if (!tab.sql?.trim() || !tab.connectionKey || !api) {
+      if (!tab.connectionKey) {
+        toast.error("No connection selected");
+      }
+      return;
+    }
+
+    setExplainLoading(true);
+    setExplainError(undefined);
+    setShowExplainPanel(true);
+
+    try {
+      const result = await api.explainQuery({
+        connectionKey: tab.connectionKey,
+        sql: tab.sql,
+      });
+      setExplainPlan(result);
+      toast.success("Query analyzed successfully");
+    } catch (error: any) {
+      setExplainError(error.message || "Failed to analyze query");
+      toast.error(`Failed to analyze query: ${error.message}`);
+    } finally {
+      setExplainLoading(false);
+    }
+  }, [tab, api]);
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-bg-primary">
       {/* Toolbar - Compact, always visible */}
@@ -222,14 +284,35 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
             <Wand2 className="w-3 h-3" />
             Format
           </button>
+          <button
+            onClick={handleExplainQuery}
+            disabled={tab.loading || !tab.sql?.trim() || explainLoading}
+            className="h-7 px-3 rounded flex items-center gap-1.5 bg-bg-tertiary hover:bg-bg-hover text-text-primary text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Activity className="w-3 h-3" />
+            Explain
+          </button>
         </div>
-        <button
-          onClick={() => setShowHistory(!showHistory)}
-          className="h-7 px-3 rounded flex items-center gap-1.5 bg-bg-tertiary hover:bg-bg-hover text-text-primary text-xs font-medium transition-colors"
-        >
-          <History className="w-3 h-3" />
-          History {showHistory && "✓"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowExplainPanel(!showExplainPanel)}
+            className={`h-7 px-3 rounded flex items-center gap-1.5 text-xs font-medium transition-colors ${
+              showExplainPanel ? "bg-accent/20 text-accent" : "bg-bg-tertiary hover:bg-bg-hover text-text-primary"
+            }`}
+          >
+            <Activity className="w-3 h-3" />
+            Plan {showExplainPanel && "✓"}
+          </button>
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className={`h-7 px-3 rounded flex items-center gap-1.5 text-xs font-medium transition-colors ${
+              showHistory ? "bg-accent/20 text-accent" : "bg-bg-tertiary hover:bg-bg-hover text-text-primary"
+            }`}
+          >
+            <History className="w-3 h-3" />
+            History {showHistory && "✓"}
+          </button>
+        </div>
       </div>
 
       {/* SQL Editor - Fixed compact height */}
@@ -277,36 +360,65 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
 
       {/* Results Area - Takes ALL remaining space */}
       <div className="flex-1 flex overflow-hidden">
-        {showHistory ? (
-          <PanelGroup direction="horizontal">
-            {/* Results Grid */}
-            <Panel defaultSize={70} minSize={50}>
-              <QueryResultsGrid
-                columns={tab.columns || []}
-                rows={tab.rows || []}
-                loading={tab.loading || false}
-              />
-            </Panel>
+        <PanelGroup direction="horizontal">
+          {/* Results Grid */}
+          <Panel defaultSize={showHistory || showExplainPanel ? 60 : 100} minSize={40}>
+            <QueryResultsGrid
+              columns={tab.columns || []}
+              rows={tab.rows || []}
+              loading={tab.loading || false}
+            />
+          </Panel>
 
-            {/* Resize Handle */}
-            <PanelResizeHandle className="w-1 bg-border hover:bg-accent transition-colors cursor-col-resize" />
+          {/* Show panels on the right */}
+          {(showHistory || showExplainPanel) && (
+            <>
+              {/* Resize Handle */}
+              <PanelResizeHandle className="w-1 bg-border hover:bg-accent transition-colors cursor-col-resize" />
 
-            {/* History Panel */}
-            <Panel defaultSize={30} minSize={20} maxSize={50}>
-              <QueryHistoryPanel
-                history={persistedHistory}
-                onSelectQuery={handleSelectFromHistory}
-                onClearHistory={handleClearHistory}
-              />
-            </Panel>
-          </PanelGroup>
-        ) : (
-          <QueryResultsGrid
-            columns={tab.columns || []}
-            rows={tab.rows || []}
-            loading={tab.loading || false}
-          />
-        )}
+              {/* Side panels */}
+              <Panel defaultSize={40} minSize={25} maxSize={60}>
+                {showExplainPanel && showHistory ? (
+                  <PanelGroup direction="vertical">
+                    <Panel defaultSize={50} minSize={30}>
+                      <ExplainPlanPanel
+                        open={true}
+                        onClose={() => setShowExplainPanel(false)}
+                        plan={explainPlan}
+                        loading={explainLoading}
+                        error={explainError}
+                      />
+                    </Panel>
+                    <PanelResizeHandle className="h-1 bg-border hover:bg-accent transition-colors cursor-row-resize" />
+                    <Panel defaultSize={50} minSize={30}>
+                      <QueryHistoryPanel
+                        history={persistedHistory}
+                        onSelectQuery={handleSelectFromHistory}
+                        onClearHistory={handleClearHistory}
+                        onToggleStar={handleToggleStar}
+                      />
+                    </Panel>
+                  </PanelGroup>
+                ) : showExplainPanel ? (
+                  <ExplainPlanPanel
+                    open={true}
+                    onClose={() => setShowExplainPanel(false)}
+                    plan={explainPlan}
+                    loading={explainLoading}
+                    error={explainError}
+                  />
+                ) : (
+                  <QueryHistoryPanel
+                    history={persistedHistory}
+                    onSelectQuery={handleSelectFromHistory}
+                    onClearHistory={handleClearHistory}
+                    onToggleStar={handleToggleStar}
+                  />
+                )}
+              </Panel>
+            </>
+          )}
+        </PanelGroup>
       </div>
     </div>
   );

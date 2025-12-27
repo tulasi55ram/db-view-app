@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import type { ConnectionConfig, DatabaseConnectionConfig, DatabaseType } from "@dbview/core";
+import type { ConnectionConfig, DatabaseConnectionConfig, DatabaseType } from "@dbview/types";
 import { saveConnectionWithName } from "./connectionSettings";
-import { DatabaseAdapterFactory } from "./adapters/DatabaseAdapterFactory";
+import { DatabaseAdapterFactory } from "@dbview/adapters";
 
 export function showConnectionConfigPanel(
   context: vscode.ExtensionContext,
@@ -321,8 +321,8 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
   const defaultHost = escapeHtml((defaults && 'host' in defaults ? defaults.host : undefined) ?? "localhost");
   const defaultPort = (defaults && 'port' in defaults ? defaults.port : undefined) ??
     (dbType === 'mysql' ? 3306 : dbType === 'sqlserver' ? 1433 : 5432);
-  const defaultDatabase = escapeHtml((defaults && 'database' in defaults ? defaults.database : undefined) ??
-    (dbType === 'mysql' ? 'mysql' : dbType === 'sqlserver' ? 'dbview_dev' : 'postgres'));
+  const defaultDatabase = escapeHtml(String((defaults && 'database' in defaults ? defaults.database : undefined) ??
+    (dbType === 'mysql' ? 'mysql' : dbType === 'sqlserver' ? 'dbview_dev' : 'postgres')));
   const defaultUser = escapeHtml((defaults && 'user' in defaults ? defaults.user : undefined) ??
     (dbType === 'mysql' ? 'root' : dbType === 'sqlserver' ? 'sa' : 'postgres'));
   const defaultFilePath = escapeHtml((defaults && 'filePath' in defaults ? defaults.filePath : undefined) ?? "");

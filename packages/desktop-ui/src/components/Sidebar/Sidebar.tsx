@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   ChevronRight,
   ChevronDown,
@@ -19,12 +19,17 @@ import {
   Key,
   Link2,
   Hash,
+  Lock,
+  GitBranch,
+  WifiOff,
+  Wifi,
 } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { IconButton, Button } from "@/primitives";
 import { Tooltip } from "@/primitives/Tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import * as ContextMenu from "@radix-ui/react-context-menu";
+import { toast } from "sonner";
 
 // Types
 interface ConnectionInfo {
@@ -35,6 +40,7 @@ interface ConnectionInfo {
     port?: number;
     database?: string;
     color?: string;
+    readOnly?: boolean;
   };
   status: "connected" | "disconnected" | "connecting" | "error";
   error?: string;
@@ -92,6 +98,7 @@ interface TreeNode {
   status?: ConnectionInfo["status"];
   dbType?: string;
   color?: string; // Connection color
+  readOnly?: boolean; // Connection read-only status
   isLoading?: boolean;
   // Table metadata
   rowCount?: number;
@@ -107,6 +114,7 @@ interface TreeNode {
 interface SidebarProps {
   onTableSelect: (connectionKey: string, connectionName: string, schema: string, table: string) => void;
   onQueryOpen: (connectionKey: string, connectionName: string) => void;
+  onERDiagramOpen?: (connectionKey: string, connectionName: string, schemas: string[]) => void;
   onAddConnection: () => void;
   onEditConnection: (connectionKey: string) => void;
   refreshTrigger?: number;
@@ -122,19 +130,23 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-// Helper to format row count
-function formatRowCount(count: number): string {
-  if (count < 1000) return `${count} rows`;
-  if (count < 1000000) return `${(count / 1000).toFixed(1)}K rows`;
-  return `${(count / 1000000).toFixed(1)}M rows`;
+// Helper to format row count - uses "documents" for MongoDB, "rows" for other DBs
+function formatRowCount(count: number, dbType?: string): string {
+  const unit = dbType === "mongodb" ? "docs" : "rows";
+  if (count < 1000) return `${count} ${unit}`;
+  if (count < 1000000) return `${(count / 1000).toFixed(1)}K ${unit}`;
+  return `${(count / 1000000).toFixed(1)}M ${unit}`;
 }
 
-export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditConnection, refreshTrigger, expandConnectionKey }: SidebarProps) {
+export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConnection, onEditConnection, refreshTrigger, expandConnectionKey }: SidebarProps) {
   const [connections, setConnections] = useState<ConnectionInfo[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [loadingNodes, setLoadingNodes] = useState<Set<string>>(new Set());
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Track previous status for notifications
+  const previousStatusRef = useRef<Map<string, ConnectionInfo["status"]>>(new Map());
 
   const api = (window as any).electronAPI;
 
@@ -144,10 +156,41 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
 
     // Subscribe to connection status changes
     const unsubscribe = api?.onConnectionStatusChange?.((data: any) => {
+      const { connectionKey, status, connectionName } = data;
+      const previousStatus = previousStatusRef.current.get(connectionKey);
+
+      // Show toast notifications for status changes
+      if (previousStatus && previousStatus !== status) {
+        const name = connectionName || connectionKey.split(':').pop() || 'Connection';
+
+        if (status === 'disconnected' && previousStatus === 'connected') {
+          toast.error(`Connection lost: ${name}`, {
+            description: 'The database connection was lost',
+            icon: <WifiOff className="w-4 h-4" />,
+            duration: 5000,
+          });
+        } else if (status === 'connected' && previousStatus === 'disconnected') {
+          toast.success(`Connection restored: ${name}`, {
+            description: 'Database connection re-established',
+            icon: <Wifi className="w-4 h-4" />,
+            duration: 3000,
+          });
+        } else if (status === 'error') {
+          toast.error(`Connection error: ${name}`, {
+            description: data.error || 'An error occurred with the database connection',
+            icon: <WifiOff className="w-4 h-4" />,
+            duration: 5000,
+          });
+        }
+      }
+
+      // Update status tracking
+      previousStatusRef.current.set(connectionKey, status);
+
       setConnections((prev) =>
         prev.map((c) =>
-          getConnectionKey(c.config) === data.connectionKey
-            ? { ...c, status: data.status }
+          getConnectionKey(c.config) === connectionKey
+            ? { ...c, status }
             : c
         )
       );
@@ -169,6 +212,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
         status: conn.status,
         dbType: conn.config.dbType,
         color: conn.config.color,
+        readOnly: conn.config.readOnly,
         children: [],
       };
     });
@@ -181,6 +225,14 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
     try {
       const conns = await api.getConnections();
       setConnections(conns);
+
+      // Initialize status tracking for notifications
+      conns.forEach((conn: ConnectionInfo) => {
+        const key = getConnectionKey(conn.config);
+        if (!previousStatusRef.current.has(key)) {
+          previousStatusRef.current.set(key, conn.status);
+        }
+      });
     } catch (error) {
       console.error("Failed to load connections:", error);
     } finally {
@@ -205,7 +257,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
     return config.dbType;
   };
 
-  const loadSchemas = async (connectionKey: string, connectionName: string): Promise<TreeNode[]> => {
+  const loadSchemas = async (connectionKey: string, connectionName: string, dbType?: string): Promise<TreeNode[]> => {
     if (!api) return [];
     try {
       const schemas = await api.listSchemas(connectionKey);
@@ -216,6 +268,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
         connectionKey,
         connectionName,
         schema,
+        dbType,
         children: [],
       }));
     } catch (error) {
@@ -224,17 +277,43 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
     }
   };
 
-  const loadObjectTypeContainers = async (connectionKey: string, connectionName: string, schema: string): Promise<TreeNode[]> => {
+  const loadObjectTypeContainers = async (connectionKey: string, connectionName: string, schema: string, dbType?: string): Promise<TreeNode[]> => {
     if (!api) return [];
     try {
       const counts: ObjectCounts = await api.getObjectCounts(connectionKey, schema);
+
+      // Use appropriate terminology and show only relevant items based on database type
+      const isMongoDB = dbType === "mongodb";
+      const isRedis = dbType === "redis";
+
+      // For MongoDB, only show Collections (and optionally Views for aggregation pipelines)
+      if (isMongoDB) {
+        const containers: TreeNode[] = [
+          { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Collections", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, children: [] },
+        ];
+        // Only show Views if there are any (MongoDB aggregation views)
+        if (counts.views > 0) {
+          containers.push({ id: `${connectionKey}:${schema}:views`, type: "objectTypeContainer", name: "Views", objectType: "views", count: counts.views, connectionKey, connectionName, schema, dbType, children: [] });
+        }
+        return containers;
+      }
+
+      // For Redis, only show Keys
+      if (isRedis) {
+        const containers: TreeNode[] = [
+          { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Keys", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, children: [] },
+        ];
+        return containers;
+      }
+
+      // For SQL databases, show all object types
       const containers: TreeNode[] = [
-        { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Tables", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, children: [] },
-        { id: `${connectionKey}:${schema}:views`, type: "objectTypeContainer", name: "Views", objectType: "views", count: counts.views, connectionKey, connectionName, schema, children: [] },
-        { id: `${connectionKey}:${schema}:materializedViews`, type: "objectTypeContainer", name: "Materialized Views", objectType: "materializedViews", count: counts.materializedViews, connectionKey, connectionName, schema, children: [] },
-        { id: `${connectionKey}:${schema}:functions`, type: "objectTypeContainer", name: "Functions", objectType: "functions", count: counts.functions, connectionKey, connectionName, schema, children: [] },
-        { id: `${connectionKey}:${schema}:procedures`, type: "objectTypeContainer", name: "Procedures", objectType: "procedures", count: counts.procedures, connectionKey, connectionName, schema, children: [] },
-        { id: `${connectionKey}:${schema}:types`, type: "objectTypeContainer", name: "Types", objectType: "types", count: counts.types, connectionKey, connectionName, schema, children: [] },
+        { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Tables", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, children: [] },
+        { id: `${connectionKey}:${schema}:views`, type: "objectTypeContainer", name: "Views", objectType: "views", count: counts.views, connectionKey, connectionName, schema, dbType, children: [] },
+        { id: `${connectionKey}:${schema}:materializedViews`, type: "objectTypeContainer", name: "Materialized Views", objectType: "materializedViews", count: counts.materializedViews, connectionKey, connectionName, schema, dbType, children: [] },
+        { id: `${connectionKey}:${schema}:functions`, type: "objectTypeContainer", name: "Functions", objectType: "functions", count: counts.functions, connectionKey, connectionName, schema, dbType, children: [] },
+        { id: `${connectionKey}:${schema}:procedures`, type: "objectTypeContainer", name: "Procedures", objectType: "procedures", count: counts.procedures, connectionKey, connectionName, schema, dbType, children: [] },
+        { id: `${connectionKey}:${schema}:types`, type: "objectTypeContainer", name: "Types", objectType: "types", count: counts.types, connectionKey, connectionName, schema, dbType, children: [] },
       ];
       return containers;
     } catch (error) {
@@ -243,7 +322,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
     }
   };
 
-  const loadObjectsForType = async (connectionKey: string, connectionName: string, schema: string, objectType: ObjectType): Promise<TreeNode[]> => {
+  const loadObjectsForType = async (connectionKey: string, connectionName: string, schema: string, objectType: ObjectType, dbType?: string): Promise<TreeNode[]> => {
     if (!api) return [];
     try {
       switch (objectType) {
@@ -256,6 +335,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
             connectionKey,
             connectionName,
             schema,
+            dbType,
             table: table.name,
             rowCount: table.rowCount,
             sizeBytes: table.sizeBytes,
@@ -271,6 +351,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
             connectionKey,
             connectionName,
             schema,
+            dbType,
           }));
         }
         case "materializedViews": {
@@ -282,6 +363,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
             connectionKey,
             connectionName,
             schema,
+            dbType,
           }));
         }
         case "functions": {
@@ -293,6 +375,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
             connectionKey,
             connectionName,
             schema,
+            dbType,
           }));
         }
         case "procedures": {
@@ -304,6 +387,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
             connectionKey,
             connectionName,
             schema,
+            dbType,
           }));
         }
         case "types": {
@@ -315,6 +399,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
             connectionKey,
             connectionName,
             schema,
+            dbType,
           }));
         }
         default:
@@ -385,11 +470,28 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
         try {
           if (api && node.connectionKey && node.connectionName) {
             await api.connectToDatabase(node.connectionKey);
-            const schemas = await loadSchemas(node.connectionKey, node.connectionName);
-            setTreeData((prev) => updateTreeNode(prev, node.id, { children: schemas, status: "connected" }));
+
+            // Check if this is a NoSQL database that doesn't use schemas
+            const noSchemaDatabases = ["mongodb", "redis"];
+            const isNoSchemaDb = noSchemaDatabases.includes(node.dbType || "");
+
+            if (isNoSchemaDb) {
+              // For MongoDB/Redis, load object type containers directly (no schema level)
+              // Use empty string as the "schema" since these DBs don't have schemas
+              const containers = await loadObjectTypeContainers(node.connectionKey, node.connectionName, "", node.dbType);
+              setTreeData((prev) => updateTreeNode(prev, node.id, { children: containers, status: "connected" }));
+            } else {
+              // For SQL databases, load schemas first
+              const schemas = await loadSchemas(node.connectionKey, node.connectionName, node.dbType);
+              setTreeData((prev) => updateTreeNode(prev, node.id, { children: schemas, status: "connected" }));
+            }
           }
         } catch (error) {
           console.error("Failed to connect:", error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          toast.error(`Connection failed: ${errorMessage}`);
+          // Update node status to show error
+          setTreeData((prev) => updateTreeNode(prev, node.id, { status: "error" }));
         } finally {
           setLoadingNodes((prev) => {
             const next = new Set(prev);
@@ -400,7 +502,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
       } else if (node.type === "schema" && (!node.children || node.children.length === 0) && node.connectionKey && node.connectionName && node.schema) {
         setLoadingNodes((prev) => new Set(prev).add(node.id));
         try {
-          const containers = await loadObjectTypeContainers(node.connectionKey, node.connectionName, node.schema);
+          const containers = await loadObjectTypeContainers(node.connectionKey, node.connectionName, node.schema, node.dbType);
           setTreeData((prev) => updateTreeNode(prev, node.id, { children: containers }));
         } finally {
           setLoadingNodes((prev) => {
@@ -409,10 +511,10 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
             return next;
           });
         }
-      } else if (node.type === "objectTypeContainer" && (!node.children || node.children.length === 0) && node.connectionKey && node.connectionName && node.schema && node.objectType && (node.count ?? 0) > 0) {
+      } else if (node.type === "objectTypeContainer" && (!node.children || node.children.length === 0) && node.connectionKey && node.connectionName && node.schema !== undefined && node.objectType && (node.count ?? 0) > 0) {
         setLoadingNodes((prev) => new Set(prev).add(node.id));
         try {
-          const objects = await loadObjectsForType(node.connectionKey, node.connectionName, node.schema, node.objectType);
+          const objects = await loadObjectsForType(node.connectionKey, node.connectionName, node.schema, node.objectType, node.dbType);
           setTreeData((prev) => updateTreeNode(prev, node.id, { children: objects }));
         } finally {
           setLoadingNodes((prev) => {
@@ -421,7 +523,8 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
             return next;
           });
         }
-      } else if (node.type === "table" && (!node.children || node.children.length === 0) && node.connectionKey && node.connectionName && node.schema && node.table) {
+      } else if (node.type === "table" && (!node.children || node.children.length === 0) && node.connectionKey && node.connectionName && node.schema !== undefined && node.table) {
+        // Note: node.schema can be empty string for NoSQL databases (MongoDB, Redis)
         setLoadingNodes((prev) => new Set(prev).add(node.id));
         try {
           const columns = await loadColumns(node.connectionKey, node.connectionName, node.schema, node.table);
@@ -451,7 +554,9 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
   }, [expandConnectionKey, treeData, expandedNodes, toggleNode]);
 
   const handleTableClick = (node: TreeNode) => {
-    if ((node.type === "table" || node.type === "view") && node.connectionKey && node.connectionName && node.schema) {
+    // Note: node.schema can be empty string for NoSQL databases (MongoDB, Redis)
+    // so we check for undefined instead of truthy
+    if ((node.type === "table" || node.type === "view") && node.connectionKey && node.connectionName && node.schema !== undefined) {
       // For tables, use node.table; for views, use node.name
       const tableName = node.type === "table" ? (node.table || node.name) : node.name;
       onTableSelect(node.connectionKey, node.connectionName, node.schema, tableName);
@@ -572,7 +677,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
         return `(${node.count})`;
       case "table":
         const parts: string[] = [];
-        if (node.rowCount !== undefined) parts.push(formatRowCount(node.rowCount));
+        if (node.rowCount !== undefined) parts.push(formatRowCount(node.rowCount, node.dbType));
         if (node.sizeBytes !== undefined) parts.push(formatBytes(node.sizeBytes));
         return parts.length > 0 ? parts.join(" · ") : null;
       case "column":
@@ -666,6 +771,13 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
               {/* Node Icon */}
               <IconComponent className={cn("w-4 h-4 flex-shrink-0", iconColor)} />
 
+              {/* Read-Only Lock Icon */}
+              {node.type === "connection" && node.readOnly && (
+                <Tooltip content="Read-only connection">
+                  <Lock className="w-3 h-3 flex-shrink-0 text-amber-400" />
+                </Tooltip>
+              )}
+
               {/* Node Name */}
               <span className="truncate flex-1 text-text-primary">{node.name}</span>
 
@@ -695,6 +807,28 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
                   <Play className="w-3.5 h-3.5" />
                   New Query
                 </ContextMenu.Item>
+
+                {node.status === "connected" && onERDiagramOpen && (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                    onSelect={async () => {
+                      if (node.connectionKey && node.connectionName) {
+                        // Get schemas from the connection's children
+                        const schemas = node.children?.filter(c => c.type === "schema").map(s => s.name) || [];
+                        if (schemas.length === 0 && api) {
+                          // If no schemas loaded yet, fetch them
+                          const fetchedSchemas = await api.listSchemas(node.connectionKey);
+                          onERDiagramOpen(node.connectionKey, node.connectionName, fetchedSchemas);
+                        } else {
+                          onERDiagramOpen(node.connectionKey, node.connectionName, schemas);
+                        }
+                      }
+                    }}
+                  >
+                    <GitBranch className="w-3.5 h-3.5" />
+                    ER Diagram
+                  </ContextMenu.Item>
+                )}
 
                 <ContextMenu.Item
                   className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
@@ -727,7 +861,41 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
             </ContextMenu.Portal>
           )}
 
-          {/* Context Menu for Tables */}
+          {/* Context Menu for Schemas */}
+          {node.type === "schema" && (
+            <ContextMenu.Portal>
+              <ContextMenu.Content
+                className={cn(
+                  "min-w-[160px] py-1 rounded-md",
+                  "bg-bg-tertiary border border-border shadow-panel",
+                  "animate-scale-in origin-top-left z-50"
+                )}
+              >
+                <ContextMenu.Item
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                  onSelect={() => node.connectionKey && node.connectionName && onQueryOpen(node.connectionKey, node.connectionName)}
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  New Query
+                </ContextMenu.Item>
+                {onERDiagramOpen && (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                    onSelect={() => {
+                      if (node.connectionKey && node.connectionName && node.schema) {
+                        onERDiagramOpen(node.connectionKey, node.connectionName, [node.schema]);
+                      }
+                    }}
+                  >
+                    <GitBranch className="w-3.5 h-3.5" />
+                    ER Diagram
+                  </ContextMenu.Item>
+                )}
+              </ContextMenu.Content>
+            </ContextMenu.Portal>
+          )}
+
+          {/* Context Menu for Tables/Collections */}
           {node.type === "table" && (
             <ContextMenu.Portal>
               <ContextMenu.Content
@@ -742,7 +910,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onAddConnection, onEditCon
                   onSelect={() => handleTableClick(node)}
                 >
                   <Table2 className="w-3.5 h-3.5" />
-                  Open Table
+                  {node.dbType === "mongodb" ? "Open Collection" : "Open Table"}
                 </ContextMenu.Item>
                 <ContextMenu.Item
                   className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"

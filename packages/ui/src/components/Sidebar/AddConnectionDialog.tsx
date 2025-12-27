@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { X, Loader2 } from "lucide-react";
 import { getElectronAPI } from "../../electron";
-import type { DatabaseConnectionConfig } from "@dbview/core";
+import type { DatabaseConnectionConfig } from "@dbview/types";
 import clsx from "clsx";
 
 interface AddConnectionDialogProps {

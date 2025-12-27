@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
-import type { ColumnMetadata, TableTab, QueryTab, ERDiagramTab, ERDiagramData, TableInfo, ExplainPlan } from "@dbview/core";
+import type { ColumnMetadata, TableTab, QueryTab, ERDiagramTab, ERDiagramData, TableInfo, ExplainPlan } from "@dbview/types";
 import type { DataGridColumn } from "./components/DataGrid";
 import { TableView } from "./components/TableView";
 import { SqlRunnerView } from "./components/SqlRunnerView";

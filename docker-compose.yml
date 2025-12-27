@@ -1,7 +1,5 @@
-version: "3.8"
-
 services:
-  # PostgreSQL - Primary database (currently supported)
+  # PostgreSQL
   postgres:
     image: postgres:16-alpine
     container_name: dbview-postgres
@@ -20,12 +18,12 @@ services:
       timeout: 5s
       retries: 5
 
-  # MySQL - Future support (Phase 7)
+  # MySQL
   mysql:
     image: mysql:8.0
     container_name: dbview-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_ROOT_PASSWORD: dbview123
       MYSQL_USER: dbview
       MYSQL_PASSWORD: dbview123
       MYSQL_DATABASE: dbview_dev
@@ -40,7 +38,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # MongoDB - Future support (Phase 7)
+  # MongoDB
   mongodb:
     image: mongo:7.0
     container_name: dbview-mongodb
@@ -59,28 +57,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # SQL Server - Future support (Phase 7)
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: dbview-sqlserver
-    environment:
-      ACCEPT_EULA: "Y"
-      SA_PASSWORD: "DbView123!"
-      MSSQL_PID: "Developer"
-    ports:
-      - "1433:1433"
-    volumes:
-      - sqlserver_data:/var/opt/mssql
-      - ./docker/sqlserver:/docker-entrypoint-initdb.d:ro
-    entrypoint: /bin/bash /docker-entrypoint-initdb.d/entrypoint.sh
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P DbView123! -C -Q 'SELECT 1' || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 60s
-
-  # SQLite - File-based database container
+  # SQLite (file-based, no credentials needed)
   sqlite:
     image: alpine:3.19
     container_name: dbview-sqlite
@@ -94,13 +71,62 @@ services:
         tail -f /dev/null
       "
     healthcheck:
-      test: ["CMD", "test", "-f", "/data/dbview.db"]
+      test: ["CMD", "test", "-f", "/data/dbview_dev.db"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: dbview-redis
+    command: redis-server --requirepass dbview123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "dbview123", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis initialization (seeds sample data)
+  redis-init:
+    image: redis:7-alpine
+    container_name: dbview-redis-init
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./docker/redis/init.sh:/init.sh:ro
+    entrypoint: ["sh", "/init.sh"]
+    restart: "no"
+
+  # SQL Server
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: dbview-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "Dbview123!"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+      - ./docker/sqlserver:/docker-entrypoint-initdb.d:ro
+    entrypoint: /bin/bash /docker-entrypoint-initdb.d/entrypoint.sh
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P Dbview123! -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
 
 volumes:
   postgres_data:
   mysql_data:
   mongodb_data:
+  redis_data:
   sqlserver_data:

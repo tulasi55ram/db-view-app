@@ -15,7 +15,7 @@ import type {
   TableStatistics,
   TableIndex,
   ExplainPlan,
-} from "@dbview/core";
+} from "@dbview/types";
 
 // Re-export types for convenience
 export type { ElectronAPI } from "./types/electron";

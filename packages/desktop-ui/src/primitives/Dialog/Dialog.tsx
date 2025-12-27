@@ -43,13 +43,17 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(
         </DialogPrimitive.Overlay>
         <DialogPrimitive.Content ref={ref} asChild>
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            initial={{ opacity: 0, scale: 0.95, x: "-50%", y: "-50%" }}
+            animate={{ opacity: 1, scale: 1, x: "-50%", y: "-50%" }}
+            exit={{ opacity: 0, scale: 0.95, x: "-50%", y: "-50%" }}
             transition={{ duration: 0.15, ease: "easeOut" }}
+            style={{
+              position: "fixed",
+              left: "50%",
+              top: "50%",
+            }}
             className={cn(
-              "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
-              "w-full max-w-lg max-h-[85vh] overflow-auto",
+              "z-50 w-full max-w-lg max-h-[85vh] overflow-hidden",
               "bg-bg-secondary border border-border rounded-lg shadow-panel",
               "focus:outline-none",
               className
@@ -57,7 +61,7 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(
           >
             {/* Header */}
             {(title || showClose) && (
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
                 <div>
                   {title && (
                     <DialogPrimitive.Title className="text-sm font-medium text-text-primary">
@@ -88,7 +92,7 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(
             )}
 
             {/* Content */}
-            <div className="p-4">{children}</div>
+            <div className="p-4 flex-1 min-h-0 overflow-auto flex flex-col">{children}</div>
           </motion.div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
@@ -107,7 +111,7 @@ export function DialogFooter({ children, className }: DialogFooterProps) {
   return (
     <div
       className={cn(
-        "flex items-center justify-end gap-2 pt-4 mt-4 border-t border-border",
+        "flex items-center justify-end gap-2 pt-4 mt-4 border-t border-border flex-shrink-0",
         className
       )}
     >

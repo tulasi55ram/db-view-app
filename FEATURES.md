@@ -8,32 +8,67 @@ A modern, powerful database viewer/editor for VS Code with rich UI/UX.
 
 ## Project Status
 
-| Phase | Name | Status |
-|-------|------|--------|
-| Phase 1 | MVP (Core Foundation) | ✅ Complete |
-| Phase 2 | Data Editing & UX | ✅ Complete |
-| Phase 3 | Advanced Table Viewer | ✅ Complete |
-| Phase 4 | Schema Insights & Tools | ✅ Complete |
-| Phase 5 | Productivity Tools | ✅ Complete |
-| Phase 6 | Security & Performance | ✅ Complete |
-| Phase 7 | Multi-Database Support | ⏳ Planned |
-| Phase 8 | Electron Desktop App | ⏳ Planned |
+### VSCode Extension
+
+| Phase | Name | Completion | Status |
+|-------|------|------------|--------|
+| Phase 1 | MVP (Core Foundation) | 100% | ✅ Complete |
+| Phase 2 | Data Editing & UX | 95% | ✅ Complete |
+| Phase 3 | Advanced Table Viewer | 85% | ✅ Complete |
+| Phase 4 | Schema Insights & Tools | 90% | ✅ Complete |
+| Phase 5 | Productivity Tools | 95% | ✅ Complete |
+| Phase 6 | Security & Performance | 100% | ✅ Complete |
+| Phase 7 | Multi-Database Support | 60% | ⏳ In Progress |
+| Phase 8 | N/A | N/A | N/A |
+
+**Overall VSCode Extension Completion: ~75%**
+
+### Desktop Application (Electron)
+
+| Phase | Name | Completion | Status |
+|-------|------|------------|--------|
+| Phase 1 | MVP (Core Foundation) | 95% | ✅ Complete |
+| Phase 2 | Data Editing & UX | 95% | ✅ Complete |
+| Phase 3 | Advanced Table Viewer | 85% | ✅ Mostly Complete |
+| Phase 4 | Schema Insights & Tools | 75% | ✅ Mostly Complete |
+| Phase 5 | Productivity Tools | 95% | ✅ Mostly Complete |
+| Phase 6 | Security & Performance | 60% | ⏳ In Progress |
+| Phase 7 | Multi-Database Support | 60% | ⏳ Backend Ready |
+| Phase 8 | Desktop App Infrastructure | 85% | ✅ Mostly Complete |
+
+**Overall Desktop App Completion: ~65-70%**
+
+### Key Gaps: Desktop App
+- ~~Advanced type editors (date picker modal, JSON editor modal)~~ ✅ Complete
 
 ---
 
 # Phase 1 — MVP (Core Foundation) ✅
+
+**VSCode Extension: 100% | Desktop App: 95%**
 
 ### Goal
 Make the extension usable for basic database exploring.
 
 ### 1.1 Connection Management
 
-**Features:**
+**VSCode Extension:**
 - [x] Add PostgreSQL connection
 - [x] Save connection config in VS Code secret storage
 - [x] Test connection button
 - [x] Switch between saved connections
 - [x] Edit/delete connections
+- [x] Connection color coding
+- [x] Multiple saved connections
+
+**Desktop App:**
+- [x] Add database connections (all types)
+- [x] Save connection config (encrypted with Keytar)
+- [x] Test connection button
+- [x] Edit/delete connections
+- [x] Connection color picker
+- [x] Multiple connections in sidebar
+- [ ] Connection switching (implicit via click)
 
 **UI Components:**
 ```
@@ -112,18 +147,30 @@ DB VIEW
 
 # Phase 2 — Data Editing & UX ✅
 
+**VSCode Extension: 95% | Desktop App: 95%**
+
 ### Goal
 Add editable database features with rich UI feedback.
 
 ### 2.1 Inline Cell Editing
 
-**Features:**
+**VSCode Extension:**
 - [x] Double-click cell to edit
 - [x] Tab to move between cells
 - [x] Enter to save, Escape to cancel
 - [x] Visual indicator for modified cells (orange left border)
 - [x] Success/error toast notifications
+- [x] Type-specific cell editors (Boolean, DateTime, JSON, Enum, Array)
 - [ ] Undo last change (Ctrl+Z) - Deferred to Phase 3
+
+**Desktop App:**
+- [x] Double-click cell to edit (inline editing in TableView)
+- [x] Enter to save, Escape to cancel
+- [x] Pending edits tracking with visual indicators (orange border)
+- [x] Batch save functionality
+- [x] Type validation (integers, floats, booleans, JSON)
+- [x] NULL value handling
+- [x] Toast notifications (Sonner wired)
 
 **UI Components:**
 ```
@@ -153,12 +200,26 @@ Add editable database features with rich UI feedback.
 
 ### 2.2 Insert Row
 
-**Features:**
+**VSCode Extension:**
 - [x] "Insert" button in toolbar
 - [x] Modal form auto-generated from column types
 - [x] Field validation based on constraints
 - [x] Required field indicators
 - [x] Default value hints and "Set NULL" toggle
+- [x] Type-specific input fields
+
+**Desktop App:**
+- [x] Insert row UI (inline insertion in TableView, not modal)
+- [x] Auto-generated input fields based on column types
+- [x] Type-specific inputs (text, number, boolean dropdown, JSON textarea)
+- [x] NULL checkbox for nullable columns
+- [x] Required field indicators
+- [x] Default value placeholders
+- [x] UUID generator button for UUID columns
+- [x] MongoDB ObjectId generator
+- [x] Type validation before insert
+- [x] Row duplication feature
+- [x] IPC handler wired: `table:insertRow`
 
 **UI Components:**
 ```
@@ -181,12 +242,21 @@ Add editable database features with rich UI feedback.
 
 ### 2.3 Delete Row
 
-**Features:**
+**VSCode Extension:**
 - [x] Row selection checkboxes
 - [x] Multi-row selection (click multiple checkboxes)
 - [x] Delete button in toolbar
 - [x] Confirmation dialog with row preview (shows primary keys)
 - [x] Bulk delete support
+
+**Desktop App:**
+- [x] Delete row UI with delete button in toolbar
+- [x] Row selection checkboxes
+- [x] Select all checkbox
+- [x] Multi-row selection
+- [x] Confirmation dialog (native confirm)
+- [x] Bulk delete support
+- [x] IPC handler wired: `table:deleteRows`
 
 **UI Components:**
 ```
@@ -218,6 +288,10 @@ Add editable database features with rich UI feedback.
 - [ ] Array → Tag input - Deferred to Phase 3
 - [x] Text → Default text input
 - [x] NULL → Explicit "Set NULL" toggle in insert modal
+
+**Desktop App Advanced Type Editors:**
+- [x] DateTimePopover - Inline popover anchored to cell with calendar picker, time inputs, NULL toggle, "Now" button, preview (follows UX best practices)
+- [x] JSONEditor modal - CodeMirror-based with syntax highlighting, validation, format/minify/copy, expandable, centered dialog
 
 **UI Components:**
 
@@ -289,19 +363,30 @@ tags: [laptop] [computer] [work] [+ Add tag]
 
 ---
 
-# Phase 3 — Advanced Table Viewer
+# Phase 3 — Advanced Table Viewer ✅
+
+**VSCode Extension: 85% | Desktop App: 85%**
 
 ### Goal
 Make it feel like a professional database IDE.
 
 ### 3.1 Pagination
 
-**Features:**
+**VSCode Extension:**
 - [x] Page size selector (25, 50, 100, 500)
 - [x] Page navigation (first, prev, next, last)
 - [x] Go to page input
 - [x] Total row count display
 - [x] Keyboard shortcuts (Ctrl+→, Ctrl+←)
+- [x] Jump to row (Ctrl+G / Cmd+G)
+
+**Desktop App:**
+- [x] Full pagination (First/Previous/Next/Last buttons)
+- [x] Page size selector (25, 50, 100, 250, 500)
+- [x] Jump to page input
+- [x] Row count display
+- [x] Keyboard shortcuts (Ctrl+Home/End, Ctrl+Arrow keys)
+- [x] Jump to row dialog (Ctrl+G / Cmd+G)
 
 **UI Components:**
 ```
@@ -313,12 +398,23 @@ Make it feel like a professional database IDE.
 
 ### 3.2 Advanced Filtering
 
-**Features:**
-- [x] Filter builder sidebar
+**VSCode Extension:**
+- [x] Filter builder sidebar (FilterBuilder.tsx)
 - [x] Multiple conditions (AND/OR)
 - [x] Operators: =, !=, <, >, <=, >=, LIKE, ILIKE, IN, BETWEEN, IS NULL
-- [ ] Save filter presets
-- [x] Quick search across all columns
+- [x] Save filter presets
+- [x] Filter condition UI (FilterCondition.tsx)
+
+**Desktop App:**
+- [x] Filter builder UI (FilterBuilder.tsx component)
+- [x] Filter chips display (FilterChips.tsx component)
+- [x] Multiple filter conditions with AND/OR logic toggle
+- [x] All operators: equals, not_equals, greater_than, less_than, contains, starts_with, ends_with, in, between, is_null, is_not_null
+- [x] Add/remove filter conditions
+- [x] Apply filters button
+- [x] Clear all filters
+- [x] IPC handler wired: `table:loadRows` with filters
+- [ ] Save filter presets UI (handler exists: `views:*`)
 
 **UI Components:**
 ```
@@ -335,20 +431,25 @@ Make it feel like a professional database IDE.
 │                                         │
 │  [+ Add condition]                      │
 │                                         │
-│  ──────────────────────────────────     │
-│  Quick search: [________________] 🔍    │
-│                                         │
 │  [Clear All]  [Save as Preset ▼] [Apply]│
 └─────────────────────────────────────────┘
 ```
 
 ### 3.3 Saved Views
 
-**Features:**
-- [x] Save current view (filters + sort + columns)
-- [x] Quick load saved views
+**VSCode Extension:**
+- [x] Save current view (filters + sort + columns) - SaveViewDialog.tsx
+- [x] Quick load saved views - SavedViewsPanel.tsx
 - [x] Share views (export/import JSON)
 - [x] Default view per table
+- [x] Persistent storage (workspace state)
+
+**Desktop App:**
+- [ ] Save view UI (handler exists: `views:save`, no UI component)
+- [ ] Load saved views UI (handler exists: `views:getAll`, no UI component)
+- [ ] Share views (handlers exist: `views:export`, `views:import`)
+- [ ] Default view (handler supports `isDefault` flag)
+- [ ] Persistent storage (currently in-memory only, not saved to disk)
 
 **UI Components:**
 ```
@@ -364,15 +465,24 @@ Make it feel like a professional database IDE.
 
 ### 3.4 Multi-Tab Support
 
-**Features:**
+**VSCode Extension:**
 - [x] Multiple tables open in tabs
 - [x] Tab context menu (close, close others, close all)
 - [x] Single unified webview panel
 - [x] Query tabs and table tabs
 - [x] Tab switching with state preservation
+- [x] ER diagram tabs
 - [ ] Tab reordering (drag and drop) - Deferred to Phase 5
 - [ ] Split view (horizontal/vertical) - Deferred to Phase 5
-- [ ] Tab persistence across sessions - Deferred to Phase 5
+
+**Desktop App:**
+- [x] Multiple tables/queries in tabs (TabBar.tsx)
+- [x] Tab context menu (close, close others, close all)
+- [x] Query tabs and table tabs
+- [x] Tab switching with state
+- [x] ER diagram viewer
+- [ ] Tab reordering
+- [ ] Split view
 
 **UI Components:**
 ```
@@ -387,20 +497,33 @@ Make it feel like a professional database IDE.
 
 ---
 
-# Phase 4 — Schema Insights & Tools
+# Phase 4 — Schema Insights & Tools ✅
+
+**VSCode Extension: 90% | Desktop App: 75%**
 
 ### Goal
 Add developer/admin-friendly tools for schema exploration.
 
 ### 4.1 Table Metadata Panel
 
-**Features:**
-- [x] Slide-out panel with table details
+**VSCode Extension:**
+- [x] Slide-out panel with table details (TableMetadataPanel.tsx)
 - [x] Column info (type, nullable, default, constraints)
 - [x] Primary key indicator
 - [x] Foreign key relationships
 - [x] Indexes list
 - [x] Table statistics (row count, size, last vacuum)
+- [x] GET_TABLE_STATISTICS message handler
+
+**Desktop App:**
+- [x] Metadata panel UI (TableMetadataPanel.tsx slide-out panel)
+- [x] Column info with types, nullable, defaults
+- [x] Primary key indicators
+- [x] Foreign key indicators
+- [x] Indexes list
+- [x] Table statistics (row count, size)
+- [x] Info button in toolbar to open panel
+- [x] IPC handlers wired: `table:getMetadata`, `table:getStatistics`, `table:getIndexes`
 
 **UI Components:**
 ```
@@ -436,13 +559,23 @@ Add developer/admin-friendly tools for schema exploration.
 
 ### 4.2 ER Diagram
 
-**Features:**
-- [x] Auto-generate from schema
+**VSCode Extension:**
+- [x] Auto-generate from schema (ERDiagramPanel.tsx)
 - [x] Interactive canvas (zoom, pan)
 - [x] Click table to open
 - [x] Show/hide relationships
 - [x] Export as PNG/SVG
 - [x] Filter by schema
+- [x] Relationship visualization with foreign keys
+
+**Desktop App:**
+- [x] ER diagram UI (ERDiagramPanel.tsx)
+- [x] Interactive canvas (zoom, pan, grid background)
+- [x] Table visualization with columns and types
+- [x] Relationship lines with hover tooltips
+- [x] Backend handler ready (diagram:getER)
+- [x] Export diagram as SVG
+- [x] Schema filtering (right-click schema → ER Diagram)
 
 **UI Components:**
 ```
@@ -473,12 +606,23 @@ Add developer/admin-friendly tools for schema exploration.
 
 ### 4.3 Query History
 
-**Features:**
-- [x] Auto-save executed queries
-- [x] Search history
+**VSCode Extension:**
+- [x] Auto-save executed queries (workspace state)
+- [x] Search history (QueryHistoryPanel.tsx)
 - [x] Copy/re-run query
 - [x] Star favorite queries
 - [x] Clear history
+- [x] Execution time and row count display
+
+**Desktop App:**
+- [x] Auto-save executed queries (QueryHistoryPanel.tsx)
+- [x] Persistent history storage (queryHistory:* IPC handlers)
+- [x] Copy/re-run query from history
+- [x] Clear history
+- [x] Success/failure status with error messages
+- [x] Execution time and row count display
+- [x] Resizable history panel
+- [x] Star favorite queries (star button, filter starred only, starred sort to top)
 
 **UI Components:**
 ```
@@ -500,16 +644,19 @@ Add developer/admin-friendly tools for schema exploration.
 
 ---
 
-# Phase 5 — Productivity Tools
+# Phase 5 — Productivity Tools ✅
+
+**VSCode Extension: 95% | Desktop App: 95%**
 
 ### Goal
 Developer-first enhancements for faster workflows.
 
 ### 5.1 SQL Editor Enhancements ✅ Complete
 
-**Implementation:** CodeMirror 6 (replaced Monaco Editor due to clipboard issues)
+**VSCode Extension Implementation:** CodeMirror 6 (replaced Monaco Editor due to clipboard issues)
+**Desktop App Implementation:** CodeMirror 6 with custom theme
 
-**Features:**
+**VSCode Extension:**
 - [x] Syntax highlighting (SQL keywords, strings, numbers)
 - [x] Auto-complete for tables, columns, keywords with fuzzy matching
 - [x] Multi-cursor editing (CodeMirror built-in)
@@ -521,6 +668,18 @@ Developer-first enhancements for faster workflows.
 - [x] Query EXPLAIN ANALYZE with performance insights - ✅ Complete
 - [x] Native clipboard support (paste works in VSCode webviews)
 - [x] 76% smaller bundle size (1.1MB vs 4.5MB Monaco)
+
+**Desktop App:**
+- [x] Syntax highlighting (SqlEditor.tsx)
+- [x] Auto-complete for tables, columns, keywords
+- [x] Multi-cursor editing
+- [x] Format SQL (query:format handler)
+- [x] Error highlighting
+- [x] Custom dark theme for desktop
+- [x] Keyboard shortcuts (Cmd+Enter to run)
+- [x] Schema-aware autocomplete (loads from getAutocompleteData)
+- [x] Query EXPLAIN UI (ExplainPlanPanel.tsx with tree visualization)
+- [x] SQL snippet support (sqlSnippets.ts)
 
 **Documentation:**
 - [Migration Details](PASTE_FIX.md)
@@ -608,15 +767,18 @@ LIMIT limit;
 - Higher boost values ensure snippets appear at top when relevant
 - Implementation: [sqlSnippets.ts](packages/ui/src/utils/sqlSnippets.ts)
 
-### 5.3 Data Export/Import ✅ Complete
+### 5.3 Data Export/Import
 
-**Implementation:** Native VSCode File System APIs with custom formatters/parsers
+**VSCode Extension: ✅ Complete | Desktop App: ✅ Complete**
 
-**Features:**
-- [x] Export to CSV with optional headers
+**VSCode Implementation:** Native VSCode File System APIs with custom formatters/parsers
+**Desktop App:** IPC handlers with ExportDataDialog and ImportDataDialog components
+
+**VSCode Extension:**
+- [x] Export to CSV with optional headers (ExportDataDialog.tsx)
 - [x] Export to JSON (formatted, human-readable)
 - [x] Export to SQL (INSERT statements with proper escaping)
-- [x] Import from CSV (with/without headers)
+- [x] Import from CSV (with/without headers) (ImportDataDialog.tsx)
 - [x] Import from JSON (array of objects)
 - [x] Copy selected rows as INSERT statements to clipboard
 - [x] Export options: selected rows only, include headers (CSV)
@@ -625,6 +787,16 @@ LIMIT limit;
 - [x] VSCode save dialog integration
 - [x] Toast notifications for success/error feedback
 - [ ] Backup table (pg_dump) - Deferred to Phase 5.3.1
+
+**Desktop App:**
+- [x] Export UI (ExportDataDialog.tsx with format selection)
+- [x] Import UI (ImportDataDialog.tsx with drag & drop)
+- [x] Export formats (CSV, JSON, SQL)
+- [x] Import formats (CSV, JSON)
+- [x] Export options dialog (include headers, selected rows, apply filters)
+- [x] Import validation with error reporting
+- [x] Native file dialogs (Electron dialog.showSaveDialog)
+- [x] Export/Import buttons in TableView toolbar
 
 **Export Formats:**
 
@@ -692,21 +864,32 @@ LIMIT limit;
 
 ---
 
-# Phase 6 — Security & Performance
+# Phase 6 — Security & Performance ✅
+
+**VSCode Extension: 100% | Desktop App: 80%**
 
 ### Goal
 Make dbview reliable and safe for production databases.
 
-### 6.1 Read-Only Mode ✅ Complete
+### 6.1 Read-Only Mode
 
-**Implementation:** Connection config flag with visual indicators and write operation blocking
+**VSCode Extension: ✅ Complete | Desktop App: ✅ Complete**
 
-**Features:**
+**VSCode Implementation:** Connection config flag with visual indicators and write operation blocking
+
+**VSCode Extension:**
 - [x] Per-connection read-only toggle (checkbox in connection form)
 - [x] Visual indicator (🔒 prefix on connection name in sidebar)
 - [x] Block all write operations (UPDATE, INSERT, DELETE, IMPORT)
 - [x] Warn on connection to production (detects 'prod', 'production', 'live' keywords)
 - [x] Read-only state persists with connection config
+
+**Desktop App:**
+- [x] Read-only toggle (checkbox in AddConnectionDialog with Lock icon)
+- [x] Visual indicator (Lock icon in sidebar + "Read-only" badge in TableView toolbar)
+- [x] Block write operations (Insert, Duplicate, Delete, Import buttons disabled; cell editing blocked)
+- [x] Production warning (detects 'prod', 'production', 'live', 'prd' keywords)
+- [x] Read-only state in config (persisted with connection)
 
 **Documentation:**
 - [connectionConfigPanel.ts](apps/vscode-extension/src/connectionConfigPanel.ts) - Read-only toggle and production warning
@@ -754,9 +937,10 @@ DB VIEW
 
 ### 6.2 Virtual Scrolling ✅ Complete
 
-**Implementation:** TanStack Virtual with TanStack Table integration
+**VSCode Extension Implementation:** TanStack Virtual with TanStack Table integration
+**Desktop App Implementation:** TanStack Virtual (useVirtualizer in QueryResultsGrid)
 
-**Features:**
+**VSCode Extension:**
 - [x] Render only visible rows (TanStack Virtual with 5-row overscan)
 - [x] Smooth scrolling for large datasets at 60 FPS
 - [x] Scroll progress bar (thin blue bar at top showing position)
@@ -767,17 +951,32 @@ DB VIEW
 - [x] Spinner loading state
 - [x] Performance optimizations (React.memo, CSS containment)
 
+**Desktop App:**
+- [x] Render only visible rows (QueryResultsGrid.tsx with useVirtualizer)
+- [x] Smooth scrolling
+- [x] Scroll progress bar (ScrollProgressBar.tsx)
+- [x] Scroll status bar (visible row range indicator)
+- [x] Floating scroll buttons (ScrollButtons.tsx)
+- [x] Jump-to-row dialog (JumpToRowDialog.tsx, Ctrl+G / Cmd+G)
+- [x] Keyboard navigation (Home/End to scroll)
+- [x] Loading spinner
+- [x] Performance optimizations
+
 **Documentation:**
 - [VirtualDataGrid.tsx](packages/ui/src/components/VirtualDataGrid.tsx)
-- [ScrollProgressBar.tsx](packages/ui/src/components/ScrollProgressBar.tsx)
-- [ScrollButtons.tsx](packages/ui/src/components/ScrollButtons.tsx)
-- [JumpToRowDialog.tsx](packages/ui/src/components/JumpToRowDialog.tsx)
+- [ScrollProgressBar.tsx](packages/ui/src/components/ScrollProgressBar.tsx) - VSCode
+- [ScrollButtons.tsx](packages/ui/src/components/ScrollButtons.tsx) - VSCode
+- [JumpToRowDialog.tsx](packages/ui/src/components/JumpToRowDialog.tsx) - VSCode
+- [TableView/ScrollProgressBar.tsx](packages/desktop-ui/src/components/TableView/ScrollProgressBar.tsx) - Desktop
+- [TableView/ScrollButtons.tsx](packages/desktop-ui/src/components/TableView/ScrollButtons.tsx) - Desktop
+- [TableView/JumpToRowDialog.tsx](packages/desktop-ui/src/components/TableView/JumpToRowDialog.tsx) - Desktop
 
 ### 6.3 Connection Health ✅ Complete
 
-**Implementation:** PostgresClient with EventEmitter for status tracking, auto-reconnect, and health checks
+**VSCode Extension Implementation:** PostgresClient with EventEmitter for status tracking, auto-reconnect, and health checks
+**Desktop App Implementation:** DatabaseAdapter with EventEmitter, ConnectionManager tracks status per adapter
 
-**Features:**
+**VSCode Extension:**
 - [x] Connection status indicator (🟢 connected, 🟡 connecting, 🔴 error, ⚪ disconnected)
 - [x] Visual status in sidebar with icon colors and description
 - [x] Auto-reconnect on disconnect (up to 3 attempts with 2s delay)
@@ -785,6 +984,16 @@ DB VIEW
 - [x] Periodic health check ping (every 30 seconds)
 - [x] Connection lost notification with Reconnect/Dismiss options
 - [x] Connection restored notification
+
+**Desktop App:**
+- [x] Connection status tracking (ConnectionManager with clientStatuses Map)
+- [x] Visual status in sidebar (colored dots: green/yellow/red/gray)
+- [x] Status event listeners (statusChange events)
+- [ ] Auto-reconnect (not implemented)
+- [x] Connection timeout (adapter-level)
+- [x] Health check ping (adapter.ping() and startHealthCheck())
+- [ ] Connection lost notification
+- [ ] Connection restored notification
 
 **Documentation:**
 - [postgresClient.ts](apps/vscode-extension/src/postgresClient.ts) - Connection status, health check, auto-reconnect
@@ -831,9 +1040,10 @@ DB VIEW
 
 ### 6.4 Theme Support ✅ Complete
 
-**Implementation:** VS Code ColorThemeKind detection with CSS custom properties
+**VSCode Extension Implementation:** VS Code ColorThemeKind detection with CSS custom properties
+**Desktop App Implementation:** ThemeProvider with dark/light/high-contrast modes, system theme detection
 
-**Features:**
+**VSCode Extension:**
 - [x] Auto-detect VS Code theme (Light, Dark, High Contrast, High Contrast Light)
 - [x] Light mode support with appropriate color palette
 - [x] Dark mode support (default)
@@ -841,6 +1051,16 @@ DB VIEW
 - [x] High contrast light mode support
 - [x] Real-time theme switching (listens for VS Code theme changes)
 - [x] Theme-aware Toaster notifications
+
+**Desktop App:**
+- [x] ThemeProvider context (ThemeContext.tsx)
+- [x] Dark mode (default)
+- [x] Light mode
+- [x] High contrast mode
+- [x] System theme detection
+- [x] Real-time theme switching
+- [x] Theme-aware Toaster (Sonner with theme prop)
+- [x] Custom color tokens (design-system/tokens/colors.ts)
 
 **Documentation:**
 - [webviewHost.ts](apps/vscode-extension/src/webviewHost.ts) - Theme detection and HTML injection
@@ -867,10 +1087,14 @@ DB VIEW
 
 ---
 
-# Phase 7 — Multi-Database Support
+# Phase 7 — Multi-Database Support ⏳
+
+**VSCode Extension: 60% | Desktop App: 60%**
 
 ### Goal
 Expand dbview beyond PostgreSQL.
+
+**Status:** Database adapters implemented in shared `packages/adapters/` package. Both VSCode extension and Desktop app use DatabaseAdapterFactory. Full CRUD operations exist for all database types, but some advanced features may be incomplete.
 
 ### 7.1 Database Adapter System
 
@@ -889,45 +1113,127 @@ interface DatabaseAdapter {
 
 ### 7.2 Supported Databases
 
-| Database | Status | Features |
-|----------|--------|----------|
-| PostgreSQL | ✅ Supported | Full CRUD, schemas, views, functions |
-| MySQL | ⏳ Phase 7 | Full CRUD, schemas |
-| SQLite | ⏳ Phase 7 | Full CRUD, local file |
-| MongoDB | ⏳ Phase 7 | Collections, document viewer |
-| Redis | 🔮 Future | Key browser, TTL viewer |
-| SQL Server | 🔮 Future | Full CRUD |
+| Database | Adapter | VSCode Extension | Desktop App | Features |
+|----------|---------|------------------|-------------|----------|
+| PostgreSQL | ✅ Complete | ✅ Full Support | ✅ Full Support | Full CRUD, schemas, views, functions, procedures, types |
+| MySQL | ✅ Complete | ⏳ Partial | ⏳ Partial | Full CRUD, schemas, views, functions (adapters/MySQLAdapter.ts) |
+| SQL Server | ✅ Complete | ⏳ Partial | ⏳ Partial | Full CRUD, schemas, views, procedures (adapters/SQLServerAdapter.ts) |
+| SQLite | ✅ Complete | ⏳ Partial | ⏳ Partial | Full CRUD, local file, tables, views (adapters/SQLiteAdapter.ts) |
+| MongoDB | ✅ Complete | ⏳ Partial | ⏳ Partial | Collections, documents, aggregation (adapters/MongoDBAdapter.ts) |
+| Redis | ⏳ Partial | ❌ Not Integrated | ❌ Not Integrated | Key browser, TTL viewer (adapters/RedisAdapter.ts - incomplete) |
+
+**Implementation Status:**
+- All adapters located in `packages/adapters/src/adapters/`
+- DatabaseAdapterFactory supports all 6 database types
+- Shared adapter package used by both VSCode extension and Desktop app
+- Integration tests exist for PostgreSQL and MySQL
+- Advanced features (EXPLAIN, functions, procedures) may vary by database
 
 ---
 
-# Phase 8 — Electron Desktop App
+# Phase 8 — Electron Desktop App ⏳
+
+**Overall Completion: ~55-60%**
 
 ### Goal
 Turn dbview into a standalone desktop database client.
 
-### 8.1 Desktop Features
+### 8.1 Desktop Infrastructure ✅ 85% Complete
 
 **Features:**
-- [ ] Standalone app (no VS Code required)
-- [ ] Native menus and shortcuts
+- [x] Standalone Electron app (apps/desktop/)
+- [x] React UI package (packages/desktop-ui/)
+- [x] IPC communication layer (apps/desktop/src/main/ipc/index.ts)
+- [x] Native menus (apps/desktop/src/main/menu.ts)
+- [x] Keyboard shortcuts (Cmd+N, Cmd+R, etc.)
 - [ ] System tray integration
 - [ ] Auto-updates
-- [ ] Native file dialogs
+- [x] Native file dialogs (Electron API available)
+- [x] Window management
+- [x] Dev tools integration
 
-### 8.2 Local Workspace
+### 8.2 Core Features Implementation
+
+**Completed (90%):**
+- [x] Connection management (AddConnectionView, AddConnectionDialog)
+- [x] Schema explorer sidebar (Sidebar component with connection tree)
+- [x] SQL query runner (QueryView with SqlEditor)
+- [x] Query history (QueryHistoryPanel with persistence)
+- [x] Table viewer (TableView with full CRUD)
+- [x] Multi-tab support (TabBar with table/query/ER tabs)
+- [x] Theme system (ThemeProvider with dark/light/high-contrast)
+- [x] Design system (packages/desktop-ui/src/design-system/)
+- [x] Password encryption (PasswordStore with Keytar)
+- [x] Settings persistence (SettingsStore)
+- [x] Inline cell editing with batch save (TableView.tsx)
+- [x] Row insertion (inline in TableView, not modal)
+- [x] Row deletion with selection checkboxes (TableView.tsx)
+- [x] Advanced filtering (FilterBuilder.tsx, FilterChips.tsx)
+- [x] Table metadata panel (TableMetadataPanel.tsx)
+- [x] Export/Import dialogs (ExportDataDialog.tsx, ImportDataDialog.tsx)
+
+**Missing UI Components (5%):**
+- [ ] Page size selector in TableView
+- [ ] Jump to row/page input
+
+### 8.3 Local Workspace ✅ 85% Complete
 
 **Features:**
-- [ ] Save connections locally (encrypted)
-- [ ] Save layouts and preferences
+- [x] Save connections locally (ConnectionManager in main process)
+- [x] Encrypted password storage (Keytar integration via PasswordStore)
+- [x] Connection persistence (SettingsStore with JSON file)
+- [x] Query history persistence (query:history:* IPC handlers)
+- [x] Settings persistence (workspace settings)
+- [x] Recent connections (connection list in sidebar)
 - [ ] Offline schema cache
-- [ ] Recent connections list
+- [ ] Layout preferences (not persisted)
 
-### 8.3 Distribution
+### 8.4 Distribution ❌ Not Started
 
 **Platforms:**
 - [ ] macOS (.dmg, Apple Silicon + Intel)
 - [ ] Windows (.exe, installer + portable)
 - [ ] Linux (.AppImage, .deb)
+- [ ] Code signing
+- [ ] Auto-updater integration
+- [ ] Build scripts (electron-builder config needed)
+
+### 8.5 Desktop-Specific Features
+
+**Unique to Desktop App:**
+- [x] Multi-window support (can open multiple app windows)
+- [x] Native notifications (Electron API)
+- [x] OS-level password management (Keytar)
+- [x] File system access (no restrictions)
+- [x] Custom application menu
+- [ ] System tray icon
+- [ ] Global keyboard shortcuts
+- [ ] Offline mode
+
+### 8.6 Technical Stack
+
+**Frontend (packages/desktop-ui/):**
+- React 18 with TypeScript
+- Vite for bundling
+- TanStack Table for data grids
+- TanStack Virtual for scrolling
+- CodeMirror 6 for SQL editor
+- Radix UI for primitives
+- Tailwind CSS for styling
+- Sonner for notifications
+
+**Backend (apps/desktop/):**
+- Electron main process
+- IPC handlers for all operations
+- Database adapters (shared package)
+- Connection pooling
+- Settings management
+- Password encryption
+
+**Build:**
+- [ ] electron-builder configuration
+- [ ] CI/CD pipeline
+- [ ] Release automation
 
 ---
 

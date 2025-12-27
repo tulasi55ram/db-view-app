@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # SQLite Database Initialization Script
-DB_FILE="/data/dbview.db"
+DB_FILE="/data/dbview_dev.db"
 
 # Remove existing database if present
 rm -f "$DB_FILE"

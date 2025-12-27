@@ -10,8 +10,11 @@ import {
   Table2,
   Code2,
   Settings,
+  Copy,
+  Check,
 } from "lucide-react";
 import { cn } from "@/utils/cn";
+import { toast } from "sonner";
 import { getElectronAPI, type QueryHistoryEntry, type ConnectionInfo } from "@/electron";
 
 interface HomeViewProps {
@@ -34,6 +37,17 @@ export function HomeView({ onAddConnection, onQueryOpen, onEditConnection, onBro
   const [connections, setConnections] = useState<ConnectionInfo[]>([]);
   const [recentQueries, setRecentQueries] = useState<Array<{ connectionKey: string; entry: QueryHistoryEntry }>>([]);
   const [loading, setLoading] = useState(true);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  const handleCopyQuery = async (sql: string, index: number) => {
+    try {
+      await navigator.clipboard.writeText(sql);
+      setCopiedIndex(index);
+      setTimeout(() => setCopiedIndex(null), 2000);
+    } catch (err) {
+      console.error("Failed to copy query:", err);
+    }
+  };
 
   const api = getElectronAPI();
 
@@ -91,6 +105,8 @@ export function HomeView({ onAddConnection, onQueryOpen, onEditConnection, onBro
       await loadData();
     } catch (error) {
       console.error("Failed to connect:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      toast.error(`Connection failed: ${errorMessage}`);
     }
   };
 
@@ -332,7 +348,7 @@ export function HomeView({ onAddConnection, onQueryOpen, onEditConnection, onBro
                       <div
                         key={index}
                         className={cn(
-                          "p-3 rounded-lg border transition-colors",
+                          "p-3 rounded-lg border transition-colors group",
                           item.entry.success
                             ? "border-border bg-bg-secondary hover:bg-bg-hover"
                             : "border-error/30 bg-error/5"
@@ -346,6 +362,17 @@ export function HomeView({ onAddConnection, onQueryOpen, onEditConnection, onBro
                             </p>
                             <p className="text-xs font-mono text-text-primary line-clamp-2">{item.entry.sql}</p>
                           </div>
+                          <button
+                            onClick={() => handleCopyQuery(item.entry.sql, index)}
+                            className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded hover:bg-bg-tertiary text-text-tertiary hover:text-text-primary transition-colors opacity-0 group-hover:opacity-100"
+                            title="Copy query"
+                          >
+                            {copiedIndex === index ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-500" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                          </button>
                         </div>
                         <div className="flex items-center justify-between text-2xs text-text-tertiary">
                           <span>{formatTime(item.entry.executedAt)}</span>

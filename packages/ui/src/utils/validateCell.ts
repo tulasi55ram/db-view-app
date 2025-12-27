@@ -1,4 +1,4 @@
-import type { ColumnMetadata } from '@dbview/core';
+import type { ColumnMetadata } from '@dbview/types';
 
 export interface ValidationResult {
   valid: boolean;

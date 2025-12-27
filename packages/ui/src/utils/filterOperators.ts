@@ -1,4 +1,4 @@
-import type { FilterOperator, PostgreSQLType } from '@dbview/core';
+import type { FilterOperator, PostgreSQLType } from '@dbview/types';
 
 // Type-aware operator lists
 export const STRING_OPERATORS: FilterOperator[] = [

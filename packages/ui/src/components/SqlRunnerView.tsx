@@ -3,7 +3,7 @@ import { DataGrid, type DataGridColumn } from "./DataGrid";
 import { QueryHistoryPanel } from "./QueryHistoryPanel";
 import { CodeMirrorSqlEditor } from "./CodeMirrorSqlEditor";
 import { ExplainPlanPanel } from "./ExplainPlanPanel";
-import type { QueryHistoryEntry, TableInfo, ColumnMetadata, ExplainPlan } from "@dbview/core";
+import type { QueryHistoryEntry, TableInfo, ColumnMetadata, ExplainPlan } from "@dbview/types";
 import {
   Play,
   Terminal,

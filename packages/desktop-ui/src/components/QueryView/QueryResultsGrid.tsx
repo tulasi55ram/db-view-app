@@ -1,5 +1,4 @@
-import { type FC, useRef } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { type FC } from "react";
 import { cn } from "@/utils/cn";
 
 export interface QueryResultsGridProps {
@@ -9,16 +8,6 @@ export interface QueryResultsGridProps {
 }
 
 export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loading = false }) => {
-  const parentRef = useRef<HTMLDivElement>(null);
-
-  // Setup virtualizer for rows
-  const rowVirtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 37, // Estimated row height in pixels
-    overscan: 10, // Render 10 extra rows above and below viewport
-  });
-
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -50,8 +39,8 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
         </span>
       </div>
 
-      {/* Virtualized table container */}
-      <div ref={parentRef} className="flex-1 overflow-auto">
+      {/* Simple non-virtualized table (for debugging) */}
+      <div className="flex-1 overflow-auto">
         <table className="w-full text-sm">
           {/* Sticky header */}
           <thead className="sticky top-0 bg-bg-tertiary border-b border-border z-10">
@@ -66,47 +55,22 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
             </tr>
           </thead>
           <tbody>
-            {/* Virtual rows container */}
-            <tr style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
-              <td colSpan={columns.length + 1} style={{ padding: 0, border: 'none' }}>
-                <div style={{ position: 'relative' }}>
-                  {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-                    const row = rows[virtualRow.index];
-                    return (
-                      <div
-                        key={virtualRow.index}
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          width: '100%',
-                          transform: `translateY(${virtualRow.start}px)`,
-                        }}
-                      >
-                        <table className="w-full text-sm">
-                          <tbody>
-                            <tr className="border-b border-border hover:bg-bg-hover transition-colors">
-                              {/* Row number */}
-                              <td className="px-3 py-2 text-text-tertiary whitespace-nowrap font-mono text-xs w-12">
-                                {virtualRow.index + 1}
-                              </td>
-                              {columns.map((column) => (
-                                <td
-                                  key={column}
-                                  className={cn("px-3 py-2 whitespace-nowrap", getValueClassName(row[column]))}
-                                >
-                                  {formatCellValue(row[column])}
-                                </td>
-                              ))}
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    );
-                  })}
-                </div>
-              </td>
-            </tr>
+            {rows.map((row, index) => (
+              <tr key={index} className="border-b border-border hover:bg-bg-hover transition-colors">
+                {/* Row number */}
+                <td className="px-3 py-2 text-text-tertiary whitespace-nowrap font-mono text-xs w-12">
+                  {index + 1}
+                </td>
+                {columns.map((column) => (
+                  <td
+                    key={column}
+                    className={cn("px-3 py-2 whitespace-nowrap", getValueClassName(row[column]))}
+                  >
+                    {formatCellValue(row[column])}
+                  </td>
+                ))}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

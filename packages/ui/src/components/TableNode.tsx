@@ -1,6 +1,6 @@
 import { type FC, memo } from 'react';
 import { Handle, Position } from 'reactflow';
-import type { ERDiagramColumn } from '@dbview/core';
+import type { ERDiagramColumn } from '@dbview/types';
 import { Key, Link2, Table2 } from 'lucide-react';
 
 export interface TableNodeData {

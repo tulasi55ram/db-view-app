@@ -1,6 +1,6 @@
 import { type FC, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import type { ViewState } from "@dbview/core";
+import type { ViewState } from "@dbview/types";
 import { Save, X, Eye, Filter, Columns3, ArrowUpDown, Hash } from "lucide-react";
 
 export interface SaveViewDialogProps {

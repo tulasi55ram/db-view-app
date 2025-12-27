@@ -12,7 +12,7 @@ import {
   clearSnippet,
 } from "@codemirror/autocomplete";
 import { search, searchKeymap } from "@codemirror/search";
-import type { ColumnMetadata, TableInfo } from "@dbview/core";
+import type { ColumnMetadata, TableInfo } from "@dbview/types";
 import { SQL_SNIPPETS } from "@/utils/sqlSnippets";
 
 export interface SqlEditorProps {

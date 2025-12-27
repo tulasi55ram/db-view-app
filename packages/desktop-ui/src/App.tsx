@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Toaster } from "sonner";
 import { ThemeProvider, useTheme } from "@/design-system";
 import { AppShell } from "@/layout";
@@ -6,8 +6,11 @@ import { Sidebar } from "@/components/Sidebar";
 import { TabBar } from "@/components/TabBar";
 import { TableView } from "@/components/TableView";
 import { QueryView } from "@/components/QueryView";
+import { ERDiagramPanel } from "@/components/ERDiagramPanel";
 import { AddConnectionView } from "@/components/AddConnectionView";
 import { HomeView } from "@/components/HomeView";
+import { SplitPane, type SplitDirection } from "@/components/SplitPane";
+import { getElectronAPI } from "@/electron";
 
 // Tab types
 interface Tab {
@@ -30,6 +33,9 @@ interface Tab {
   limitApplied?: boolean; // Whether an automatic LIMIT was applied
   limit?: number; // The limit value that was applied
   hasMore?: boolean; // Whether there are potentially more rows
+
+  // ER Diagram fields
+  schemas?: string[]; // Schemas to show in ER diagram
 }
 
 function AppContent() {
@@ -41,22 +47,27 @@ function AppContent() {
   const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0);
   const [expandConnectionKey, setExpandConnectionKey] = useState<string | null>(null);
 
-  const api = (window as any).electronAPI;
+  // Split view state
+  const [splitMode, setSplitMode] = useState<SplitDirection | null>(null);
+  const [secondActiveTabId, setSecondActiveTabId] = useState<string | null>(null);
+
+  const api = getElectronAPI();
 
   // Helper to get connection color
   const getConnectionColor = useCallback(async (connectionKey: string): Promise<string | undefined> => {
     if (!api) return undefined;
     try {
       const connections = await api.getConnections();
-      const conn = connections.find((c: any) => {
-        const key = c.config.name
-          ? `${c.config.dbType}:${c.config.name}`
-          : c.config.host
-          ? `${c.config.dbType}:${c.config.user}@${c.config.host}:${c.config.port}/${c.config.database}`
-          : `${c.config.dbType}:${JSON.stringify(c.config)}`;
+      const conn = connections.find((c) => {
+        const cfg = c.config as Record<string, unknown>;
+        const key = cfg.name
+          ? `${cfg.dbType}:${cfg.name}`
+          : cfg.host
+          ? `${cfg.dbType}:${cfg.user}@${cfg.host}:${cfg.port}/${cfg.database}`
+          : `${cfg.dbType}:${JSON.stringify(cfg)}`;
         return key === connectionKey;
       });
-      return conn?.config?.color;
+      return (conn?.config as Record<string, unknown>)?.color as string | undefined;
     } catch (error) {
       console.error("Failed to get connection color:", error);
       return undefined;
@@ -95,6 +106,61 @@ function AppContent() {
   const updateQueryTab = useCallback((tabId: string, updates: Partial<Tab>) => {
     setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, ...updates } : t)));
   }, []);
+
+  const reorderTabs = useCallback((reorderedTabs: Tab[]) => {
+    setTabs(reorderedTabs);
+  }, []);
+
+  // Split view handlers
+  const splitView = useCallback((direction: SplitDirection) => {
+    if (tabs.length < 2) return; // Need at least 2 tabs to split
+
+    setSplitMode(direction);
+    // Set the second pane to show a different tab
+    const otherTab = tabs.find((t) => t.id !== activeTabId);
+    if (otherTab) {
+      setSecondActiveTabId(otherTab.id);
+    }
+  }, [tabs, activeTabId]);
+
+  const closeSplit = useCallback(() => {
+    setSplitMode(null);
+    setSecondActiveTabId(null);
+  }, []);
+
+  // Keyboard shortcuts for split view
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+\ or Cmd+\ to toggle split
+      if ((e.ctrlKey || e.metaKey) && e.key === "\\") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          // Close split
+          closeSplit();
+        } else {
+          // Toggle horizontal split
+          if (splitMode) {
+            closeSplit();
+          } else {
+            splitView("horizontal");
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [splitMode, splitView, closeSplit]);
+
+  // Close split if active tab or second tab is closed
+  useEffect(() => {
+    if (splitMode && secondActiveTabId) {
+      const secondTabExists = tabs.some((t) => t.id === secondActiveTabId);
+      if (!secondTabExists) {
+        closeSplit();
+      }
+    }
+  }, [tabs, splitMode, secondActiveTabId, closeSplit]);
 
   // Handlers
   const handleTableSelect = useCallback(
@@ -159,6 +225,35 @@ function AppContent() {
     });
   }, [tabs, activeTabId, addTab]);
 
+  const handleERDiagramOpen = useCallback(
+    async (connectionKey: string, connectionName: string, schemas: string[]) => {
+      setShowAddConnection(false);
+      // Check if ER diagram tab for this connection already exists
+      const existingTab = tabs.find(
+        (t) => t.type === "er-diagram" && t.connectionKey === connectionKey
+      );
+      if (existingTab) {
+        // Update schemas and switch to existing tab
+        setTabs((prev) =>
+          prev.map((t) => (t.id === existingTab.id ? { ...t, schemas } : t))
+        );
+        setActiveTabId(existingTab.id);
+        return;
+      }
+
+      const connectionColor = await getConnectionColor(connectionKey);
+      addTab({
+        type: "er-diagram",
+        title: "ER Diagram",
+        connectionKey,
+        connectionName,
+        connectionColor,
+        schemas,
+      });
+    },
+    [tabs, addTab, getConnectionColor]
+  );
+
   const handleAddConnectionSave = useCallback(() => {
     setShowAddConnection(false);
     setEditingConnectionKey(null);
@@ -181,6 +276,93 @@ function AppContent() {
     },
     []
   );
+
+  // Render a single tab's content (for split view)
+  const renderTabContent = useCallback((tab: Tab | undefined) => {
+    if (!tab) return null;
+
+    if (tab.type === "table" && tab.schema !== undefined && tab.table && tab.connectionKey) {
+      return (
+        <TableView
+          key={tab.id}
+          connectionKey={tab.connectionKey}
+          schema={tab.schema}
+          table={tab.table}
+        />
+      );
+    }
+
+    if (tab.type === "query") {
+      return <QueryView key={tab.id} tab={tab} onTabUpdate={updateQueryTab} />;
+    }
+
+    if (tab.type === "er-diagram" && tab.connectionKey && tab.schemas) {
+      return (
+        <ERDiagramPanel
+          key={tab.id}
+          connectionKey={tab.connectionKey}
+          connectionName={tab.connectionName}
+          schemas={tab.schemas}
+        />
+      );
+    }
+
+    return null;
+  }, [updateQueryTab]);
+
+  // Render all tabs (keeping them mounted to preserve state)
+  const renderAllTabs = useCallback(() => {
+    return tabs.map((tab) => {
+      const isActive = tab.id === activeTabId;
+      const isSecondPane = tab.id === secondActiveTabId;
+
+      // In split mode, don't render here - let SplitPane handle it
+      if (splitMode && (isActive || isSecondPane)) {
+        return null;
+      }
+
+      // Hide inactive tabs but keep them mounted
+      const style = {
+        display: isActive ? 'flex' : 'none',
+        flex: 1,
+        overflow: 'hidden',
+      };
+
+      if (tab.type === "table" && tab.schema !== undefined && tab.table && tab.connectionKey) {
+        return (
+          <div key={tab.id} style={style}>
+            <TableView
+              connectionKey={tab.connectionKey}
+              schema={tab.schema}
+              table={tab.table}
+            />
+          </div>
+        );
+      }
+
+      if (tab.type === "query") {
+        return (
+          <div key={tab.id} style={style}>
+            <QueryView tab={tab} onTabUpdate={updateQueryTab} />
+          </div>
+        );
+      }
+
+      if (tab.type === "er-diagram" && tab.connectionKey && tab.schemas) {
+        return (
+          <div key={tab.id} style={style}>
+            <ERDiagramPanel
+              connectionKey={tab.connectionKey}
+              connectionName={tab.connectionName}
+              schemas={tab.schemas}
+            />
+          </div>
+        );
+      }
+
+      return null;
+    });
+  }, [tabs, activeTabId, secondActiveTabId, splitMode, updateQueryTab]);
 
   // Render main content
   const renderContent = () => {
@@ -212,32 +394,21 @@ function AppContent() {
       );
     }
 
-    // Render actual tab content
-    if (activeTab.type === "table" && activeTab.schema && activeTab.table && activeTab.connectionKey) {
+    // Split view mode
+    if (splitMode && secondActiveTabId) {
+      const secondTab = tabs.find((t) => t.id === secondActiveTabId);
       return (
-        <TableView
-          connectionKey={activeTab.connectionKey}
-          schema={activeTab.schema}
-          table={activeTab.table}
+        <SplitPane
+          direction={splitMode}
+          firstPane={renderTabContent(activeTab)}
+          secondPane={renderTabContent(secondTab)}
+          persistKey={`split-${splitMode}`}
         />
       );
     }
 
-    // Render query tab
-    if (activeTab.type === "query") {
-      return <QueryView tab={activeTab} onTabUpdate={updateQueryTab} />;
-    }
-
-    // Placeholder for ER diagram
-    return (
-      <div className="flex-1 flex items-center justify-center text-text-secondary">
-        <div className="text-center">
-          <p className="text-lg mb-2">ER Diagram</p>
-          <p className="text-sm text-text-tertiary">{activeTab.title}</p>
-          <p className="text-xs text-text-tertiary mt-2">(Coming soon)</p>
-        </div>
-      </div>
-    );
+    // Single view mode - render all tabs but only show active one
+    return renderAllTabs();
   };
 
   return (
@@ -259,6 +430,7 @@ function AppContent() {
           <Sidebar
             onTableSelect={handleTableSelect}
             onQueryOpen={handleQueryOpen}
+            onERDiagramOpen={handleERDiagramOpen}
             onAddConnection={() => setShowAddConnection(true)}
             onEditConnection={handleEditConnection}
             refreshTrigger={sidebarRefreshTrigger}
@@ -276,6 +448,10 @@ function AppContent() {
             onNewQuery={handleNewQuery}
             onCloseOtherTabs={closeOtherTabs}
             onCloseAllTabs={closeAllTabs}
+            onReorderTabs={reorderTabs}
+            onSplitView={splitView}
+            onCloseSplit={closeSplit}
+            isSplitView={!!splitMode}
           />
         )}
 

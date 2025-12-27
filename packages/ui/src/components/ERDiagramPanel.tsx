@@ -13,7 +13,7 @@ import ReactFlow, {
   ReactFlowProvider,
 } from 'reactflow';
 import dagre from 'dagre';
-import type { ERDiagramData } from '@dbview/core';
+import type { ERDiagramData } from '@dbview/types';
 import { TableNode } from './TableNode';
 import {
   Download,

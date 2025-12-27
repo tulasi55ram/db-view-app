@@ -10,10 +10,10 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "outDir": "dist",
-    "rootDir": "src",
     "baseUrl": ".",
     "declaration": false,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {}
   },
   "include": ["src/main/**/*", "src/preload/**/*"],
   "exclude": ["node_modules", "dist"]

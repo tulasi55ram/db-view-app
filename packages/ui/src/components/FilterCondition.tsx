@@ -1,5 +1,5 @@
 import { FC, useMemo, useState } from 'react';
-import type { FilterCondition as FilterConditionType, ColumnMetadata, FilterOperator } from '@dbview/core';
+import type { FilterCondition as FilterConditionType, ColumnMetadata, FilterOperator } from '@dbview/types';
 import { X, Search, ChevronDown, AlertCircle, Plus } from 'lucide-react';
 import * as Popover from '@radix-ui/react-popover';
 import clsx from 'clsx';

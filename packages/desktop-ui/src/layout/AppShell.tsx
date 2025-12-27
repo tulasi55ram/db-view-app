@@ -20,8 +20,12 @@ export function AppShell({
 }: AppShellProps) {
   return (
     <div className="h-screen flex flex-col bg-bg-primary overflow-hidden">
-      {/* Main content area with resizable panels */}
-      <PanelGroup direction="horizontal" className="flex-1">
+      {/* Main content area with resizable panels - autoSaveId enables localStorage persistence */}
+      <PanelGroup
+        direction="horizontal"
+        className="flex-1"
+        autoSaveId="dbview-app-shell-layout"
+      >
         {/* Sidebar Panel */}
         {!sidebarCollapsed && (
           <>

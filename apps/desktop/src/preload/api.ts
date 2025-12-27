@@ -76,6 +76,37 @@ export interface ERDiagramData {
   relationships: any[];
 }
 
+export interface FilterPreset {
+  id: string;
+  name: string;
+  filters: Array<{
+    id: string;
+    columnName: string;
+    operator: string;
+    value: unknown;
+  }>;
+  logic: "AND" | "OR";
+  createdAt: number;
+}
+
+// Persisted tab state
+export interface PersistedTab {
+  id: string;
+  type: "table" | "query" | "er-diagram";
+  title: string;
+  schema?: string;
+  table?: string;
+  connectionKey?: string;
+  connectionName?: string;
+  connectionColor?: string;
+  sql?: string;
+}
+
+export interface TabsState {
+  tabs: PersistedTab[];
+  activeTabId: string | null;
+}
+
 export interface TableInfo {
   name: string;
   schema?: string;
@@ -152,6 +183,9 @@ export interface TableDataResult {
 export interface QueryResult {
   columns: string[];
   rows: Record<string, unknown>[];
+  limitApplied?: boolean;
+  limit?: number;
+  hasMore?: boolean;
 }
 
 // Import result
@@ -187,6 +221,9 @@ export interface LoadTableRowsParams {
   offset: number;
   filters?: FilterCondition[];
   filterLogic?: "AND" | "OR";
+  orderBy?: string[];
+  sortColumn?: string;
+  sortDirection?: "ASC" | "DESC";
 }
 
 // Row count params
@@ -350,6 +387,7 @@ export interface ElectronAPI {
 
   // Clipboard
   copyToClipboard(text: string): Promise<void>;
+  readFromClipboard(): Promise<string>;
 
   // File dialogs
   showSaveDialog(options: SaveDialogOptions): Promise<DialogResult>;
@@ -360,6 +398,15 @@ export interface ElectronAPI {
   addQueryHistoryEntry(connectionKey: string, entry: QueryHistoryEntry): Promise<void>;
   clearQueryHistory(connectionKey: string): Promise<void>;
   deleteQueryHistoryEntry(connectionKey: string, entryId: string): Promise<void>;
+
+  // Filter presets
+  getFilterPresets(schema: string, table: string): Promise<FilterPreset[]>;
+  saveFilterPreset(schema: string, table: string, preset: FilterPreset): Promise<void>;
+  deleteFilterPreset(schema: string, table: string, presetId: string): Promise<void>;
+
+  // Tabs persistence
+  loadTabs(): Promise<TabsState | null>;
+  saveTabs(state: TabsState): Promise<void>;
 
   // Theme
   getTheme(): Promise<"light" | "dark">;

@@ -1,8 +1,25 @@
 import { useRef, useState, useMemo, useEffect, useCallback } from "react";
-import { Table2, FileCode, X, Plus, Workflow, Database } from "lucide-react";
+import { Table2, FileCode, X, Plus, Workflow, Database, GripVertical } from "lucide-react";
 import { cn } from "@/utils/cn";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  horizontalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 interface Tab {
   id: string;
@@ -24,6 +41,10 @@ interface TabBarProps {
   onNewQuery: () => void;
   onCloseOtherTabs?: (tabId: string) => void;
   onCloseAllTabs?: () => void;
+  onReorderTabs?: (tabs: Tab[]) => void;
+  onSplitView?: (direction: "horizontal" | "vertical") => void;
+  onCloseSplit?: () => void;
+  isSplitView?: boolean;
 }
 
 interface ConnectionGroup {
@@ -31,6 +52,185 @@ interface ConnectionGroup {
   connectionName: string; // Display name
   tabs: Tab[];
   color: string;
+}
+
+// Sortable Tab Component
+interface SortableTabProps {
+  tab: Tab;
+  isActive: boolean;
+  activeGroup: ConnectionGroup | undefined;
+  onTabSelect: (tabId: string) => void;
+  onTabClose: (tabId: string) => void;
+  onCloseOtherTabs?: (tabId: string) => void;
+  onCloseAllTabs?: () => void;
+  getTabIcon: (type: Tab["type"]) => React.ReactNode;
+  onSplitView?: (direction: "horizontal" | "vertical") => void;
+  onCloseSplit?: () => void;
+  isSplitView?: boolean;
+  tabCount: number;
+}
+
+function SortableTab({
+  tab,
+  isActive,
+  activeGroup,
+  onTabSelect,
+  onTabClose,
+  onCloseOtherTabs,
+  onCloseAllTabs,
+  getTabIcon,
+  onSplitView,
+  onCloseSplit,
+  isSplitView,
+  tabCount,
+}: SortableTabProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: tab.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : undefined,
+    opacity: isDragging ? 0.8 : 1,
+  };
+
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <div
+          ref={setNodeRef}
+          style={style}
+          className={cn(
+            "group flex items-center gap-1.5 h-9 px-3 text-sm relative cursor-pointer",
+            "border-r border-border min-w-[120px] max-w-[200px] flex-shrink-0",
+            isActive
+              ? "bg-bg-primary text-text-primary"
+              : "text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors duration-fast",
+            isDragging && "shadow-lg rounded-md border border-border"
+          )}
+          onClick={() => onTabSelect(tab.id)}
+        >
+          {/* Active indicator */}
+          {isActive && activeGroup && (
+            <motion.div
+              layoutId="activeTab"
+              className="absolute top-0 left-0 right-0 h-0.5"
+              style={{ backgroundColor: activeGroup.color }}
+            />
+          )}
+
+          {/* Drag handle */}
+          <div
+            {...attributes}
+            {...listeners}
+            className={cn(
+              "flex-shrink-0 cursor-grab active:cursor-grabbing touch-none",
+              "opacity-0 group-hover:opacity-50 hover:!opacity-100 transition-opacity"
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <GripVertical className="w-3 h-3" />
+          </div>
+
+          {/* Icon */}
+          <span className="flex-shrink-0">{getTabIcon(tab.type)}</span>
+
+          {/* Title */}
+          <span className="truncate flex-1 min-w-0">{tab.title}</span>
+
+          {/* Dirty indicator */}
+          {tab.isDirty && (
+            <span className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
+          )}
+
+          {/* Close button */}
+          <div
+            className={cn(
+              "w-4 h-4 flex items-center justify-center rounded flex-shrink-0",
+              "hover:bg-bg-active transition-all cursor-pointer",
+              isActive ? "opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-70 hover:!opacity-100"
+            )}
+            onClick={(e) => {
+              e.stopPropagation();
+              onTabClose(tab.id);
+            }}
+          >
+            <X className="w-3 h-3" />
+          </div>
+        </div>
+      </ContextMenu.Trigger>
+
+      {/* Tab Context Menu */}
+      <ContextMenu.Portal>
+        <ContextMenu.Content
+          className={cn(
+            "min-w-[140px] py-1 rounded-md",
+            "bg-bg-tertiary border border-border shadow-panel",
+            "animate-scale-in origin-top-left"
+          )}
+        >
+          <ContextMenu.Item
+            className="px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+            onSelect={() => onTabClose(tab.id)}
+          >
+            Close
+          </ContextMenu.Item>
+          {onCloseOtherTabs && (
+            <ContextMenu.Item
+              className="px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+              onSelect={() => onCloseOtherTabs(tab.id)}
+            >
+              Close Others
+            </ContextMenu.Item>
+          )}
+          {onCloseAllTabs && (
+            <ContextMenu.Item
+              className="px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+              onSelect={onCloseAllTabs}
+            >
+              Close All
+            </ContextMenu.Item>
+          )}
+
+          {/* Split View Options */}
+          {onSplitView && tabCount >= 2 && !isSplitView && (
+            <>
+              <ContextMenu.Separator className="h-px bg-border my-1" />
+              <ContextMenu.Item
+                className="px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                onSelect={() => onSplitView("horizontal")}
+              >
+                Split Right
+              </ContextMenu.Item>
+              <ContextMenu.Item
+                className="px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                onSelect={() => onSplitView("vertical")}
+              >
+                Split Down
+              </ContextMenu.Item>
+            </>
+          )}
+          {onCloseSplit && isSplitView && (
+            <>
+              <ContextMenu.Separator className="h-px bg-border my-1" />
+              <ContextMenu.Item
+                className="px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                onSelect={onCloseSplit}
+              >
+                Close Split
+              </ContextMenu.Item>
+            </>
+          )}
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
+  );
 }
 
 // Smart color assignment based on connection name patterns
@@ -85,10 +285,41 @@ export function TabBar({
   onNewQuery,
   onCloseOtherTabs,
   onCloseAllTabs,
+  onReorderTabs,
+  onSplitView,
+  onCloseSplit,
+  isSplitView,
 }: TabBarProps) {
   const tabsRef = useRef<HTMLDivElement>(null);
   const [activeConnectionKey, setActiveConnectionKey] = useState<string | null>(null);
   const lastActiveTabPerConnection = useRef<Map<string, string>>(new Map());
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // Require 8px of movement before starting drag
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Handle drag end - reorder tabs
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id && onReorderTabs) {
+      const oldIndex = tabs.findIndex((t) => t.id === active.id);
+      const newIndex = tabs.findIndex((t) => t.id === over.id);
+
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const reorderedTabs = arrayMove(tabs, oldIndex, newIndex);
+        onReorderTabs(reorderedTabs);
+      }
+    }
+  }, [tabs, onReorderTabs]);
 
   // Group tabs by connection
   const connectionGroups = useMemo((): ConnectionGroup[] => {
@@ -288,111 +519,43 @@ export function TabBar({
 
       {/* Row 2: Table Tabs for Active Connection */}
       <div className="flex items-center h-9" key={activeConnectionKey || 'no-connection'}>
-        <div
-          ref={tabsRef}
-          className="flex-1 flex items-center overflow-x-auto overflow-y-hidden"
-          style={{
-            scrollbarWidth: 'thin',
-            scrollbarColor: 'var(--bg-tertiary) transparent',
-          }}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
         >
-          <AnimatePresence initial={false} mode="sync">
-            {activeConnectionTabs.map((tab) => {
-              const isActive = tab.id === activeTabId;
-
-              return (
-                <ContextMenu.Root key={tab.id}>
-                  <ContextMenu.Trigger>
-                    <motion.div
-                      layout
-                      initial={{ opacity: 0, width: 0 }}
-                      animate={{ opacity: 1, width: "auto" }}
-                      exit={{ opacity: 0, width: 0 }}
-                      transition={{ duration: 0.15, ease: "easeInOut" }}
-                      className={cn(
-                        "group flex items-center gap-1.5 h-9 px-3 text-sm relative cursor-pointer",
-                        "border-r border-border min-w-[120px] max-w-[200px] flex-shrink-0",
-                        isActive
-                          ? "bg-bg-primary text-text-primary"
-                          : "text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors duration-fast"
-                      )}
-                      onClick={() => onTabSelect(tab.id)}
-                    >
-                      {/* Active indicator */}
-                      {isActive && activeGroup && (
-                        <motion.div
-                          layoutId="activeTab"
-                          className="absolute top-0 left-0 right-0 h-0.5"
-                          style={{ backgroundColor: activeGroup.color }}
-                        />
-                      )}
-
-                      {/* Icon */}
-                      <span className="flex-shrink-0">{getTabIcon(tab.type)}</span>
-
-                      {/* Title */}
-                      <span className="truncate flex-1 min-w-0">{tab.title}</span>
-
-                      {/* Dirty indicator */}
-                      {tab.isDirty && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
-                      )}
-
-                      {/* Close button */}
-                      <div
-                        className={cn(
-                          "w-4 h-4 flex items-center justify-center rounded flex-shrink-0",
-                          "hover:bg-bg-active transition-all cursor-pointer",
-                          isActive ? "opacity-70 hover:opacity-100" : "opacity-0 group-hover:opacity-70 hover:!opacity-100"
-                        )}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onTabClose(tab.id);
-                        }}
-                      >
-                        <X className="w-3 h-3" />
-                      </div>
-                    </motion.div>
-                  </ContextMenu.Trigger>
-
-                  {/* Tab Context Menu */}
-                  <ContextMenu.Portal>
-                    <ContextMenu.Content
-                      className={cn(
-                        "min-w-[140px] py-1 rounded-md",
-                        "bg-bg-tertiary border border-border shadow-panel",
-                        "animate-scale-in origin-top-left"
-                      )}
-                    >
-                      <ContextMenu.Item
-                        className="px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
-                        onSelect={() => onTabClose(tab.id)}
-                      >
-                        Close
-                      </ContextMenu.Item>
-                      {onCloseOtherTabs && (
-                        <ContextMenu.Item
-                          className="px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
-                          onSelect={() => onCloseOtherTabs(tab.id)}
-                        >
-                          Close Others
-                        </ContextMenu.Item>
-                      )}
-                      {onCloseAllTabs && (
-                        <ContextMenu.Item
-                          className="px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
-                          onSelect={onCloseAllTabs}
-                        >
-                          Close All
-                        </ContextMenu.Item>
-                      )}
-                    </ContextMenu.Content>
-                  </ContextMenu.Portal>
-                </ContextMenu.Root>
-              );
-            })}
-          </AnimatePresence>
-        </div>
+          <SortableContext
+            items={activeConnectionTabs.map((t) => t.id)}
+            strategy={horizontalListSortingStrategy}
+          >
+            <div
+              ref={tabsRef}
+              className="flex-1 flex items-center overflow-x-auto overflow-y-hidden"
+              style={{
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'var(--bg-tertiary) transparent',
+              }}
+            >
+              {activeConnectionTabs.map((tab) => (
+                <SortableTab
+                  key={tab.id}
+                  tab={tab}
+                  isActive={tab.id === activeTabId}
+                  activeGroup={activeGroup}
+                  onTabSelect={onTabSelect}
+                  onTabClose={onTabClose}
+                  onCloseOtherTabs={onCloseOtherTabs}
+                  onCloseAllTabs={onCloseAllTabs}
+                  getTabIcon={getTabIcon}
+                  onSplitView={onSplitView}
+                  onCloseSplit={onCloseSplit}
+                  isSplitView={isSplitView}
+                  tabCount={tabs.length}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
 
         {/* New Query Button */}
         <div className="flex-shrink-0 px-2 border-l border-border">

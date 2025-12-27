@@ -3,6 +3,7 @@ import * as path from "path";
 import { registerAllHandlers } from "./ipc";
 import { ConnectionManager } from "./services/ConnectionManager";
 import { createApplicationMenu } from "./menu";
+import { getTrayManager } from "./services/TrayManager";
 
 // Keep a global reference of the window object
 let mainWindow: BrowserWindow | null = null;
@@ -101,6 +102,12 @@ app.whenReady().then(() => {
   const menu = createApplicationMenu(mainWindow);
   Menu.setApplicationMenu(menu);
 
+  // Initialize system tray (following design patterns Section 11)
+  if (mainWindow && connectionManager) {
+    const trayManager = getTrayManager();
+    trayManager.init(mainWindow, connectionManager);
+  }
+
   app.on("activate", () => {
     // On macOS, re-create window when dock icon is clicked
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -118,6 +125,10 @@ app.on("window-all-closed", () => {
 
 // Cleanup on quit
 app.on("before-quit", async () => {
+  // Destroy system tray
+  getTrayManager().destroy();
+
+  // Disconnect all database connections
   if (connectionManager) {
     await connectionManager.disconnectAll();
   }

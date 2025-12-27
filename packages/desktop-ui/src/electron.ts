@@ -14,7 +14,7 @@ import type {
   ExplainPlan,
   ObjectCounts,
   ColumnInfo,
-} from "@dbview/core";
+} from "@dbview/types";
 
 // Declare the Electron API interface
 export interface ElectronAPI {
@@ -70,6 +70,7 @@ export interface ElectronAPI {
 
   // Clipboard
   copyToClipboard(text: string): Promise<void>;
+  readFromClipboard(): Promise<string>;
 
   // File dialogs
   showSaveDialog(options: SaveDialogOptions): Promise<DialogResult>;
@@ -80,6 +81,16 @@ export interface ElectronAPI {
   addQueryHistoryEntry(connectionKey: string, entry: QueryHistoryEntry): Promise<void>;
   clearQueryHistory(connectionKey: string): Promise<void>;
   deleteQueryHistoryEntry(connectionKey: string, entryId: string): Promise<void>;
+  toggleQueryHistoryStar?(connectionKey: string, entryId: string, starred: boolean): Promise<void>;
+
+  // Filter presets
+  getFilterPresets(schema: string, table: string): Promise<FilterPreset[]>;
+  saveFilterPreset(schema: string, table: string, preset: FilterPreset): Promise<void>;
+  deleteFilterPreset(schema: string, table: string, presetId: string): Promise<void>;
+
+  // Tabs persistence
+  loadTabs(): Promise<TabsState | null>;
+  saveTabs(state: TabsState): Promise<void>;
 
   // Theme
   getTheme(): Promise<"light" | "dark">;
@@ -111,6 +122,9 @@ export interface LoadTableRowsParams {
   offset: number;
   filters?: FilterCondition[];
   filterLogic?: "AND" | "OR";
+  orderBy?: string[];
+  sortColumn?: string;
+  sortDirection?: "ASC" | "DESC";
 }
 
 export interface GetRowCountParams {
@@ -234,6 +248,38 @@ export interface QueryHistoryEntry {
   rowCount?: number;
   success: boolean;
   error?: string;
+  starred?: boolean;
+}
+
+export interface FilterPreset {
+  id: string;
+  name: string;
+  filters: Array<{
+    id: string;
+    columnName: string;
+    operator: string;
+    value: unknown;
+  }>;
+  logic: "AND" | "OR";
+  createdAt: number;
+}
+
+// Persisted tab state
+export interface PersistedTab {
+  id: string;
+  type: "table" | "query" | "er-diagram";
+  title: string;
+  schema?: string;
+  table?: string;
+  connectionKey?: string;
+  connectionName?: string;
+  connectionColor?: string;
+  sql?: string;
+}
+
+export interface TabsState {
+  tabs: PersistedTab[];
+  activeTabId: string | null;
 }
 
 // Declare the global window interface extension

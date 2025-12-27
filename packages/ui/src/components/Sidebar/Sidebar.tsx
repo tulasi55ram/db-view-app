@@ -3,7 +3,7 @@ import { ChevronRight, ChevronDown, Database, Table2, Columns, Plus, RefreshCw, 
 import { getElectronAPI, type ConnectionInfo, type ElectronAPI } from "../../electron";
 import { AddConnectionDialog } from "./AddConnectionDialog";
 import clsx from "clsx";
-import type { TableInfo, DatabaseConnectionConfig } from "@dbview/core";
+import type { TableInfo, DatabaseConnectionConfig } from "@dbview/types";
 
 interface SidebarProps {
   onTableSelect: (connectionKey: string, schema: string, table: string) => void;

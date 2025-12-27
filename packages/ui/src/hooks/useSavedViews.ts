@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { SavedView, ViewState } from '@dbview/core';
+import type { SavedView, ViewState } from '@dbview/types';
 import { getVsCodeApi } from '../vscode';
 
 export function useSavedViews(schema: string, table: string) {

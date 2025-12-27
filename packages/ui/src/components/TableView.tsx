@@ -1,7 +1,7 @@
 import type { FC } from "react";
 import { useEffect, useState } from "react";
 import type { SortingState } from "@tanstack/react-table";
-import type { ColumnMetadata, TableIndex, TableStatistics } from "@dbview/core";
+import type { ColumnMetadata, TableIndex, TableStatistics } from "@dbview/types";
 import { DataGrid, type DataGridColumn } from "./DataGrid";
 import { DataGridV2 } from "./DataGridV2";
 import { VirtualDataGrid } from "./VirtualDataGrid";
@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { toast } from "sonner";
-import type { ExportOptions } from "@dbview/core";
+import type { ExportOptions } from "@dbview/types";
 
 export interface TableViewProps {
   schema: string;

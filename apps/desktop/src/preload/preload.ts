@@ -55,6 +55,7 @@ const electronAPI: ElectronAPI = {
 
   // Clipboard
   copyToClipboard: (text) => ipcRenderer.invoke("clipboard:write", text),
+  readFromClipboard: () => ipcRenderer.invoke("clipboard:read"),
 
   // File dialogs
   showSaveDialog: (options) => ipcRenderer.invoke("dialog:showSave", options),
@@ -65,6 +66,15 @@ const electronAPI: ElectronAPI = {
   addQueryHistoryEntry: (connectionKey, entry) => ipcRenderer.invoke("queryHistory:add", connectionKey, entry),
   clearQueryHistory: (connectionKey) => ipcRenderer.invoke("queryHistory:clear", connectionKey),
   deleteQueryHistoryEntry: (connectionKey, entryId) => ipcRenderer.invoke("queryHistory:delete", connectionKey, entryId),
+
+  // Filter presets
+  getFilterPresets: (schema, table) => ipcRenderer.invoke("filterPresets:getAll", { schema, table }),
+  saveFilterPreset: (schema, table, preset) => ipcRenderer.invoke("filterPresets:save", { schema, table, preset }),
+  deleteFilterPreset: (schema, table, presetId) => ipcRenderer.invoke("filterPresets:delete", { schema, table, presetId }),
+
+  // Tabs persistence
+  loadTabs: () => ipcRenderer.invoke("tabs:load"),
+  saveTabs: (state) => ipcRenderer.invoke("tabs:save", state),
 
   // Theme
   getTheme: () => ipcRenderer.invoke("theme:get"),

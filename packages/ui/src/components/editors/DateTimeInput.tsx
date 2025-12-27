@@ -1,5 +1,5 @@
 import { type FC, useState, useEffect, useRef } from "react";
-import type { PostgreSQLType } from "@dbview/core";
+import type { PostgreSQLType } from "@dbview/types";
 
 export interface DateTimeInputProps {
   value: unknown;

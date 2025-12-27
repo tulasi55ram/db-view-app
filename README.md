@@ -8,6 +8,7 @@ A modern multi-database viewer/editor for VS Code with shared React webview UI, 
 - SQL Server
 - SQLite
 - MongoDB
+- Redis
 
 ## Structure
 
@@ -22,6 +23,8 @@ docker/
   postgres/           # PostgreSQL init scripts & sample data
   mysql/              # MySQL init scripts & sample data
   mongodb/            # MongoDB init scripts & sample data
+  sqlite/             # SQLite init scripts & sample data
+  sqlserver/          # SQL Server init scripts & sample data
 .vscode/launch.json   # Launch config to run the extension in VS Code
 docker-compose.yml    # Docker Compose for test databases
 package.json          # pnpm workspaces + top-level scripts
@@ -165,23 +168,31 @@ The project includes Docker Compose configuration with sample data for testing.
 
 ### Available Databases
 
-| Database   | Port  | User    | Password   | Database    | Status           |
-|------------|-------|---------|------------|-------------|------------------|
-| PostgreSQL | 5432  | dbview  | dbview123  | dbview_dev  | Supported        |
-| MySQL      | 3306  | dbview  | dbview123  | dbview_dev  | Future (Phase 7) |
-| MongoDB    | 27017 | dbview  | dbview123  | dbview_dev  | Future (Phase 7) |
+| Database   | Port  | User    | Password    | Database       |
+|------------|-------|---------|-------------|----------------|
+| PostgreSQL | 5432  | dbview  | dbview123   | dbview_dev     |
+| MySQL      | 3306  | dbview  | dbview123   | dbview_dev     |
+| MongoDB    | 27017 | dbview  | dbview123   | dbview_dev     |
+| Redis      | 6379  | -       | dbview123   | -              |
+| SQLite     | -     | -       | -           | dbview_dev.db  |
+| SQL Server | 1433  | sa      | Dbview123!  | dbview_dev     |
+
+> **Note:** SQL Server requires a strong password (uppercase + lowercase + number + special char).
 
 ### Quick Start
 
 ```bash
-# Start PostgreSQL (recommended for development)
+# Start all databases
+docker compose up -d
+
+# Start specific database
 docker compose up -d postgres
 
-# Check if container is running
+# Check if containers are running
 docker compose ps
 
 # View logs
-docker compose logs -f postgres
+docker compose logs -f
 ```
 
 ### Container Management
@@ -194,6 +205,9 @@ docker compose up -d
 docker compose up -d postgres
 docker compose up -d mysql
 docker compose up -d mongodb
+docker compose up -d redis
+docker compose up -d sqlite
+docker compose up -d sqlserver
 
 # Stop all databases (keeps data)
 docker compose down
@@ -211,13 +225,15 @@ The init scripts run **automatically on first container start**. They are mounte
 - PostgreSQL: `docker/postgres/init.sql` → `/docker-entrypoint-initdb.d/init.sql`
 - MySQL: `docker/mysql/init.sql` → `/docker-entrypoint-initdb.d/init.sql`
 - MongoDB: `docker/mongodb/init.js` → `/docker-entrypoint-initdb.d/init.js`
+- SQLite: `docker/sqlite/init.sh` → `/init.sh`
+- SQL Server: `docker/sqlserver/init.sql` → `/docker-entrypoint-initdb.d/init.sql`
 
 ```bash
 # Re-run init.sql manually (without resetting)
 docker compose exec -T postgres psql -U dbview -d dbview_dev < docker/postgres/init.sql
 
-# Reset database completely (removes all data, re-runs init.sql)
-docker compose down -v && docker compose up -d postgres
+# Reset all databases completely (removes all data, re-runs init scripts)
+docker compose down -v && docker compose up -d
 ```
 
 ### Connect to Database Shell
@@ -231,6 +247,15 @@ docker compose exec mysql mysql -u dbview -pdbview123 dbview_dev
 
 # MongoDB - connect to mongosh
 docker compose exec mongodb mongosh -u dbview -p dbview123 --authenticationDatabase admin dbview_dev
+
+# Redis - connect to redis-cli
+docker compose exec redis redis-cli -a dbview123
+
+# SQLite - connect to sqlite3
+docker compose exec sqlite sqlite3 /data/dbview_dev.db
+
+# SQL Server - connect to sqlcmd
+docker compose exec sqlserver /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Dbview123!' -C -d dbview_dev
 ```
 
 ### Verify Tables & Data (PostgreSQL)

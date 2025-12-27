@@ -1,7 +1,7 @@
 import { type FC, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
-import type { QueryHistoryEntry } from "@dbview/core";
+import type { QueryHistoryEntry } from "@dbview/types";
 import {
   History,
   Star,

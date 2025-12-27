@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { QueryHistoryEntry, QueryHistoryState } from '@dbview/core';
+import type { QueryHistoryEntry, QueryHistoryState } from '@dbview/types';
 
 const STORAGE_KEY = 'dbview_query_history';
 const MAX_ENTRIES = 100;

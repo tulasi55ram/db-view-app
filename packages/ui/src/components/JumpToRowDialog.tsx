@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, type FC } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X, ArrowRight, Search } from 'lucide-react';
-import type { ColumnMetadata } from '@dbview/core';
+import type { ColumnMetadata } from '@dbview/types';
 
 interface JumpToRowDialogProps {
   open: boolean;

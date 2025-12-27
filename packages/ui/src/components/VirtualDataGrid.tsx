@@ -10,7 +10,7 @@ import {
   type Row,
 } from '@tanstack/react-table';
 import clsx from 'clsx';
-import type { ColumnMetadata } from '@dbview/core';
+import type { ColumnMetadata } from '@dbview/types';
 import { CellEditor } from './CellEditor';
 import { formatCellValue } from '../utils/formatCellValue';
 import { ScrollProgressBar } from './ScrollProgressBar';
