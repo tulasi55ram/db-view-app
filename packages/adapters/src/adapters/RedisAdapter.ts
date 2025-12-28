@@ -841,8 +841,44 @@ export class RedisAdapter extends EventEmitter implements DatabaseAdapter {
 
       return { columns, rows };
     } catch (error) {
-      throw new Error(`Redis command failed: ${error instanceof Error ? error.message : String(error)}`);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      // Provide helpful error message for WRONGTYPE errors
+      if (errorMsg.includes('WRONGTYPE')) {
+        const keyArg = this.parseRedisCommand(command)[1];
+        if (keyArg && this.client) {
+          try {
+            const actualType = await this.client.type(keyArg);
+            const suggestion = this.getSuggestedCommand(actualType, keyArg);
+            throw new Error(
+              `Type mismatch: Key "${keyArg}" is a ${actualType.toUpperCase()}.\n` +
+              `${suggestion}`
+            );
+          } catch (typeError) {
+            if ((typeError as Error).message.includes('Type mismatch')) {
+              throw typeError;
+            }
+          }
+        }
+      }
+
+      throw new Error(`Redis command failed: ${errorMsg}`);
     }
+  }
+
+  /**
+   * Get suggested command based on key type
+   */
+  private getSuggestedCommand(keyType: string, key: string): string {
+    const suggestions: Record<string, string> = {
+      string: `Try: GET ${key}`,
+      hash: `Try: HGETALL ${key}`,
+      list: `Try: LRANGE ${key} 0 -1`,
+      set: `Try: SMEMBERS ${key}`,
+      zset: `Try: ZRANGE ${key} 0 -1 WITHSCORES`,
+      stream: `Try: XRANGE ${key} - + COUNT 10`,
+    };
+    return suggestions[keyType] || `Use TYPE ${key} to check the key type`;
   }
 
   // ============================================

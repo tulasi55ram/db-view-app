@@ -194,6 +194,14 @@ export interface QueryResult {
 export interface ImportResult {
   insertedCount: number;
   errors?: string[];
+  truncatedErrors?: boolean; // True if errors were truncated due to MAX_ERRORS limit
+}
+
+// Import progress
+export interface ImportProgress {
+  current: number;
+  total: number;
+  percentage: number;
 }
 
 // Autocomplete data
@@ -212,6 +220,17 @@ export interface QueryHistoryEntry {
   rowCount?: number;
   success: boolean;
   error?: string;
+  starred?: boolean;
+}
+
+// Saved query
+export interface SavedQuery {
+  id: string;
+  name: string;
+  sql: string;
+  description?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // Load table rows params
@@ -344,6 +363,8 @@ export interface ElectronAPI {
   testConnection(config: DatabaseConnectionConfig): Promise<TestConnectionResult>;
   connectToDatabase(connectionKey: string): Promise<void>;
   disconnectFromDatabase(connectionKey: string): Promise<void>;
+  getConnectionOrder(): Promise<string[]>;
+  saveConnectionOrder(order: string[]): Promise<void>;
 
   // Schema operations
   listSchemas(connectionKey: string): Promise<string[]>;
@@ -400,6 +421,13 @@ export interface ElectronAPI {
   addQueryHistoryEntry(connectionKey: string, entry: QueryHistoryEntry): Promise<void>;
   clearQueryHistory(connectionKey: string): Promise<void>;
   deleteQueryHistoryEntry(connectionKey: string, entryId: string): Promise<void>;
+  toggleQueryHistoryStar(connectionKey: string, entryId: string, starred: boolean): Promise<void>;
+
+  // Saved queries
+  getSavedQueries(connectionKey: string): Promise<SavedQuery[]>;
+  addSavedQuery(connectionKey: string, query: SavedQuery): Promise<void>;
+  updateSavedQuery(connectionKey: string, queryId: string, updates: Partial<SavedQuery>): Promise<void>;
+  deleteSavedQuery(connectionKey: string, queryId: string): Promise<void>;
 
   // Filter presets
   getFilterPresets(schema: string, table: string): Promise<FilterPreset[]>;
@@ -423,6 +451,7 @@ export interface ElectronAPI {
   onMenuRunQuery(callback: () => void): () => void;
   onMenuFormatSql(callback: () => void): () => void;
   onMenuExplainQuery(callback: () => void): () => void;
+  onImportProgress(callback: (progress: ImportProgress) => void): () => void;
 }
 
 // Declare the global window interface

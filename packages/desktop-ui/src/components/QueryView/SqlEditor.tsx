@@ -233,14 +233,20 @@ export const SqlEditor: FC<SqlEditorProps> = ({
           color: "#fafafa",
           height: height,
           fontSize: "13px",
+          lineHeight: "1.5",
           fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
         },
         ".cm-content": {
           caretColor: "#3b82f6",
           padding: "12px 0",
         },
+        ".cm-line": {
+          lineHeight: "1.5",
+        },
         ".cm-cursor": {
           borderLeftColor: "#3b82f6",
+          borderLeftWidth: "2px",
+          height: "1.2em !important",
         },
         ".cm-activeLine": {
           backgroundColor: "#262626",
@@ -291,6 +297,10 @@ export const SqlEditor: FC<SqlEditorProps> = ({
         ".cm-completionIcon-property": { color: "#9cdcfe" },
         ".cm-completionIcon-namespace": { color: "#c586c0" },
         ".cm-completionIcon-snippet": { color: "#c586c0", fontWeight: "500" },
+        ".cm-placeholder": {
+          color: "#737373",
+          lineHeight: "1.5",
+        },
       },
       { dark: true }
     );

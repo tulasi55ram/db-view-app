@@ -10,6 +10,8 @@ const electronAPI: ElectronAPI = {
   testConnection: (config) => ipcRenderer.invoke("connections:test", config),
   connectToDatabase: (connectionKey) => ipcRenderer.invoke("connections:connect", connectionKey),
   disconnectFromDatabase: (connectionKey) => ipcRenderer.invoke("connections:disconnect", connectionKey),
+  getConnectionOrder: () => ipcRenderer.invoke("connections:getOrder"),
+  saveConnectionOrder: (order) => ipcRenderer.invoke("connections:saveOrder", order),
 
   // Schema operations
   listSchemas: (connectionKey) => ipcRenderer.invoke("schema:list", connectionKey),
@@ -66,6 +68,13 @@ const electronAPI: ElectronAPI = {
   addQueryHistoryEntry: (connectionKey, entry) => ipcRenderer.invoke("queryHistory:add", connectionKey, entry),
   clearQueryHistory: (connectionKey) => ipcRenderer.invoke("queryHistory:clear", connectionKey),
   deleteQueryHistoryEntry: (connectionKey, entryId) => ipcRenderer.invoke("queryHistory:delete", connectionKey, entryId),
+  toggleQueryHistoryStar: (connectionKey, entryId, starred) => ipcRenderer.invoke("queryHistory:toggleStar", connectionKey, entryId, starred),
+
+  // Saved queries
+  getSavedQueries: (connectionKey) => ipcRenderer.invoke("savedQueries:get", connectionKey),
+  addSavedQuery: (connectionKey, query) => ipcRenderer.invoke("savedQueries:add", connectionKey, query),
+  updateSavedQuery: (connectionKey, queryId, updates) => ipcRenderer.invoke("savedQueries:update", connectionKey, queryId, updates),
+  deleteSavedQuery: (connectionKey, queryId) => ipcRenderer.invoke("savedQueries:delete", connectionKey, queryId),
 
   // Filter presets
   getFilterPresets: (schema, table) => ipcRenderer.invoke("filterPresets:getAll", { schema, table }),
@@ -149,6 +158,15 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on("menu:explainQuery", listener);
     return () => {
       ipcRenderer.removeListener("menu:explainQuery", listener);
+    };
+  },
+
+  onImportProgress: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: { current: number; total: number; percentage: number }) =>
+      callback(progress);
+    ipcRenderer.on("import:progress", listener);
+    return () => {
+      ipcRenderer.removeListener("import:progress", listener);
     };
   },
 };

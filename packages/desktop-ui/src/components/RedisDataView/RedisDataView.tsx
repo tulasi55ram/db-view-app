@@ -716,19 +716,32 @@ export function RedisDataView({ connectionKey, schema, table }: RedisDataViewPro
             ) : (
               <div className="py-1">
                 {filteredKeys.map((key) => (
-                  <button
+                  <div
                     key={key}
                     onClick={() => setSelectedKey(key)}
                     className={cn(
-                      "w-full px-3 py-2 text-left text-sm font-mono truncate transition-colors",
+                      "w-full px-3 py-2 text-left text-sm font-mono transition-colors cursor-pointer group flex items-center justify-between gap-2",
                       selectedKey === key
                         ? "bg-accent/10 text-accent border-l-2 border-accent"
                         : "hover:bg-bg-hover text-text-primary"
                     )}
                     title={key}
                   >
-                    {key}
-                  </button>
+                    <span className="truncate flex-1">{key}</span>
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const success = await copyToClipboard(key);
+                        if (success) {
+                          toast.success("Key copied");
+                        }
+                      }}
+                      className="p-1 rounded hover:bg-bg-tertiary opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                      title="Copy key"
+                    >
+                      <Copy className="w-3.5 h-3.5 text-text-tertiary hover:text-text-primary" />
+                    </button>
+                  </div>
                 ))}
 
                 {/* Load More Indicator */}

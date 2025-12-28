@@ -23,6 +23,7 @@ import {
   GitBranch,
   WifiOff,
   Wifi,
+  GripVertical,
 } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { IconButton, Button } from "@/primitives";
@@ -31,6 +32,23 @@ import { motion, AnimatePresence } from "framer-motion";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { toast } from "sonner";
 import { RedisSidebarTree } from "./RedisSidebarTree";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 // Types
 interface ConnectionInfo {
@@ -131,6 +149,37 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
+// Sortable connection item props
+interface SortableConnectionItemProps {
+  node: TreeNode;
+  children: (props: { attributes: any; listeners: any; isDragging: boolean }) => React.ReactNode;
+}
+
+// Sortable wrapper for connection nodes
+function SortableConnectionItem({ node, children }: SortableConnectionItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: node.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : undefined,
+    opacity: isDragging ? 0.8 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className={cn(isDragging && "shadow-lg rounded-md bg-bg-secondary")}>
+      {children({ attributes, listeners, isDragging })}
+    </div>
+  );
+}
+
 // Helper to format row count - uses "docs" for MongoDB/Elasticsearch, "rows" for SQL DBs
 function formatRowCount(count: number, dbType?: string): string {
   const isDocumentDB = dbType === "mongodb" || dbType === "elasticsearch";
@@ -142,6 +191,7 @@ function formatRowCount(count: number, dbType?: string): string {
 
 export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConnection, onEditConnection, refreshTrigger, expandConnectionKey }: SidebarProps) {
   const [connections, setConnections] = useState<ConnectionInfo[]>([]);
+  const [connectionOrder, setConnectionOrder] = useState<string[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [loadingNodes, setLoadingNodes] = useState<Set<string>>(new Set());
@@ -151,6 +201,18 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
   const previousStatusRef = useRef<Map<string, ConnectionInfo["status"]>>(new Map());
 
   const api = (window as any).electronAPI;
+
+  // DnD sensors for connection reordering
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // Require 8px of movement before starting drag
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   // Load connections on mount and when refreshTrigger changes
   useEffect(() => {
@@ -201,7 +263,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
     return () => unsubscribe?.();
   }, [refreshTrigger]);
 
-  // Build tree when connections change
+  // Build tree when connections change, respecting saved order
   useEffect(() => {
     const nodes: TreeNode[] = connections.map((conn) => {
       const name = conn.config.name || getConnectionDisplayName(conn.config);
@@ -218,8 +280,22 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
         children: [],
       };
     });
+
+    // Sort nodes based on saved order
+    if (connectionOrder.length > 0) {
+      nodes.sort((a, b) => {
+        const indexA = connectionOrder.indexOf(a.id);
+        const indexB = connectionOrder.indexOf(b.id);
+        // If not in order array, put at the end
+        if (indexA === -1 && indexB === -1) return 0;
+        if (indexA === -1) return 1;
+        if (indexB === -1) return -1;
+        return indexA - indexB;
+      });
+    }
+
     setTreeData(nodes);
-  }, [connections]);
+  }, [connections, connectionOrder]);
 
   const loadConnections = async () => {
     if (!api) return;
@@ -227,6 +303,10 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
     try {
       const conns = await api.getConnections();
       setConnections(conns);
+
+      // Load saved connection order
+      const savedOrder = await api.getConnectionOrder?.() || [];
+      setConnectionOrder(savedOrder);
 
       // Initialize status tracking for notifications
       conns.forEach((conn: ConnectionInfo) => {
@@ -241,6 +321,28 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
       setIsRefreshing(false);
     }
   };
+
+  // Handle drag end for connection reordering
+  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      const oldIndex = treeData.findIndex((node) => node.id === active.id);
+      const newIndex = treeData.findIndex((node) => node.id === over.id);
+
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const reorderedData = arrayMove(treeData, oldIndex, newIndex);
+        setTreeData(reorderedData);
+
+        // Save the new order
+        const newOrder = reorderedData.map((node) => node.id);
+        setConnectionOrder(newOrder);
+
+        // Persist to storage
+        await api?.saveConnectionOrder?.(newOrder);
+      }
+    }
+  }, [treeData, api]);
 
   const getConnectionKey = (config: any): string => {
     const dbType = config.dbType || "postgres";
@@ -726,7 +828,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
     }
   };
 
-  const renderNode = (node: TreeNode, depth: number = 0): React.ReactNode => {
+  const renderNode = (node: TreeNode, depth: number = 0, dragHandleProps?: { attributes: any; listeners: any }): React.ReactNode => {
     const isExpanded = expandedNodes.has(node.id);
     const isLoading = loadingNodes.has(node.id);
     const hasChildren = isExpandable(node);
@@ -756,11 +858,10 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
           <ContextMenu.Trigger>
             <div
               className={cn(
-                "flex items-center gap-1.5 px-2 py-1 cursor-pointer text-sm relative",
+                "flex items-center py-1 cursor-pointer text-sm relative",
                 "hover:bg-bg-hover transition-colors duration-fast",
                 "select-none group"
               )}
-              style={{ paddingLeft: `${depth * 12 + 8}px` }}
               onClick={handleNodeClick}
             >
               {/* Color indicator for connections */}
@@ -771,6 +872,28 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
                 />
               )}
 
+              {/* Fixed-width drag handle gutter - always present for consistent alignment */}
+              <div className="w-6 flex-shrink-0 flex items-center justify-center">
+                {node.type === "connection" && dragHandleProps ? (
+                  <div
+                    {...dragHandleProps.attributes}
+                    {...dragHandleProps.listeners}
+                    className={cn(
+                      "cursor-grab active:cursor-grabbing touch-none flex items-center justify-center",
+                      "opacity-0 group-hover:opacity-50 hover:!opacity-100 transition-opacity"
+                    )}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <GripVertical className="w-3.5 h-3.5" />
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Content area with depth-based indentation */}
+              <div
+                className="flex items-center gap-1.5 flex-1 min-w-0 pr-2"
+                style={{ paddingLeft: `${depth * 16}px` }}
+              >
               {/* Expand/Collapse Icon */}
               {hasChildren ? (
                 isLoading ? (
@@ -821,6 +944,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
                   {description}
                 </span>
               )}
+              </div>
             </div>
           </ContextMenu.Trigger>
 
@@ -984,7 +1108,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
                   {(!node.children || node.children.length === 0) && !isLoading && (
                     <div
                       className="text-xs text-text-tertiary italic py-1"
-                      style={{ paddingLeft: `${(depth + 1) * 12 + 24}px` }}
+                      style={{ paddingLeft: `${24 + (depth + 1) * 16}px` }}
                     >
                       {node.type === "connection" && "No schemas"}
                       {node.type === "schema" && "Loading..."}
@@ -1039,7 +1163,24 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
             </Button>
           </div>
         ) : (
-          treeData.map((node) => renderNode(node))
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={treeData.map((node) => node.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              {treeData.map((node) => (
+                <SortableConnectionItem key={node.id} node={node}>
+                  {({ attributes, listeners }: { attributes: any; listeners: any }) =>
+                    renderNode(node, 0, { attributes, listeners })
+                  }
+                </SortableConnectionItem>
+              ))}
+            </SortableContext>
+          </DndContext>
         )}
       </div>
     </div>

@@ -5,7 +5,7 @@ import { AppShell } from "@/layout";
 import { Sidebar } from "@/components/Sidebar";
 import { TabBar } from "@/components/TabBar";
 import { DataView } from "@/components/DataView";
-import { QueryView } from "@/components/QueryView";
+import { QueryViewRouter } from "@/components/QueryView";
 import { ERDiagramPanel } from "@/components/ERDiagramPanel";
 import { AddConnectionView } from "@/components/AddConnectionView";
 import { HomeView } from "@/components/HomeView";
@@ -294,7 +294,7 @@ function AppContent() {
     }
 
     if (tab.type === "query") {
-      return <QueryView key={tab.id} tab={tab} onTabUpdate={updateQueryTab} />;
+      return <QueryViewRouter key={tab.id} tab={tab} onTabUpdate={updateQueryTab} />;
     }
 
     if (tab.type === "er-diagram" && tab.connectionKey && tab.schemas) {
@@ -353,7 +353,7 @@ function AppContent() {
       if (tab.type === "query") {
         return (
           <div key={tab.id} style={style}>
-            <QueryView tab={tab} onTabUpdate={updateQueryTab} />
+            <QueryViewRouter tab={tab} onTabUpdate={updateQueryTab} />
           </div>
         );
       }

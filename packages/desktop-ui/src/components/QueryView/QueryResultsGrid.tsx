@@ -1,5 +1,8 @@
-import { type FC } from "react";
+import { type FC, useState, useRef, useEffect } from "react";
+import { Download, Copy, Check, ChevronDown } from "lucide-react";
 import { cn } from "@/utils/cn";
+import { exportToCSV, exportToJSON, copyToClipboardAsTSV } from "@/utils/exportData";
+import { toast } from "sonner";
 
 export interface QueryResultsGridProps {
   columns: string[];
@@ -8,6 +11,44 @@ export interface QueryResultsGridProps {
 }
 
 export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loading = false }) => {
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleExportCSV = () => {
+    exportToCSV({ columns, rows, filename: `query_results_${Date.now()}` });
+    toast.success("Exported to CSV");
+    setShowExportMenu(false);
+  };
+
+  const handleExportJSON = () => {
+    exportToJSON({ columns, rows, filename: `query_results_${Date.now()}` });
+    toast.success("Exported to JSON");
+    setShowExportMenu(false);
+  };
+
+  const handleCopyToClipboard = async () => {
+    const success = await copyToClipboardAsTSV({ columns, rows });
+    if (success) {
+      setCopied(true);
+      toast.success("Copied to clipboard");
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      toast.error("Failed to copy");
+    }
+    setShowExportMenu(false);
+  };
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -33,10 +74,53 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
   return (
     <div className="h-full flex flex-col overflow-hidden bg-bg-primary">
       {/* Status bar at top */}
-      <div className="h-8 px-4 flex items-center border-b border-border bg-bg-secondary text-xs text-text-secondary">
+      <div className="h-8 px-4 flex items-center justify-between border-b border-border bg-bg-secondary text-xs text-text-secondary">
         <span className="font-medium">
           {rows.length.toLocaleString()} {rows.length === 1 ? "row" : "rows"} returned
         </span>
+
+        {/* Export dropdown */}
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={() => setShowExportMenu(!showExportMenu)}
+            className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Export</span>
+            <ChevronDown className="w-3 h-3" />
+          </button>
+
+          {showExportMenu && (
+            <div className="absolute right-0 top-full mt-1 w-44 bg-bg-secondary border border-border rounded-lg shadow-lg z-50 py-1">
+              <button
+                onClick={handleExportCSV}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-bg-hover flex items-center gap-2 text-text-primary"
+              >
+                <Download className="w-4 h-4 text-text-tertiary" />
+                Export as CSV
+              </button>
+              <button
+                onClick={handleExportJSON}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-bg-hover flex items-center gap-2 text-text-primary"
+              >
+                <Download className="w-4 h-4 text-text-tertiary" />
+                Export as JSON
+              </button>
+              <div className="border-t border-border my-1" />
+              <button
+                onClick={handleCopyToClipboard}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-bg-hover flex items-center gap-2 text-text-primary"
+              >
+                {copied ? (
+                  <Check className="w-4 h-4 text-success" />
+                ) : (
+                  <Copy className="w-4 h-4 text-text-tertiary" />
+                )}
+                Copy to Clipboard
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Simple non-virtualized table (for debugging) */}

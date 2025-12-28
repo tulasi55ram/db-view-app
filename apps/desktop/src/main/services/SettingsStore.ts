@@ -12,6 +12,7 @@ export interface QueryHistoryEntry {
   rowCount?: number;
   success: boolean;
   error?: string;
+  starred?: boolean;
 }
 
 export interface FilterPreset {
@@ -25,6 +26,15 @@ export interface FilterPreset {
   }>;
   logic: "AND" | "OR";
   createdAt: number;
+}
+
+export interface SavedQuery {
+  id: string;
+  name: string;
+  sql: string;
+  description?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // Persisted tab state
@@ -92,8 +102,12 @@ interface StoreSchema {
   filterPresets: Record<string, FilterPreset[]>;
   // Saved views per table (key: "schema.table")
   savedViews: Record<string, SavedView[]>;
+  // Saved queries per connection
+  savedQueries: Record<string, SavedQuery[]>;
   // Persisted tabs state
   tabsState: TabsState | null;
+  // Connection order in sidebar (array of connection keys)
+  connectionOrder: string[];
 }
 
 // Lazy-initialized store (electron-store requires app.getPath which isn't available at module load)
@@ -116,7 +130,9 @@ function getStore(): Store<StoreSchema> {
         queryHistory: {},
         filterPresets: {},
         savedViews: {},
+        savedQueries: {},
         tabsState: null,
+        connectionOrder: [],
       },
     });
   }
@@ -235,6 +251,60 @@ export function deleteQueryHistoryEntry(connectionKey: string, entryId: string):
   getStore().set("queryHistory", allHistory);
 }
 
+export function toggleQueryHistoryStar(connectionKey: string, entryId: string, starred: boolean): void {
+  const allHistory = getStore().get("queryHistory", {});
+  const connectionHistory = allHistory[connectionKey] || [];
+
+  const updatedHistory = connectionHistory.map(entry =>
+    entry.id === entryId ? { ...entry, starred } : entry
+  );
+
+  allHistory[connectionKey] = updatedHistory;
+  getStore().set("queryHistory", allHistory);
+}
+
+// Saved Queries management
+export function getSavedQueries(connectionKey: string): SavedQuery[] {
+  const allQueries = getStore().get("savedQueries", {});
+  return allQueries[connectionKey] || [];
+}
+
+export function addSavedQuery(connectionKey: string, query: SavedQuery): void {
+  const allQueries = getStore().get("savedQueries", {});
+  const connectionQueries = allQueries[connectionKey] || [];
+
+  // Check if query with same id exists (update)
+  const existingIndex = connectionQueries.findIndex(q => q.id === query.id);
+  if (existingIndex >= 0) {
+    connectionQueries[existingIndex] = query;
+  } else {
+    connectionQueries.push(query);
+  }
+
+  allQueries[connectionKey] = connectionQueries;
+  getStore().set("savedQueries", allQueries);
+}
+
+export function updateSavedQuery(connectionKey: string, queryId: string, updates: Partial<SavedQuery>): void {
+  const allQueries = getStore().get("savedQueries", {});
+  const connectionQueries = allQueries[connectionKey] || [];
+
+  const updatedQueries = connectionQueries.map(query =>
+    query.id === queryId ? { ...query, ...updates, updatedAt: Date.now() } : query
+  );
+
+  allQueries[connectionKey] = updatedQueries;
+  getStore().set("savedQueries", allQueries);
+}
+
+export function deleteSavedQuery(connectionKey: string, queryId: string): void {
+  const allQueries = getStore().get("savedQueries", {});
+  const connectionQueries = allQueries[connectionKey] || [];
+
+  allQueries[connectionKey] = connectionQueries.filter(query => query.id !== queryId);
+  getStore().set("savedQueries", allQueries);
+}
+
 // Filter Presets management
 function getPresetKey(schema: string, table: string): string {
   return `${schema}.${table}`;
@@ -325,4 +395,13 @@ export function deleteSavedView(schema: string, table: string, viewId: string): 
 
   allViews[key] = tableViews.filter((v) => v.id !== viewId);
   getStore().set("savedViews", allViews);
+}
+
+// Connection order management
+export function getConnectionOrder(): string[] {
+  return getStore().get("connectionOrder", []);
+}
+
+export function saveConnectionOrder(order: string[]): void {
+  getStore().set("connectionOrder", order);
 }

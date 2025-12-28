@@ -1,9 +1,4 @@
 import type { DatabaseConnectionConfig } from "@dbview/types";
-import {
-  isSQLiteConfig,
-  isMongoDBConfig,
-  isRedisConfig,
-} from "@dbview/types";
 import type { DatabaseAdapter } from "@dbview/adapters";
 import { DatabaseAdapterFactory } from "@dbview/adapters";
 import {
@@ -44,7 +39,8 @@ export class ConnectionManager {
   private readonly MAX_RECONNECT_DELAY = 30000; // 30 seconds
 
   /**
-   * Get unique key for a connection config
+   * Get unique key for a connection config.
+   * IMPORTANT: This key must NOT contain secrets (passwords, connection strings with credentials).
    */
   getConnectionKey(config: DatabaseConnectionConfig | StoredConnectionConfig): string {
     const dbType = config.dbType || "postgres";
@@ -59,9 +55,7 @@ export class ConnectionManager {
     }
 
     if (dbType === "mongodb") {
-      if ("connectionString" in config && config.connectionString) {
-        return `${dbType}:${config.connectionString}`;
-      }
+      // Never use connectionString in key - it may contain passwords
       const user = "user" in config ? config.user : "anonymous";
       const host = "host" in config ? config.host : "localhost";
       const port = "port" in config ? config.port : 27017;
@@ -82,7 +76,26 @@ export class ConnectionManager {
       return `${dbType}:${user}@${config.host}:${config.port}/${config.database}`;
     }
 
-    return `${dbType}:${JSON.stringify(config)}`;
+    // Fallback: create a key from safe properties only (exclude password, connectionString)
+    const safeProps = this.getSafeConfigProps(config);
+    return `${dbType}:${safeProps}`;
+  }
+
+  /**
+   * Get a string representation of config properties that are safe to log/store.
+   * Excludes passwords, connection strings, and other secrets.
+   */
+  private getSafeConfigProps(config: DatabaseConnectionConfig | StoredConnectionConfig): string {
+    const safeKeys = ["host", "port", "database", "user", "filePath", "dbType", "name", "node"];
+    const safeEntries: string[] = [];
+
+    for (const key of safeKeys) {
+      if (key in config && (config as Record<string, unknown>)[key] !== undefined) {
+        safeEntries.push(`${key}=${(config as Record<string, unknown>)[key]}`);
+      }
+    }
+
+    return safeEntries.join(",") || "unknown";
   }
 
   /**
@@ -97,44 +110,69 @@ export class ConnectionManager {
   }
 
   /**
-   * Get a full connection config with password from secure storage
+   * Get a full connection config with secrets from secure storage
    */
   async getFullConnectionConfig(storedConfig: StoredConnectionConfig): Promise<DatabaseConnectionConfig> {
-    // For databases that need passwords (including Elasticsearch which uses node instead of host)
+    const result: Record<string, unknown> = { ...storedConfig };
+
+    // Retrieve password from keychain if this connection type needs one
     const needsPassword = "host" in storedConfig ||
                           storedConfig.dbType === "elasticsearch" ||
                           storedConfig.dbType === "mongodb";
 
     if (needsPassword && storedConfig.name) {
       const password = await passwordStore.getPassword(storedConfig.name);
-      return {
-        ...storedConfig,
-        password: password || "",
-      } as DatabaseConnectionConfig;
+      if (password) {
+        result.password = password;
+      }
     }
 
-    return storedConfig as DatabaseConnectionConfig;
+    // Retrieve connection string from keychain if flagged
+    if ((storedConfig as Record<string, unknown>).hasConnectionString && storedConfig.name) {
+      const connectionString = await passwordStore.getPassword(`${storedConfig.name}:connectionString`);
+      if (connectionString) {
+        result.connectionString = connectionString;
+      }
+      delete result.hasConnectionString; // Remove the flag, not needed in runtime config
+    }
+
+    return result as unknown as DatabaseConnectionConfig;
   }
 
   /**
-   * Save a connection (password stored separately in keychain)
+   * Save a connection (secrets stored separately in keychain)
    */
   async saveConnectionConfig(config: DatabaseConnectionConfig): Promise<void> {
-    // Extract password for secure storage
-    if ("password" in config && config.password && config.name) {
+    // Connection name is mandatory for all saved connections
+    if (!config.name) {
+      throw new Error("Connection name is required when saving a connection");
+    }
+
+    // Store password in keychain if provided
+    if ("password" in config && config.password) {
       await passwordStore.setPassword(config.name, config.password);
     }
 
-    // Store config without password
-    const configWithoutPassword: Partial<DatabaseConnectionConfig> = { ...config };
-    if ("password" in configWithoutPassword) {
-      delete configWithoutPassword.password;
+    // Store connection string in keychain if provided (it may contain credentials)
+    if ("connectionString" in config && config.connectionString) {
+      await passwordStore.setPassword(`${config.name}:connectionString`, config.connectionString);
     }
-    saveConnection(configWithoutPassword as StoredConnectionConfig);
+
+    // Store config without secrets
+    const configWithoutSecrets: Partial<DatabaseConnectionConfig> & { hasConnectionString?: boolean } = { ...config };
+    if ("password" in configWithoutSecrets) {
+      delete configWithoutSecrets.password;
+    }
+    if ("connectionString" in configWithoutSecrets) {
+      // Replace connection string with a flag indicating it exists in keychain
+      configWithoutSecrets.hasConnectionString = true;
+      delete (configWithoutSecrets as Record<string, unknown>).connectionString;
+    }
+    saveConnection(configWithoutSecrets as StoredConnectionConfig);
   }
 
   /**
-   * Delete a connection and its stored password
+   * Delete a connection and its stored secrets
    */
   async deleteConnection(name: string): Promise<void> {
     // Disconnect if connected
@@ -145,8 +183,9 @@ export class ConnectionManager {
       await this.disconnect(key);
     }
 
-    // Delete password from keychain
+    // Delete secrets from keychain (password and connection string)
     await passwordStore.deletePassword(name);
+    await passwordStore.deletePassword(`${name}:connectionString`);
 
     // Delete from settings
     deleteConnectionConfig(name);
@@ -348,8 +387,9 @@ export class ConnectionManager {
    * Test a connection without saving
    */
   async testConnection(config: DatabaseConnectionConfig): Promise<{ success: boolean; message: string }> {
+    let adapter: DatabaseAdapter | null = null;
     try {
-      const adapter = DatabaseAdapterFactory.create(config);
+      adapter = DatabaseAdapterFactory.create(config);
       const result = await adapter.testConnection();
       return result;
     } catch (error) {
@@ -357,6 +397,15 @@ export class ConnectionManager {
         success: false,
         message: error instanceof Error ? error.message : String(error),
       };
+    } finally {
+      // Always clean up the adapter to prevent resource leaks
+      if (adapter) {
+        try {
+          await adapter.disconnect();
+        } catch {
+          // Ignore disconnect errors during cleanup
+        }
+      }
     }
   }
 

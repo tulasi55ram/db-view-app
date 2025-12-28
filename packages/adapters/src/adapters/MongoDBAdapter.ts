@@ -412,8 +412,149 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Query Execution ====================
 
+  /**
+   * Run a MongoDB query (find or aggregation pipeline)
+   *
+   * Supported query formats:
+   *
+   * 1. Aggregation Pipeline:
+   * {
+   *   "collection": "users",
+   *   "pipeline": [
+   *     { "$match": { "status": "active" } },
+   *     { "$limit": 10 }
+   *   ]
+   * }
+   *
+   * 2. Find Query:
+   * {
+   *   "collection": "users",
+   *   "find": { "status": "active" },
+   *   "projection": { "name": 1, "email": 1 },
+   *   "sort": { "createdAt": -1 },
+   *   "limit": 10,
+   *   "skip": 0
+   * }
+   *
+   * 3. Count Query:
+   * {
+   *   "collection": "users",
+   *   "count": { "status": "active" }
+   * }
+   *
+   * 4. Distinct Query:
+   * {
+   *   "collection": "users",
+   *   "distinct": "status",
+   *   "query": { "active": true }
+   * }
+   */
   async runQuery(query: string): Promise<QueryResultSet> {
-    throw new Error('MongoDB does not support SQL queries. Use the MongoDB query language (MQL) instead.');
+    if (!this.db) {
+      throw new Error('Not connected to MongoDB database');
+    }
+
+    let parsedQuery: any;
+    try {
+      parsedQuery = JSON.parse(query);
+    } catch (e) {
+      throw new Error('Invalid JSON query. Please provide a valid JSON object.');
+    }
+
+    const collectionName = parsedQuery.collection;
+    if (!collectionName) {
+      throw new Error('Missing "collection" field. Specify which collection to query.');
+    }
+
+    const collection = this.db.collection(collectionName);
+    let results: any[] = [];
+
+    // Aggregation Pipeline
+    if (parsedQuery.pipeline && Array.isArray(parsedQuery.pipeline)) {
+      const pipeline = parsedQuery.pipeline;
+      const options = parsedQuery.options || {};
+      results = await collection.aggregate(pipeline, options).toArray();
+    }
+    // Find Query
+    else if (parsedQuery.find !== undefined) {
+      const filter = parsedQuery.find || {};
+      const projection = parsedQuery.projection || {};
+      const sort = parsedQuery.sort || {};
+      const limit = parsedQuery.limit || 100;
+      const skip = parsedQuery.skip || 0;
+
+      let cursor = collection.find(filter);
+
+      if (Object.keys(projection).length > 0) {
+        cursor = cursor.project(projection);
+      }
+      if (Object.keys(sort).length > 0) {
+        cursor = cursor.sort(sort);
+      }
+      if (skip > 0) {
+        cursor = cursor.skip(skip);
+      }
+      cursor = cursor.limit(limit);
+
+      results = await cursor.toArray();
+    }
+    // Count Query
+    else if (parsedQuery.count !== undefined) {
+      const filter = parsedQuery.count || {};
+      const count = await collection.countDocuments(filter);
+      results = [{ count }];
+    }
+    // Distinct Query
+    else if (parsedQuery.distinct) {
+      const field = parsedQuery.distinct;
+      const filter = parsedQuery.query || {};
+      const distinctValues = await collection.distinct(field, filter);
+      results = distinctValues.map((value: any) => ({ [field]: value }));
+    }
+    // Default: treat as find with empty filter
+    else {
+      results = await collection.find({}).limit(100).toArray();
+    }
+
+    // Extract columns from results
+    const columns: string[] = [];
+    const columnSet = new Set<string>();
+
+    for (const doc of results) {
+      for (const key of Object.keys(doc)) {
+        if (!columnSet.has(key)) {
+          columnSet.add(key);
+          columns.push(key);
+        }
+      }
+    }
+
+    // Ensure _id is first if present
+    const idIndex = columns.indexOf('_id');
+    if (idIndex > 0) {
+      columns.splice(idIndex, 1);
+      columns.unshift('_id');
+    }
+
+    // Convert ObjectId and other BSON types to strings for display
+    const rows = results.map((doc) => {
+      const row: Record<string, unknown> = {};
+      for (const key of columns) {
+        const value = doc[key];
+        if (value && typeof value === 'object' && value.constructor?.name === 'ObjectId') {
+          row[key] = value.toString();
+        } else if (value instanceof Date) {
+          row[key] = value.toISOString();
+        } else if (value && typeof value === 'object') {
+          row[key] = JSON.stringify(value);
+        } else {
+          row[key] = value;
+        }
+      }
+      return row;
+    });
+
+    return { columns, rows };
   }
 
   async explainQuery(query: string): Promise<any> {

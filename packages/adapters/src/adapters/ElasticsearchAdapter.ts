@@ -286,7 +286,8 @@ export class ElasticsearchAdapter extends EventEmitter implements DatabaseAdapte
       const properties = indexMapping.mappings.properties || {};
       const columns: ColumnMetadata[] = [];
 
-      // Always include _id as primary key (always sortable)
+      // Always include _id as primary key
+      // Note: _id is NOT sortable because fielddata is disabled by default on _id field
       columns.push({
         name: '_id',
         type: 'keyword',
@@ -298,8 +299,8 @@ export class ElasticsearchAdapter extends EventEmitter implements DatabaseAdapte
         isAutoIncrement: true,
         isGenerated: true,
         editable: false,
-        sortable: true,
-        sortField: '_id',
+        sortable: false,
+        sortField: undefined,
       });
 
       // Flatten nested properties with sortable info
@@ -505,8 +506,9 @@ export class ElasticsearchAdapter extends EventEmitter implements DatabaseAdapte
         // (text field without .keyword sub-field)
       }
 
-      // Always add _id as tiebreaker for consistent pagination
-      sort.push({ _id: { order: 'asc' } });
+      // Always add _doc as tiebreaker for consistent pagination
+      // Note: _id cannot be used for sorting because fielddata is disabled by default
+      sort.push({ _doc: { order: 'asc' } });
 
       let searchResponse: estypes.SearchResponse<unknown>;
 
@@ -1520,8 +1522,8 @@ export class ElasticsearchAdapter extends EventEmitter implements DatabaseAdapte
         isAutoIncrement: true,
         isGenerated: true,
         editable: false,
-        sortable: true,
-        sortField: '_id',
+        sortable: false,
+        sortField: undefined,
       },
     ];
   }

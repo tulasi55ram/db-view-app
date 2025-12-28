@@ -86,7 +86,13 @@ export interface ElectronAPI {
   addQueryHistoryEntry(connectionKey: string, entry: QueryHistoryEntry): Promise<void>;
   clearQueryHistory(connectionKey: string): Promise<void>;
   deleteQueryHistoryEntry(connectionKey: string, entryId: string): Promise<void>;
-  toggleQueryHistoryStar?(connectionKey: string, entryId: string, starred: boolean): Promise<void>;
+  toggleQueryHistoryStar(connectionKey: string, entryId: string, starred: boolean): Promise<void>;
+
+  // Saved queries
+  getSavedQueries(connectionKey: string): Promise<SavedQuery[]>;
+  addSavedQuery(connectionKey: string, query: SavedQuery): Promise<void>;
+  updateSavedQuery(connectionKey: string, queryId: string, updates: Partial<SavedQuery>): Promise<void>;
+  deleteSavedQuery(connectionKey: string, queryId: string): Promise<void>;
 
   // Filter presets
   getFilterPresets(schema: string, table: string): Promise<FilterPreset[]>;
@@ -286,6 +292,15 @@ export interface QueryHistoryEntry {
   success: boolean;
   error?: string;
   starred?: boolean;
+}
+
+export interface SavedQuery {
+  id: string;
+  name: string;
+  sql: string;
+  description?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface FilterPreset {

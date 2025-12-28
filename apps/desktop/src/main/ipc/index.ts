@@ -1,6 +1,7 @@
 import { ipcMain, clipboard, dialog, BrowserWindow } from "electron";
 import { format as formatSql } from "sql-formatter";
 import type { ConnectionManager } from "../services/ConnectionManager";
+import type { ConnectionWithStatus } from "../services/ConnectionManager";
 import type {
   LoadTableRowsParams,
   GetRowCountParams,
@@ -20,12 +21,15 @@ import type {
 } from "../../preload/api";
 import {
   getAllConnections,
-  saveConnection,
-  deleteConnectionConfig,
   getQueryHistory,
   addQueryHistoryEntry,
   clearQueryHistory,
   deleteQueryHistoryEntry,
+  toggleQueryHistoryStar,
+  getSavedQueries,
+  addSavedQuery,
+  updateSavedQuery,
+  deleteSavedQuery,
   getFilterPresets,
   saveFilterPreset,
   deleteFilterPreset,
@@ -34,12 +38,41 @@ import {
   getSavedViews,
   saveSavedView,
   deleteSavedView,
+  getConnectionOrder,
+  saveConnectionOrder,
   type QueryHistoryEntry,
+  type SavedQuery,
   type FilterPreset,
   type TabsState
 } from "../services/SettingsStore";
-import { passwordStore } from "../services/PasswordStore";
 import type { DatabaseConnectionConfig } from "@dbview/types";
+
+/**
+ * Broadcast connection status change to all renderer windows
+ */
+function broadcastConnectionStatus(connectionKey: string, status: ConnectionWithStatus["status"], error?: string): void {
+  const windows = BrowserWindow.getAllWindows();
+  for (const window of windows) {
+    if (!window.isDestroyed()) {
+      window.webContents.send("connection:statusChange", { connectionKey, status, error });
+    }
+  }
+}
+
+/**
+ * Broadcast import progress to all renderer windows
+ */
+function broadcastImportProgress(progress: { current: number; total: number; percentage: number }): void {
+  const windows = BrowserWindow.getAllWindows();
+  for (const window of windows) {
+    if (!window.isDestroyed()) {
+      window.webContents.send("import:progress", progress);
+    }
+  }
+}
+
+// Track connections that have status listeners attached to prevent duplicate listeners
+const connectionStatusListeners = new Set<string>();
 
 /**
  * Register all IPC handlers
@@ -69,11 +102,26 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     if (!config) {
       throw new Error(`Connection not found: ${connectionKey}`);
     }
-    await connectionManager.getOrCreateAdapter(config);
+    const adapter = await connectionManager.getOrCreateAdapter(config);
+
+    // Only attach status listener once per connection to prevent duplicates
+    if (!connectionStatusListeners.has(connectionKey)) {
+      connectionStatusListeners.add(connectionKey);
+      adapter.on("statusChange", (event) => {
+        const status = event.status === "connected" ? "connected" : "disconnected";
+        broadcastConnectionStatus(connectionKey, status);
+      });
+    }
+
+    // Broadcast initial connected status
+    broadcastConnectionStatus(connectionKey, "connected");
   });
 
   ipcMain.handle("connections:disconnect", async (_event, connectionKey: string) => {
+    // Clean up listener tracking
+    connectionStatusListeners.delete(connectionKey);
     await connectionManager.disconnect(connectionKey);
+    broadcastConnectionStatus(connectionKey, "disconnected");
   });
 
   // ==================== Schema Operations ====================
@@ -337,36 +385,81 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
       throw new Error(`Not connected: ${connectionKey}`);
     }
 
-    const schemas = await adapter.listSchemas();
-    const tables: any[] = [];
-    const columns: Record<string, any[]> = {};
-
-    // Limit tables for performance
+    // Caps and limits for performance
     const MAX_TABLES = 500;
     const MAX_TABLES_WITH_METADATA = 100;
+    const CONCURRENCY_LIMIT = 10;
+    const TIMEOUT_MS = 10000; // 10 second timeout
 
-    for (const schema of schemas) {
-      if (tables.length >= MAX_TABLES) break;
+    // Helper to yield to event loop between heavy operations
+    const yieldToEventLoop = (): Promise<void> =>
+      new Promise((resolve) => setImmediate(resolve));
 
-      const schemaTables = await adapter.listTables(schema);
-      for (const table of schemaTables) {
+    // Create abort controller for timeout
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), TIMEOUT_MS);
+
+    try {
+      const schemas = await adapter.listSchemas();
+      const tables: any[] = [];
+      const columns: Record<string, any[]> = {};
+
+      if (abortController.signal.aborted) {
+        throw new Error("Autocomplete timed out");
+      }
+
+      // Fetch tables from schemas in parallel (limited concurrency)
+      const schemaTablePromises = schemas.map((schema) =>
+        adapter.listTables(schema).then((schemaTables) =>
+          schemaTables.map((table) => ({ ...table, schema }))
+        )
+      );
+      const allSchemaTables = await Promise.all(schemaTablePromises);
+
+      for (const schemaTables of allSchemaTables) {
+        for (const table of schemaTables) {
+          if (tables.length >= MAX_TABLES) break;
+          tables.push(table);
+        }
         if (tables.length >= MAX_TABLES) break;
-        tables.push({ ...table, schema });
       }
-    }
 
-    // Get metadata for first N tables
-    for (let i = 0; i < Math.min(tables.length, MAX_TABLES_WITH_METADATA); i++) {
-      const table = tables[i];
-      try {
-        const metadata = await adapter.getTableMetadata(table.schema, table.name);
-        columns[`${table.schema}.${table.name}`] = metadata;
-      } catch (error) {
-        columns[`${table.schema}.${table.name}`] = [];
+      // Yield to event loop after collecting tables
+      await yieldToEventLoop();
+
+      if (abortController.signal.aborted) {
+        throw new Error("Autocomplete timed out");
       }
-    }
 
-    return { schemas, tables, columns };
+      // Fetch metadata in parallel with concurrency limit
+      const tablesToFetch = tables.slice(0, MAX_TABLES_WITH_METADATA);
+      for (let i = 0; i < tablesToFetch.length; i += CONCURRENCY_LIMIT) {
+        if (abortController.signal.aborted) {
+          throw new Error("Autocomplete timed out");
+        }
+
+        const batch = tablesToFetch.slice(i, i + CONCURRENCY_LIMIT);
+        const metadataPromises = batch.map(async (table) => {
+          try {
+            const metadata = await adapter.getTableMetadata(table.schema, table.name);
+            return { key: `${table.schema}.${table.name}`, metadata };
+          } catch {
+            return { key: `${table.schema}.${table.name}`, metadata: [] };
+          }
+        });
+        const results = await Promise.all(metadataPromises);
+        for (const { key, metadata } of results) {
+          columns[key] = metadata;
+        }
+
+        // Yield to event loop between batches to keep UI responsive
+        await yieldToEventLoop();
+      }
+
+      return { schemas, tables, columns };
+    } finally {
+      clearTimeout(timeoutId);
+    }
   });
 
   // ==================== Export/Import ====================
@@ -393,19 +486,73 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
 
-    let successCount = 0;
-    const errors: string[] = [];
+    // Caps and limits
+    const MAX_ROWS = 10000; // 10k row limit for imports
+    const BATCH_SIZE = 50;
+    const MAX_ERRORS = 100; // Stop collecting errors after this many
 
-    for (let i = 0; i < params.rows.length; i++) {
-      try {
-        await adapter.insertRow(params.schema, params.table, params.rows[i]);
-        successCount++;
-      } catch (error) {
-        errors.push(`Row ${i + 1}: ${error instanceof Error ? error.message : String(error)}`);
-      }
+    // Helper to yield to event loop between batches
+    const yieldToEventLoop = (): Promise<void> =>
+      new Promise((resolve) => setImmediate(resolve));
+
+    // Validate row count
+    if (params.rows.length > MAX_ROWS) {
+      throw new Error(
+        `Import exceeds maximum row limit. Received ${params.rows.length} rows, maximum allowed is ${MAX_ROWS}. ` +
+        `Please split your import into smaller batches.`
+      );
     }
 
-    return { insertedCount: successCount, errors: errors.length > 0 ? errors : undefined };
+    let successCount = 0;
+    const errors: string[] = [];
+    const totalRows = params.rows.length;
+
+    // Broadcast initial progress
+    broadcastImportProgress({ current: 0, total: totalRows, percentage: 0 });
+
+    // Process rows in batches with parallel inserts within each batch
+    for (let i = 0; i < totalRows; i += BATCH_SIZE) {
+      const batch = params.rows.slice(i, i + BATCH_SIZE);
+      const batchPromises = batch.map(async (row, batchIndex) => {
+        const rowIndex = i + batchIndex;
+        try {
+          await adapter.insertRow(params.schema, params.table, row);
+          return { success: true, rowIndex };
+        } catch (error) {
+          return {
+            success: false,
+            rowIndex,
+            error: `Row ${rowIndex + 1}: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      });
+
+      const results = await Promise.all(batchPromises);
+      for (const result of results) {
+        if (result.success) {
+          successCount++;
+        } else if (result.error && errors.length < MAX_ERRORS) {
+          errors.push(result.error);
+        }
+      }
+
+      // Broadcast progress after each batch
+      const current = Math.min(i + BATCH_SIZE, totalRows);
+      const percentage = Math.round((current / totalRows) * 100);
+      broadcastImportProgress({ current, total: totalRows, percentage });
+
+      // Yield to event loop between batches to keep UI responsive
+      await yieldToEventLoop();
+    }
+
+    // Broadcast completion
+    broadcastImportProgress({ current: totalRows, total: totalRows, percentage: 100 });
+
+    return {
+      insertedCount: successCount,
+      errors: errors.length > 0 ? errors : undefined,
+      truncatedErrors: errors.length >= MAX_ERRORS,
+    };
   });
 
   // ==================== Clipboard ====================
@@ -462,6 +609,28 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     deleteQueryHistoryEntry(connectionKey, entryId);
   });
 
+  ipcMain.handle("queryHistory:toggleStar", async (_event, connectionKey: string, entryId: string, starred: boolean) => {
+    toggleQueryHistoryStar(connectionKey, entryId, starred);
+  });
+
+  // ==================== Saved Queries ====================
+
+  ipcMain.handle("savedQueries:get", async (_event, connectionKey: string) => {
+    return getSavedQueries(connectionKey);
+  });
+
+  ipcMain.handle("savedQueries:add", async (_event, connectionKey: string, query: SavedQuery) => {
+    addSavedQuery(connectionKey, query);
+  });
+
+  ipcMain.handle("savedQueries:update", async (_event, connectionKey: string, queryId: string, updates: Partial<SavedQuery>) => {
+    updateSavedQuery(connectionKey, queryId, updates);
+  });
+
+  ipcMain.handle("savedQueries:delete", async (_event, connectionKey: string, queryId: string) => {
+    deleteSavedQuery(connectionKey, queryId);
+  });
+
   // ==================== Tabs Persistence ====================
 
   ipcMain.handle("tabs:load", async () => {
@@ -470,5 +639,15 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
 
   ipcMain.handle("tabs:save", async (_event, state: TabsState) => {
     saveTabsState(state);
+  });
+
+  // ==================== Connection Order ====================
+
+  ipcMain.handle("connections:getOrder", async () => {
+    return getConnectionOrder();
+  });
+
+  ipcMain.handle("connections:saveOrder", async (_event, order: string[]) => {
+    saveConnectionOrder(order);
   });
 }

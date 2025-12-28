@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, nativeTheme, shell, Menu } from "electron";
 import * as path from "path";
+import { URL } from "url";
 import { registerAllHandlers } from "./ipc";
 import { ConnectionManager } from "./services/ConnectionManager";
 import { createApplicationMenu } from "./menu";
@@ -57,9 +58,19 @@ function createWindow(): void {
     });
   }
 
-  // Handle external links
+  // Handle external links - only allow safe protocols
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    try {
+      const parsedUrl = new URL(url);
+      // Only allow http and https protocols to prevent file://, javascript:, or custom protocol attacks
+      if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
+        shell.openExternal(url);
+      } else {
+        console.warn(`[Security] Blocked external link with disallowed protocol: ${parsedUrl.protocol}`);
+      }
+    } catch {
+      console.warn(`[Security] Blocked invalid URL: ${url}`);
+    }
     return { action: "deny" };
   });
 
