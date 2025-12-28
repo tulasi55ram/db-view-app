@@ -4,8 +4,7 @@ import { ThemeProvider, useTheme } from "@/design-system";
 import { AppShell } from "@/layout";
 import { Sidebar } from "@/components/Sidebar";
 import { TabBar } from "@/components/TabBar";
-import { TableView } from "@/components/TableView";
-import { RedisDataView } from "@/components/RedisDataView";
+import { DataView } from "@/components/DataView";
 import { QueryView } from "@/components/QueryView";
 import { ERDiagramPanel } from "@/components/ERDiagramPanel";
 import { AddConnectionView } from "@/components/AddConnectionView";
@@ -283,19 +282,9 @@ function AppContent() {
     if (!tab) return null;
 
     if (tab.type === "table" && tab.schema !== undefined && tab.table && tab.connectionKey) {
-      // Use RedisDataView for Redis connections
-      if (tab.connectionKey.startsWith("redis:")) {
-        return (
-          <RedisDataView
-            key={tab.id}
-            connectionKey={tab.connectionKey}
-            schema={tab.schema}
-            table={tab.table}
-          />
-        );
-      }
+      // Use DataView router which handles SQL, Document, and Redis databases
       return (
-        <TableView
+        <DataView
           key={tab.id}
           connectionKey={tab.connectionKey}
           schema={tab.schema}
@@ -349,21 +338,10 @@ function AppContent() {
       };
 
       if (tab.type === "table" && tab.schema !== undefined && tab.table && tab.connectionKey) {
-        // Use RedisDataView for Redis connections
-        if (tab.connectionKey.startsWith("redis:")) {
-          return (
-            <div key={tab.id} style={style}>
-              <RedisDataView
-                connectionKey={tab.connectionKey}
-                schema={tab.schema}
-                table={tab.table}
-              />
-            </div>
-          );
-        }
+        // Use DataView router which handles SQL, Document, and Redis databases
         return (
           <div key={tab.id} style={style}>
-            <TableView
+            <DataView
               connectionKey={tab.connectionKey}
               schema={tab.schema}
               table={tab.table}

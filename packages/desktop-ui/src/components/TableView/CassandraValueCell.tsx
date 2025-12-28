@@ -4,14 +4,8 @@ import {
   ChevronDown,
   List,
   Hash,
-  Clock,
-  Binary,
   Braces,
   Copy,
-  Calendar,
-  Timer,
-  Globe,
-  Key,
   Database,
 } from "lucide-react";
 import { cn } from "@/utils/cn";
@@ -205,7 +199,54 @@ interface CollectionValueProps {
 }
 
 function CollectionValue({ value, typeInfo, isExpanded, onToggle, isCompact }: CollectionValueProps) {
-  const items = Array.isArray(value) ? value : [];
+  // Parse collection - handle various input formats
+  let items: unknown[] = [];
+
+  if (Array.isArray(value)) {
+    items = value;
+  } else if (typeof value === "string") {
+    const trimmed = value.trim();
+
+    // Empty array representation
+    if (trimmed === "[]" || trimmed === "[ ]") {
+      items = [];
+    }
+    // Skip ONLY if it's exactly a type definition with no data (e.g., "list<text>" with nothing else)
+    else if (/^(list|set)\s*<[^>]+>\s*$/i.test(trimmed)) {
+      items = [];
+    } else {
+      // Try to parse as JSON array first
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          items = parsed;
+        } else if (typeof parsed === "object" && parsed !== null) {
+          // It parsed as an object, convert to array of values
+          items = Object.values(parsed);
+        }
+      } catch {
+        // Try Cassandra's native format: ['item1', 'item2'] or [item1, item2]
+        const arrayMatch = trimmed.match(/^\[(.+)\]$/);
+        if (arrayMatch) {
+          const content = arrayMatch[1];
+          // Split by comma, handling quoted strings
+          items = content.split(/,(?=(?:[^']*'[^']*')*[^']*$)/).map(item => {
+            const cleaned = item.trim().replace(/^['"]|['"]$/g, '');
+            return cleaned;
+          }).filter(item => item !== '');
+        } else if (trimmed && !/^(list|set|map)\s*</i.test(trimmed)) {
+          // Not an array format and not a type definition, treat as single item
+          items = [trimmed];
+        }
+      }
+    }
+  } else if (value instanceof Set) {
+    items = Array.from(value);
+  } else if (typeof value === "object" && value !== null) {
+    // Handle object that should be an array
+    items = Object.values(value);
+  }
+
   const isSet = typeInfo.baseType === "set";
   const Icon = isSet ? Hash : List;
 
@@ -214,28 +255,42 @@ function CollectionValue({ value, typeInfo, isExpanded, onToggle, isCompact }: C
     toast.success("Collection copied to clipboard");
   }, [items]);
 
+  // Compact inline preview
+  const getPreview = () => {
+    if (items.length === 0) return "empty";
+    const preview = items.slice(0, 3).map(item =>
+      typeof item === "string" ? item : JSON.stringify(item)
+    ).join(", ");
+    return items.length > 3 ? `${preview}, ...` : preview;
+  };
+
   if (isCompact && !isExpanded) {
     return (
-      <div className="flex items-center gap-1.5 group">
+      <div className="flex items-center gap-1.5 group min-w-0">
         <button
           onClick={onToggle}
-          className="flex items-center gap-1 text-xs text-purple-500 hover:text-purple-400 transition-colors"
+          className="flex items-center gap-1 text-xs hover:text-purple-400 transition-colors min-w-0"
         >
-          <Icon className="w-3.5 h-3.5" />
-          <span className="font-medium">
-            {isSet ? "set" : "list"}[{items.length}]
-          </span>
-          <ChevronRight className="w-3 h-3" />
+          <Icon className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" />
+          {items.length === 0 ? (
+            <span className="text-text-tertiary italic">[ ]</span>
+          ) : (
+            <>
+              <span className="text-text-primary truncate max-w-[200px]">{getPreview()}</span>
+              <span className="text-text-tertiary flex-shrink-0">({items.length})</span>
+            </>
+          )}
+          <ChevronRight className="w-3 h-3 text-text-tertiary flex-shrink-0" />
         </button>
         <button
           onClick={handleCopy}
-          className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity"
+          className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity flex-shrink-0"
           title="Copy collection"
         >
           <Copy className="w-3 h-3 text-text-tertiary" />
         </button>
         {typeInfo.isFrozen && (
-          <span className="text-[10px] text-blue-400 px-1 py-0.5 rounded bg-blue-500/10">frozen</span>
+          <span className="text-[10px] text-blue-400 px-1 py-0.5 rounded bg-blue-500/10 flex-shrink-0">frozen</span>
         )}
       </div>
     );
@@ -249,7 +304,7 @@ function CollectionValue({ value, typeInfo, isExpanded, onToggle, isCompact }: C
       >
         <Icon className="w-3.5 h-3.5" />
         <span className="font-medium">
-          {isSet ? "set" : "list"}[{items.length}]
+          {isSet ? "set" : "list"} ({items.length} items)
         </span>
         <ChevronDown className="w-3 h-3" />
         {typeInfo.isFrozen && (
@@ -259,14 +314,14 @@ function CollectionValue({ value, typeInfo, isExpanded, onToggle, isCompact }: C
       <div className="pl-3 border-l-2 border-purple-500/30 space-y-0.5 max-h-40 overflow-y-auto">
         {items.map((item, idx) => (
           <div key={idx} className="flex items-center gap-1.5 text-xs py-0.5">
-            <span className="text-text-tertiary w-4 text-right">{idx}:</span>
+            <span className="text-text-tertiary w-6 text-right flex-shrink-0">{idx}:</span>
             <span className="text-text-primary truncate">
               {typeof item === "object" ? JSON.stringify(item) : String(item)}
             </span>
           </div>
         ))}
         {items.length === 0 && (
-          <span className="text-text-tertiary italic text-xs">empty</span>
+          <span className="text-text-tertiary italic text-xs">[ ]</span>
         )}
       </div>
     </div>
@@ -286,21 +341,48 @@ interface MapValueProps {
 }
 
 function MapValue({ value, typeInfo, isExpanded, onToggle, isCompact }: MapValueProps) {
-  // Parse the map value - could be object or Map
+  // Parse the map value - handle various input formats
   let entries: Array<[string, unknown]> = [];
+
   if (value instanceof Map) {
     entries = Array.from(value.entries()).map(([k, v]) => [String(k), v]);
-  } else if (typeof value === "object" && value !== null) {
-    entries = Object.entries(value);
   } else if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      if (typeof parsed === "object" && parsed !== null) {
-        entries = Object.entries(parsed);
-      }
-    } catch {
-      // Not valid JSON
+    const trimmed = value.trim();
+
+    // Empty map representation
+    if (trimmed === "{}" || trimmed === "{ }") {
+      entries = [];
     }
+    // Skip ONLY if it's exactly a type definition with no data
+    else if (/^map\s*<[^>]+,\s*[^>]+>\s*$/i.test(trimmed)) {
+      entries = [];
+    } else {
+      // Try to parse as JSON object
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          entries = Object.entries(parsed);
+        }
+      } catch {
+        // Try Cassandra's native format: {key1: 'value1', key2: 'value2'}
+        const mapMatch = trimmed.match(/^\{(.+)\}$/);
+        if (mapMatch) {
+          const content = mapMatch[1];
+          // Parse key-value pairs
+          const pairs = content.split(/,(?=(?:[^']*'[^']*')*[^']*$)/);
+          for (const pair of pairs) {
+            const colonIndex = pair.indexOf(':');
+            if (colonIndex > 0) {
+              const key = pair.slice(0, colonIndex).trim().replace(/^['"]|['"]$/g, '');
+              const val = pair.slice(colonIndex + 1).trim().replace(/^['"]|['"]$/g, '');
+              entries.push([key, val]);
+            }
+          }
+        }
+      }
+    }
+  } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    entries = Object.entries(value);
   }
 
   const handleCopy = useCallback(() => {
@@ -309,26 +391,44 @@ function MapValue({ value, typeInfo, isExpanded, onToggle, isCompact }: MapValue
     toast.success("Map copied to clipboard");
   }, [entries]);
 
+  // Compact inline preview
+  const getPreview = () => {
+    if (entries.length === 0) return "empty";
+    const preview = entries.slice(0, 2).map(([k, v]) => {
+      const valStr = typeof v === "string" ? v : JSON.stringify(v);
+      const shortVal = valStr.length > 15 ? valStr.slice(0, 15) + "..." : valStr;
+      return `${k}: ${shortVal}`;
+    }).join(", ");
+    return entries.length > 2 ? `${preview}, ...` : preview;
+  };
+
   if (isCompact && !isExpanded) {
     return (
-      <div className="flex items-center gap-1.5 group">
+      <div className="flex items-center gap-1.5 group min-w-0">
         <button
           onClick={onToggle}
-          className="flex items-center gap-1 text-xs text-orange-500 hover:text-orange-400 transition-colors"
+          className="flex items-center gap-1 text-xs hover:text-orange-400 transition-colors min-w-0"
         >
-          <Braces className="w-3.5 h-3.5" />
-          <span className="font-medium">map[{entries.length}]</span>
-          <ChevronRight className="w-3 h-3" />
+          <Braces className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
+          {entries.length === 0 ? (
+            <span className="text-text-tertiary italic">{ }</span>
+          ) : (
+            <>
+              <span className="text-text-primary truncate max-w-[200px]">{getPreview()}</span>
+              <span className="text-text-tertiary flex-shrink-0">({entries.length})</span>
+            </>
+          )}
+          <ChevronRight className="w-3 h-3 text-text-tertiary flex-shrink-0" />
         </button>
         <button
           onClick={handleCopy}
-          className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity"
+          className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity flex-shrink-0"
           title="Copy map"
         >
           <Copy className="w-3 h-3 text-text-tertiary" />
         </button>
         {typeInfo.isFrozen && (
-          <span className="text-[10px] text-blue-400 px-1 py-0.5 rounded bg-blue-500/10">frozen</span>
+          <span className="text-[10px] text-blue-400 px-1 py-0.5 rounded bg-blue-500/10 flex-shrink-0">frozen</span>
         )}
       </div>
     );
@@ -341,7 +441,7 @@ function MapValue({ value, typeInfo, isExpanded, onToggle, isCompact }: MapValue
         className="flex items-center gap-1 text-xs text-orange-500 hover:text-orange-400 transition-colors"
       >
         <Braces className="w-3.5 h-3.5" />
-        <span className="font-medium">map[{entries.length}]</span>
+        <span className="font-medium">map ({entries.length} entries)</span>
         <ChevronDown className="w-3 h-3" />
         {typeInfo.isFrozen && (
           <span className="text-[10px] text-blue-400 px-1 py-0.5 rounded bg-blue-500/10 ml-1">frozen</span>
@@ -350,14 +450,20 @@ function MapValue({ value, typeInfo, isExpanded, onToggle, isCompact }: MapValue
       <div className="pl-3 border-l-2 border-orange-500/30 space-y-0.5 max-h-40 overflow-y-auto">
         {entries.map(([key, val], idx) => (
           <div key={idx} className="flex items-center gap-1.5 text-xs py-0.5">
-            <span className="text-cyan-400 font-medium truncate max-w-[80px]">{key}:</span>
+            <span className="text-cyan-400 font-medium truncate max-w-[100px] flex-shrink-0">{key}:</span>
             <span className="text-text-primary truncate">
-              {typeof val === "object" ? JSON.stringify(val) : String(val)}
+              {val === null ? (
+                <span className="text-text-tertiary italic">null</span>
+              ) : typeof val === "object" ? (
+                JSON.stringify(val)
+              ) : (
+                String(val)
+              )}
             </span>
           </div>
         ))}
         {entries.length === 0 && (
-          <span className="text-text-tertiary italic text-xs">empty</span>
+          <span className="text-text-tertiary italic text-xs">{ }</span>
         )}
       </div>
     </div>
@@ -379,17 +485,25 @@ interface UDTValueProps {
 function UDTValue({ value, typeInfo, isExpanded, onToggle, isCompact }: UDTValueProps) {
   // Parse UDT - usually comes as JSON string or object
   let fields: Array<[string, unknown]> = [];
+
   if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      if (typeof parsed === "object" && parsed !== null) {
-        fields = Object.entries(parsed);
+    // Skip if it looks like a type definition
+    if (/^frozen\s*<|^\w+\s*</.test(value.trim())) {
+      fields = [];
+    } else {
+      try {
+        const parsed = JSON.parse(value);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          fields = Object.entries(parsed);
+        }
+      } catch {
+        // Not valid JSON, show as simple value if it has content
+        if (value.trim() && !/^[\w_]+$/.test(value.trim())) {
+          return <SimpleValue value={value} />;
+        }
       }
-    } catch {
-      // Not valid JSON, show as is
-      return <SimpleValue value={value} />;
     }
-  } else if (typeof value === "object" && value !== null) {
+  } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     fields = Object.entries(value);
   }
 
@@ -399,28 +513,45 @@ function UDTValue({ value, typeInfo, isExpanded, onToggle, isCompact }: UDTValue
     toast.success("UDT copied to clipboard");
   }, [fields]);
 
+  // Compact inline preview
+  const getPreview = () => {
+    if (fields.length === 0) return "empty";
+    const preview = fields.slice(0, 2).map(([k, v]) => {
+      if (v === null) return `${k}: null`;
+      const valStr = typeof v === "string" ? v : JSON.stringify(v);
+      const shortVal = valStr.length > 12 ? valStr.slice(0, 12) + "..." : valStr;
+      return `${k}: ${shortVal}`;
+    }).join(", ");
+    return fields.length > 2 ? `${preview}, ...` : preview;
+  };
+
   if (isCompact && !isExpanded) {
     return (
-      <div className="flex items-center gap-1.5 group">
+      <div className="flex items-center gap-1.5 group min-w-0">
         <button
           onClick={onToggle}
-          className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors"
+          className="flex items-center gap-1 text-xs hover:text-green-400 transition-colors min-w-0"
         >
-          <Database className="w-3.5 h-3.5" />
-          <span className="font-medium">
-            {typeInfo.udtName || "udt"}
-          </span>
-          <ChevronRight className="w-3 h-3" />
+          <Database className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+          {fields.length === 0 ? (
+            <span className="text-text-tertiary italic">{ }</span>
+          ) : (
+            <>
+              <span className="text-text-primary truncate max-w-[200px]">{getPreview()}</span>
+              <span className="text-text-tertiary flex-shrink-0">({fields.length})</span>
+            </>
+          )}
+          <ChevronRight className="w-3 h-3 text-text-tertiary flex-shrink-0" />
         </button>
         <button
           onClick={handleCopy}
-          className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity"
+          className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity flex-shrink-0"
           title="Copy UDT"
         >
           <Copy className="w-3 h-3 text-text-tertiary" />
         </button>
         {typeInfo.isFrozen && (
-          <span className="text-[10px] text-blue-400 px-1 py-0.5 rounded bg-blue-500/10">frozen</span>
+          <span className="text-[10px] text-blue-400 px-1 py-0.5 rounded bg-blue-500/10 flex-shrink-0">frozen</span>
         )}
       </div>
     );
@@ -433,7 +564,7 @@ function UDTValue({ value, typeInfo, isExpanded, onToggle, isCompact }: UDTValue
         className="flex items-center gap-1 text-xs text-green-500 hover:text-green-400 transition-colors"
       >
         <Database className="w-3.5 h-3.5" />
-        <span className="font-medium">{typeInfo.udtName || "udt"}</span>
+        <span className="font-medium">{typeInfo.udtName || "udt"} ({fields.length} fields)</span>
         <ChevronDown className="w-3 h-3" />
         {typeInfo.isFrozen && (
           <span className="text-[10px] text-blue-400 px-1 py-0.5 rounded bg-blue-500/10 ml-1">frozen</span>
@@ -442,7 +573,7 @@ function UDTValue({ value, typeInfo, isExpanded, onToggle, isCompact }: UDTValue
       <div className="pl-3 border-l-2 border-green-500/30 space-y-0.5 max-h-40 overflow-y-auto bg-green-500/5 rounded-r py-1">
         {fields.map(([key, val], idx) => (
           <div key={idx} className="flex items-center gap-1.5 text-xs py-0.5 px-1">
-            <span className="text-green-400 font-medium">{key}:</span>
+            <span className="text-green-400 font-medium flex-shrink-0">{key}:</span>
             <span className="text-text-primary truncate">
               {val === null ? (
                 <span className="text-text-tertiary italic">null</span>
@@ -455,7 +586,7 @@ function UDTValue({ value, typeInfo, isExpanded, onToggle, isCompact }: UDTValue
           </div>
         ))}
         {fields.length === 0 && (
-          <span className="text-text-tertiary italic text-xs px-1">empty</span>
+          <span className="text-text-tertiary italic text-xs px-1">{ }</span>
         )}
       </div>
     </div>
@@ -483,19 +614,18 @@ function UUIDValue({ value, isTimeUUID }: UUIDValueProps) {
   }, [uuidStr]);
 
   return (
-    <div className="flex items-center gap-1.5 group">
-      <Key className="w-3 h-3 text-yellow-500 flex-shrink-0" />
-      <span className="font-mono text-xs text-yellow-500/90 truncate">
-        {uuidStr.substring(0, 8)}...{uuidStr.substring(uuidStr.length - 4)}
+    <div className="flex items-center gap-1.5 group min-w-0">
+      <span className="font-mono text-xs text-text-primary truncate" title={uuidStr}>
+        {uuidStr}
       </span>
       {isTimeUUID && extractedDate && (
-        <span className="text-[10px] text-text-tertiary" title={extractedDate.toISOString()}>
+        <span className="text-[10px] text-text-tertiary flex-shrink-0" title={extractedDate.toISOString()}>
           ({formatRelativeTime(extractedDate)})
         </span>
       )}
       <button
         onClick={handleCopy}
-        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity"
+        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity flex-shrink-0"
         title="Copy UUID"
       >
         <Copy className="w-3 h-3 text-text-tertiary" />
@@ -568,20 +698,16 @@ function BlobValue({ value }: BlobValueProps) {
 
   return (
     <div className="flex items-center gap-1.5 group">
-      <Binary className="w-3.5 h-3.5 text-pink-500 flex-shrink-0" />
-      <span className="text-xs text-pink-500/90">
+      <span className="text-xs text-text-secondary italic">
         {byteCount > 0 ? (
-          <>
-            {formatBytes(byteCount)}
-            <span className="text-text-tertiary ml-1">({byteCount.toLocaleString()} bytes)</span>
-          </>
+          `${formatBytes(byteCount)} (${byteCount.toLocaleString()} bytes)`
         ) : (
-          strValue
+          strValue || "binary data"
         )}
       </span>
       <button
         onClick={handleCopy}
-        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity"
+        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity flex-shrink-0"
         title="Copy binary info"
       >
         <Copy className="w-3 h-3 text-text-tertiary" />
@@ -608,7 +734,6 @@ interface InetValueProps {
 
 function InetValue({ value }: InetValueProps) {
   const ipStr = String(value);
-  const isIPv6 = ipStr.includes(":");
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(ipStr);
@@ -616,15 +741,11 @@ function InetValue({ value }: InetValueProps) {
   }, [ipStr]);
 
   return (
-    <div className="flex items-center gap-1.5 group">
-      <Globe className="w-3.5 h-3.5 text-cyan-500 flex-shrink-0" />
-      <span className="font-mono text-xs text-cyan-500/90">{ipStr}</span>
-      <span className="text-[10px] text-text-tertiary">
-        {isIPv6 ? "IPv6" : "IPv4"}
-      </span>
+    <div className="flex items-center gap-1.5 group min-w-0">
+      <span className="font-mono text-xs text-text-primary truncate">{ipStr}</span>
       <button
         onClick={handleCopy}
-        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity"
+        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity flex-shrink-0"
         title="Copy IP address"
       >
         <Copy className="w-3 h-3 text-text-tertiary" />
@@ -651,15 +772,11 @@ function DurationValue({ value }: DurationValueProps) {
   }, [durStr]);
 
   return (
-    <div className="flex items-center gap-1.5 group">
-      <Timer className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
-      <span className="text-xs text-violet-500/90">{humanReadable}</span>
-      {humanReadable !== durStr && (
-        <span className="text-[10px] text-text-tertiary">({durStr})</span>
-      )}
+    <div className="flex items-center gap-1.5 group min-w-0">
+      <span className="text-xs text-text-primary" title={durStr}>{humanReadable}</span>
       <button
         onClick={handleCopy}
-        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity"
+        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity flex-shrink-0"
         title="Copy duration"
       >
         <Copy className="w-3 h-3 text-text-tertiary" />
@@ -711,13 +828,23 @@ interface CounterValueProps {
 function CounterValue({ value }: CounterValueProps) {
   const num = Number(value);
 
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(String(num));
+    toast.success("Counter copied to clipboard");
+  }, [num]);
+
   return (
-    <div className="flex items-center gap-1.5">
-      <Hash className="w-3 h-3 text-amber-500 flex-shrink-0" />
-      <span className="font-mono text-xs text-amber-500 font-medium">
+    <div className="flex items-center gap-1.5 group">
+      <span className="font-mono text-xs text-text-primary font-medium">
         {num.toLocaleString()}
       </span>
-      <span className="text-[10px] text-text-tertiary">counter</span>
+      <button
+        onClick={handleCopy}
+        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity flex-shrink-0"
+        title="Copy counter"
+      >
+        <Copy className="w-3 h-3 text-text-tertiary" />
+      </button>
     </div>
   );
 }
@@ -734,17 +861,15 @@ interface TemporalValueProps {
 function TemporalValue({ value, typeInfo }: TemporalValueProps) {
   const strValue = String(value);
   let displayValue = strValue;
-  let icon = Calendar;
 
-  if (typeInfo.baseType === "time") {
-    icon = Clock;
-  } else if (typeInfo.baseType === "timestamp") {
-    icon = Clock;
-    // Try to format timestamp nicely
+  // Try to format timestamp/date nicely
+  if (typeInfo.baseType === "timestamp" || typeInfo.baseType === "date") {
     try {
       const date = new Date(strValue);
       if (!isNaN(date.getTime())) {
-        displayValue = date.toLocaleString();
+        displayValue = typeInfo.baseType === "date"
+          ? date.toLocaleDateString()
+          : date.toLocaleString();
       }
     } catch {
       // Keep original
@@ -756,15 +881,12 @@ function TemporalValue({ value, typeInfo }: TemporalValueProps) {
     toast.success("Value copied to clipboard");
   }, [strValue]);
 
-  const Icon = icon;
-
   return (
-    <div className="flex items-center gap-1.5 group">
-      <Icon className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
-      <span className="text-xs text-text-primary">{displayValue}</span>
+    <div className="flex items-center gap-1.5 group min-w-0">
+      <span className="text-xs text-text-primary truncate" title={strValue}>{displayValue}</span>
       <button
         onClick={handleCopy}
-        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity"
+        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity flex-shrink-0"
         title="Copy value"
       >
         <Copy className="w-3 h-3 text-text-tertiary" />
@@ -782,9 +904,8 @@ interface NumericValueProps {
   typeInfo: TypeInfo;
 }
 
-function NumericValue({ value, typeInfo }: NumericValueProps) {
+function NumericValue({ value }: NumericValueProps) {
   const strValue = String(value);
-  const isLargeNumber = typeInfo.baseType === "bigint" || typeInfo.baseType === "varint";
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(strValue);
@@ -792,19 +913,11 @@ function NumericValue({ value, typeInfo }: NumericValueProps) {
   }, [strValue]);
 
   return (
-    <div className="flex items-center gap-1.5 group">
-      <span className={cn(
-        "font-mono text-xs",
-        isLargeNumber ? "text-emerald-500" : "text-text-primary"
-      )}>
-        {strValue}
-      </span>
-      {isLargeNumber && (
-        <span className="text-[10px] text-text-tertiary">{typeInfo.baseType}</span>
-      )}
+    <div className="flex items-center gap-1.5 group min-w-0">
+      <span className="font-mono text-xs text-text-primary truncate">{strValue}</span>
       <button
         onClick={handleCopy}
-        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity"
+        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-bg-hover rounded transition-opacity flex-shrink-0"
         title="Copy number"
       >
         <Copy className="w-3 h-3 text-text-tertiary" />
@@ -822,14 +935,23 @@ interface BooleanValueProps {
 }
 
 function BooleanValue({ value }: BooleanValueProps) {
-  const boolVal = Boolean(value);
+  // Handle various boolean representations
+  let boolVal = false;
+  if (typeof value === "boolean") {
+    boolVal = value;
+  } else if (typeof value === "string") {
+    const lower = value.toLowerCase().trim();
+    boolVal = lower === "true" || lower === "1" || lower === "yes";
+  } else if (typeof value === "number") {
+    boolVal = value !== 0;
+  } else {
+    boolVal = Boolean(value);
+  }
 
   return (
     <span className={cn(
-      "px-1.5 py-0.5 rounded text-xs font-medium",
-      boolVal
-        ? "bg-green-500/15 text-green-500"
-        : "bg-red-500/15 text-red-500"
+      "text-xs font-medium",
+      boolVal ? "text-green-500" : "text-red-500"
     )}>
       {boolVal ? "true" : "false"}
     </span>

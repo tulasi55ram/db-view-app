@@ -18,7 +18,6 @@ import { SavedViewsPanel } from "./SavedViewsPanel";
 import { DateTimePopover } from "../editors/DateTimePopover";
 import { JSONEditor } from "../editors/JSONEditor";
 import { CassandraValueCell } from "./CassandraValueCell";
-import { CassandraCollectionEditor } from "./CassandraCollectionEditor";
 import { formatAsCSV, formatAsJSON, formatAsSQL } from "@/utils/exportFormatters";
 import { parseCSV, parseJSON } from "@/utils/importParsers";
 
@@ -421,12 +420,12 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
   const isCassandra = connectionKey.startsWith("cassandra:");
   const isDocumentDB = isMongoDB || isElasticsearch;
 
-  // Cassandra collection editor state
+  // Cassandra collection editor state (uses JSONEditor)
   const [cassandraEditor, setCassandraEditor] = useState<{
     open: boolean;
     rowIndex: number;
     column: string;
-    value: unknown;
+    value: string;  // JSON string
     columnType: string;
   } | null>(null);
 
@@ -459,11 +458,26 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                     !type.includes("timestamp") && !type.includes("date");
 
       if (isCassandraCollection || isUDT) {
+        // Convert value to JSON string for the JSON editor
+        let jsonValue: string;
+        if (currentValue === null || currentValue === undefined) {
+          jsonValue = "null";
+        } else if (typeof currentValue === "string") {
+          // Try to parse and re-stringify for pretty printing
+          try {
+            const parsed = JSON.parse(currentValue);
+            jsonValue = JSON.stringify(parsed, null, 2);
+          } catch {
+            jsonValue = currentValue;
+          }
+        } else {
+          jsonValue = JSON.stringify(currentValue, null, 2);
+        }
         setCassandraEditor({
           open: true,
           rowIndex,
           column,
-          value: currentValue,
+          value: jsonValue,
           columnType: colMetadata?.type || "unknown",
         });
         return;
@@ -668,8 +682,8 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     setJsonEditor(null);
   }, [jsonEditor, handleCellUpdate, api, isDocumentDB, rows, connectionKey, schema, table, loadData]);
 
-  // Handle Cassandra collection editor save
-  const handleCassandraEditorSave = useCallback(async (newValue: unknown) => {
+  // Handle Cassandra collection editor save (receives JSON string from JSONEditor)
+  const handleCassandraEditorSave = useCallback(async (jsonValue: string) => {
     if (!cassandraEditor || !api) return;
     const { rowIndex, column } = cassandraEditor;
 
@@ -681,6 +695,19 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     }
 
     try {
+      // Parse the JSON string to get the actual value
+      let parsedValue: unknown;
+      if (jsonValue.toUpperCase() === "NULL") {
+        parsedValue = null;
+      } else {
+        try {
+          parsedValue = JSON.parse(jsonValue);
+        } catch {
+          toast.error("Invalid JSON");
+          return;
+        }
+      }
+
       const primaryKey = getPrimaryKeyValue(row);
 
       // Update the cell with the new collection/UDT value
@@ -690,7 +717,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
         table,
         primaryKey,
         column,
-        value: newValue,
+        value: parsedValue,
       });
 
       await loadData();
@@ -1966,13 +1993,50 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                                 rows={1}
                                 className="w-full px-2 py-1 bg-bg-primary border border-border rounded text-text-primary font-mono text-xs focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 resize-none"
                               />
+                            ) : type.includes("date") || type.includes("time") || type.includes("timestamp") ? (
+                              <div className="flex items-center gap-1 w-full">
+                                <input
+                                  type="text"
+                                  value={insertingRow[column] || ""}
+                                  onChange={(e) => handleInsertingRowChange(column, e.target.value)}
+                                  disabled={isNull}
+                                  placeholder={
+                                    type === "date"
+                                      ? "yyyy-MM-dd"
+                                      : type.includes("time") && !type.includes("timestamp")
+                                      ? "HH:mm:ss"
+                                      : "yyyy-MM-dd HH:mm:ss"
+                                  }
+                                  className={cn(
+                                    "flex-1 px-2 py-1 bg-bg-primary border border-border rounded text-text-primary text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50",
+                                    isRequired && "border-orange-500"
+                                  )}
+                                />
+                                <button
+                                  onClick={() => {
+                                    const now = new Date();
+                                    let formatted: string;
+                                    if (type === "date") {
+                                      formatted = now.toISOString().split("T")[0];
+                                    } else if (type.includes("time") && !type.includes("timestamp")) {
+                                      formatted = now.toTimeString().split(" ")[0];
+                                    } else {
+                                      formatted = now.toISOString().replace("Z", "").split(".")[0];
+                                    }
+                                    handleInsertingRowChange(column, formatted);
+                                  }}
+                                  disabled={isNull}
+                                  className="px-1.5 py-1 bg-accent/10 hover:bg-accent/20 text-accent text-[10px] rounded transition-colors disabled:opacity-50"
+                                  title="Set to current time"
+                                >
+                                  Now
+                                </button>
+                              </div>
                             ) : (
                               <input
                                 type={
                                   type.includes("int") || type.includes("float") || type.includes("decimal") || type.includes("numeric")
                                     ? "number"
-                                    : type.includes("date") || type.includes("time")
-                                    ? "datetime-local"
                                     : "text"
                                 }
                                 value={insertingRow[column] || ""}
@@ -2375,15 +2439,15 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
         />
       )}
 
-      {/* Cassandra Collection/UDT Editor */}
+      {/* Cassandra Collection/UDT Editor - uses JSONEditor since collections are JSON */}
       {cassandraEditor && (
-        <CassandraCollectionEditor
+        <JSONEditor
           open={cassandraEditor.open}
           onClose={() => setCassandraEditor(null)}
           value={cassandraEditor.value}
+          onChange={handleCassandraEditorSave}
           columnName={cassandraEditor.column}
           columnType={cassandraEditor.columnType}
-          onChange={handleCassandraEditorSave}
         />
       )}
     </div>

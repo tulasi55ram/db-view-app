@@ -821,6 +821,83 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
     }));
   }
 
+  /**
+   * Create an index on a collection
+   */
+  async createIndex(
+    schema: string,
+    table: string,
+    keys: Record<string, 1 | -1>,
+    options: { unique?: boolean; sparse?: boolean; background?: boolean; name?: string } = {}
+  ): Promise<string> {
+    if (!this.db) {
+      throw new Error('Not connected to MongoDB database');
+    }
+
+    if (this.connectionConfig.readOnly) {
+      throw new Error('Cannot create index: Connection is in read-only mode');
+    }
+
+    const collection = this.db.collection(table);
+    const indexName = await collection.createIndex(keys, {
+      unique: options.unique,
+      sparse: options.sparse,
+      background: options.background,
+      name: options.name,
+    });
+
+    return indexName;
+  }
+
+  /**
+   * Drop an index from a collection
+   */
+  async dropIndex(schema: string, table: string, indexName: string): Promise<void> {
+    if (!this.db) {
+      throw new Error('Not connected to MongoDB database');
+    }
+
+    if (this.connectionConfig.readOnly) {
+      throw new Error('Cannot drop index: Connection is in read-only mode');
+    }
+
+    // Cannot drop the _id index
+    if (indexName === '_id_') {
+      throw new Error('Cannot drop the _id index');
+    }
+
+    const collection = this.db.collection(table);
+    await collection.dropIndex(indexName);
+  }
+
+  /**
+   * Run an aggregation pipeline on a collection
+   */
+  async runAggregation(
+    schema: string,
+    table: string,
+    pipeline: Document[],
+    options: { maxTimeMS?: number; allowDiskUse?: boolean } = {}
+  ): Promise<QueryResultSet> {
+    if (!this.db) {
+      throw new Error('Not connected to MongoDB database');
+    }
+
+    const collection = this.db.collection(table);
+    const result = await collection.aggregate(pipeline, {
+      maxTimeMS: options.maxTimeMS ?? this.getQueryTimeoutMs(),
+      allowDiskUse: options.allowDiskUse ?? true,
+    }).toArray();
+
+    // Convert documents to rows
+    const rows = result.map((doc) => this.convertDocument(doc));
+
+    // Get columns from first row or empty
+    const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+
+    return { columns, rows };
+  }
+
   async getRunningQueries(): Promise<RunningQuery[]> {
     if (!this.client) {
       throw new Error('Not connected to MongoDB');

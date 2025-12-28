@@ -68,6 +68,11 @@ export interface ElectronAPI {
   exportData(params: ExportDataParams): Promise<string | null>;
   importData(params: ImportDataParams): Promise<ImportResult>;
 
+  // MongoDB-specific operations
+  createIndex?(params: CreateIndexParams): Promise<string>;
+  dropIndex?(params: DropIndexParams): Promise<void>;
+  runAggregation?(params: RunAggregationParams): Promise<QueryResult>;
+
   // Clipboard
   copyToClipboard(text: string): Promise<void>;
   readFromClipboard(): Promise<string>;
@@ -223,6 +228,38 @@ export interface AutocompleteData {
 export interface ImportResult {
   insertedCount: number;
   errors?: string[];
+}
+
+// MongoDB-specific operation params
+export interface CreateIndexParams {
+  connectionKey: string;
+  schema: string;
+  table: string;
+  keys: Record<string, 1 | -1>;
+  options?: {
+    unique?: boolean;
+    sparse?: boolean;
+    background?: boolean;
+    name?: string;
+  };
+}
+
+export interface DropIndexParams {
+  connectionKey: string;
+  schema: string;
+  table: string;
+  indexName: string;
+}
+
+export interface RunAggregationParams {
+  connectionKey: string;
+  schema: string;
+  table: string;
+  pipeline: Record<string, unknown>[];
+  options?: {
+    maxTimeMS?: number;
+    allowDiskUse?: boolean;
+  };
 }
 
 export interface SaveDialogOptions {

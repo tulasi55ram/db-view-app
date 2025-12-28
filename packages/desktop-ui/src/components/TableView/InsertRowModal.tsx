@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X } from "lucide-react";
+import { X, Clock } from "lucide-react";
 import type { ColumnMetadata } from "@dbview/types";
 
 interface InsertRowModalProps {
@@ -8,6 +8,21 @@ interface InsertRowModalProps {
   onInsert: (values: Record<string, unknown>) => Promise<void>;
   columns: ColumnMetadata[];
   tableName: string;
+}
+
+// Helper to get current timestamp in various formats
+function getCurrentTimestamp(type: string): string {
+  const now = new Date();
+  const lowerType = type.toLowerCase();
+
+  if (lowerType === "date") {
+    return now.toISOString().split("T")[0];
+  }
+  if (lowerType.includes("time") && !lowerType.includes("timestamp")) {
+    return now.toTimeString().split(" ")[0];
+  }
+  // Default: full timestamp
+  return now.toISOString().replace("Z", "").split(".")[0];
 }
 
 export function InsertRowModal({ open, onClose, onInsert, columns, tableName }: InsertRowModalProps) {
@@ -166,6 +181,33 @@ export function InsertRowModal({ open, onClose, onInsert, columns, tableName }: 
                       rows={3}
                       className="w-full px-2 py-1.5 bg-bg-secondary border border-border rounded text-text-primary font-mono text-xs focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50"
                     />
+                  ) : col.type.toLowerCase().includes("date") || col.type.toLowerCase().includes("time") || col.type.toLowerCase().includes("timestamp") ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={values[col.name] || ""}
+                        onChange={(e) => setValues({ ...values, [col.name]: e.target.value })}
+                        disabled={isNull || inserting}
+                        placeholder={
+                          col.type.toLowerCase() === "date"
+                            ? "yyyy-MM-dd"
+                            : col.type.toLowerCase().includes("time") && !col.type.toLowerCase().includes("timestamp")
+                            ? "HH:mm:ss"
+                            : "yyyy-MM-dd HH:mm:ss"
+                        }
+                        className="flex-1 px-2 py-1.5 bg-bg-secondary border border-border rounded text-text-primary text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setValues({ ...values, [col.name]: getCurrentTimestamp(col.type) })}
+                        disabled={isNull || inserting}
+                        className="px-2 py-1.5 bg-bg-tertiary hover:bg-bg-hover border border-border rounded text-text-secondary text-xs transition-colors disabled:opacity-50 flex items-center gap-1"
+                        title="Set to current time"
+                      >
+                        <Clock className="w-3 h-3" />
+                        Now
+                      </button>
+                    </div>
                   ) : (
                     <input
                       type={
@@ -174,8 +216,6 @@ export function InsertRowModal({ open, onClose, onInsert, columns, tableName }: 
                         col.type.toLowerCase().includes("decimal") ||
                         col.type.toLowerCase().includes("numeric")
                           ? "number"
-                          : col.type.toLowerCase().includes("date") || col.type.toLowerCase().includes("time")
-                          ? "datetime-local"
                           : "text"
                       }
                       value={values[col.name] || ""}
