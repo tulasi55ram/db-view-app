@@ -2,10 +2,13 @@ import type { DatabaseConnectionConfig } from "@dbview/types";
 import type { DatabaseAdapter } from "./DatabaseAdapter";
 import { PostgresAdapter } from "./PostgresAdapter";
 import { MySQLAdapter } from "./MySQLAdapter";
+import { MariaDBAdapter } from "./MariaDBAdapter";
 import { SQLServerAdapter } from "./SQLServerAdapter";
 import { SQLiteAdapter } from "./SQLiteAdapter";
 import { MongoDBAdapter } from "./MongoDBAdapter";
 import { RedisAdapter } from "./RedisAdapter";
+import { ElasticsearchAdapter } from "./ElasticsearchAdapter";
+import { CassandraAdapter } from "./CassandraAdapter";
 
 /**
  * Factory for creating database adapters based on connection type
@@ -29,6 +32,9 @@ export class DatabaseAdapterFactory {
       case 'mysql':
         return new MySQLAdapter(config);
 
+      case 'mariadb':
+        return new MariaDBAdapter(config);
+
       case 'sqlserver':
         return new SQLServerAdapter(config);
 
@@ -40,6 +46,12 @@ export class DatabaseAdapterFactory {
 
       case 'redis':
         return new RedisAdapter(config);
+
+      case 'elasticsearch':
+        return new ElasticsearchAdapter(config);
+
+      case 'cassandra':
+        return new CassandraAdapter(config);
 
       default:
         // TypeScript exhaustiveness check
@@ -55,7 +67,7 @@ export class DatabaseAdapterFactory {
    * @returns true if supported, false otherwise
    */
   static isSupported(dbType: string): boolean {
-    const supportedTypes = ['postgres', 'mysql', 'sqlserver', 'sqlite', 'mongodb', 'redis'];
+    const supportedTypes = ['postgres', 'mysql', 'mariadb', 'sqlserver', 'sqlite', 'mongodb', 'redis', 'elasticsearch', 'cassandra'];
     return supportedTypes.includes(dbType);
   }
 
@@ -65,7 +77,7 @@ export class DatabaseAdapterFactory {
    * @returns Array of supported database type strings
    */
   static getSupportedTypes(): string[] {
-    return ['postgres', 'mysql', 'sqlserver', 'sqlite', 'mongodb', 'redis'];
+    return ['postgres', 'mysql', 'mariadb', 'sqlserver', 'sqlite', 'mongodb', 'redis', 'elasticsearch', 'cassandra'];
   }
 
   /**
@@ -74,6 +86,6 @@ export class DatabaseAdapterFactory {
    * @returns Array of implemented database type strings
    */
   static getImplementedTypes(): string[] {
-    return ['postgres', 'mysql', 'sqlserver', 'sqlite', 'mongodb', 'redis'];
+    return ['postgres', 'mysql', 'mariadb', 'sqlserver', 'sqlite', 'mongodb', 'redis', 'elasticsearch', 'cassandra'];
   }
 }

@@ -100,8 +100,12 @@ export class ConnectionManager {
    * Get a full connection config with password from secure storage
    */
   async getFullConnectionConfig(storedConfig: StoredConnectionConfig): Promise<DatabaseConnectionConfig> {
-    // For databases that need passwords
-    if ("host" in storedConfig && storedConfig.name) {
+    // For databases that need passwords (including Elasticsearch which uses node instead of host)
+    const needsPassword = "host" in storedConfig ||
+                          storedConfig.dbType === "elasticsearch" ||
+                          storedConfig.dbType === "mongodb";
+
+    if (needsPassword && storedConfig.name) {
       const password = await passwordStore.getPassword(storedConfig.name);
       return {
         ...storedConfig,

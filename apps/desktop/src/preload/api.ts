@@ -30,6 +30,8 @@ export interface ColumnMetadata {
   numericScale?: number;
   enumValues?: string[];
   editable: boolean;
+  /** For Cassandra: 'partition' | 'clustering' | 'regular' */
+  keyKind?: 'partition' | 'clustering' | 'regular';
 }
 
 // Filter operator type matching @dbview/core

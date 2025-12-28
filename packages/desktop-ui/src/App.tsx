@@ -333,11 +333,19 @@ function AppContent() {
         return null;
       }
 
-      // Hide inactive tabs but keep them mounted
-      const style = {
-        display: isActive ? 'flex' : 'none',
-        flex: 1,
+      // Use absolute positioning to layer tabs - active tab on top
+      // This prevents virtualizer issues that occur with display:none
+      const style: React.CSSProperties = {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        display: 'flex',
         overflow: 'hidden',
+        visibility: isActive ? 'visible' : 'hidden',
+        pointerEvents: isActive ? 'auto' : 'none',
+        zIndex: isActive ? 1 : 0,
       };
 
       if (tab.type === "table" && tab.schema !== undefined && tab.table && tab.connectionKey) {
@@ -480,7 +488,7 @@ function AppContent() {
         )}
 
         {/* Content Area */}
-        <div className="flex-1 flex overflow-hidden bg-bg-primary">
+        <div className="flex-1 flex overflow-hidden bg-bg-primary relative">
           {renderContent()}
         </div>
       </AppShell>

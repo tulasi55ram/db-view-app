@@ -131,9 +131,10 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-// Helper to format row count - uses "documents" for MongoDB, "rows" for other DBs
+// Helper to format row count - uses "docs" for MongoDB/Elasticsearch, "rows" for SQL DBs
 function formatRowCount(count: number, dbType?: string): string {
-  const unit = dbType === "mongodb" ? "docs" : "rows";
+  const isDocumentDB = dbType === "mongodb" || dbType === "elasticsearch";
+  const unit = isDocumentDB ? "docs" : "rows";
   if (count < 1000) return `${count} ${unit}`;
   if (count < 1000000) return `${(count / 1000).toFixed(1)}K ${unit}`;
   return `${(count / 1000000).toFixed(1)}M ${unit}`;
@@ -286,6 +287,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
       // Use appropriate terminology and show only relevant items based on database type
       const isMongoDB = dbType === "mongodb";
       const isRedis = dbType === "redis";
+      const isElasticsearch = dbType === "elasticsearch";
 
       // For MongoDB, only show Collections (and optionally Views for aggregation pipelines)
       if (isMongoDB) {
@@ -299,11 +301,41 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
         return containers;
       }
 
+      // For Elasticsearch, only show Indices
+      if (isElasticsearch) {
+        const containers: TreeNode[] = [
+          { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Indices", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, children: [] },
+        ];
+        return containers;
+      }
+
       // For Redis, only show Keys
       if (isRedis) {
         const containers: TreeNode[] = [
           { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Keys", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, children: [] },
         ];
+        return containers;
+      }
+
+      // For Cassandra, show Tables, Materialized Views, Functions, and User-Defined Types
+      // Cassandra doesn't have stored procedures or regular views (only materialized views)
+      const isCassandra = dbType === "cassandra";
+      if (isCassandra) {
+        const containers: TreeNode[] = [
+          { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Tables", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, children: [] },
+        ];
+        // Only show Materialized Views if there are any
+        if (counts.materializedViews > 0) {
+          containers.push({ id: `${connectionKey}:${schema}:materializedViews`, type: "objectTypeContainer", name: "Materialized Views", objectType: "materializedViews", count: counts.materializedViews, connectionKey, connectionName, schema, dbType, children: [] });
+        }
+        // Only show Functions (UDFs) if there are any
+        if (counts.functions > 0) {
+          containers.push({ id: `${connectionKey}:${schema}:functions`, type: "objectTypeContainer", name: "Functions", objectType: "functions", count: counts.functions, connectionKey, connectionName, schema, dbType, children: [] });
+        }
+        // Only show User-Defined Types if there are any
+        if (counts.types > 0) {
+          containers.push({ id: `${connectionKey}:${schema}:types`, type: "objectTypeContainer", name: "User-Defined Types", objectType: "types", count: counts.types, connectionKey, connectionName, schema, dbType, children: [] });
+        }
         return containers;
       }
 
@@ -473,11 +505,12 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
             await api.connectToDatabase(node.connectionKey);
 
             // Check if this is a NoSQL database that doesn't use schemas
-            const noSchemaDatabases = ["mongodb", "redis"];
+            // Cassandra uses keyspaces instead of schemas, so we treat it like other NoSQL DBs
+            const noSchemaDatabases = ["mongodb", "redis", "elasticsearch", "cassandra"];
             const isNoSchemaDb = noSchemaDatabases.includes(node.dbType || "");
 
             if (isNoSchemaDb) {
-              // For MongoDB/Redis, load object type containers directly (no schema level)
+              // For MongoDB/Redis/Elasticsearch/Cassandra, load object type containers directly (no schema level)
               // Use empty string as the "schema" since these DBs don't have schemas
               const containers = await loadObjectTypeContainers(node.connectionKey, node.connectionName, "", node.dbType);
               setTreeData((prev) => updateTreeNode(prev, node.id, { children: containers, status: "connected" }));
@@ -911,7 +944,7 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
                   onSelect={() => handleTableClick(node)}
                 >
                   <Table2 className="w-3.5 h-3.5" />
-                  {node.dbType === "mongodb" ? "Open Collection" : "Open Table"}
+                  {node.dbType === "mongodb" ? "Open Collection" : node.dbType === "elasticsearch" ? "Open Index" : "Open Table"}
                 </ContextMenu.Item>
                 <ContextMenu.Item
                   className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"

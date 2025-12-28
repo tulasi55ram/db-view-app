@@ -19,6 +19,13 @@ import type {
   FilterOptions,
   DatabaseCapabilities,
   DatabaseHierarchy,
+  CursorPosition,
+  CursorResultSet,
+  BulkOperationResult,
+  BulkInsertOptions,
+  BulkUpdateItem,
+  BulkUpdateOptions,
+  BulkDeleteOptions,
 } from './DatabaseAdapter';
 
 /**
@@ -120,10 +127,13 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
       this.connectionStatus = 'connecting';
       this.emit('statusChange', { status: 'connecting' });
 
+      // Get pool configuration from connection config or use defaults
+      const poolConfig = (this.connectionConfig as any).pool || {};
+
       this.client = new MongoClient(this.buildConnectionString(), {
-        maxPoolSize: 10,
-        minPoolSize: 0,
-        serverSelectionTimeoutMS: 10000,
+        maxPoolSize: poolConfig.maxConnections ?? 20, // Increased from 10 to 20
+        minPoolSize: poolConfig.minConnections ?? 0,
+        serverSelectionTimeoutMS: poolConfig.connectionTimeoutMs ?? 10000,
         socketTimeoutMS: 60000,
       });
 
@@ -354,7 +364,7 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
     const query = this.buildMongoQuery(filters, filterLogic);
 
     const documents = await collection
-      .find(query)
+      .find(query, { maxTimeMS: this.getQueryTimeoutMs() })
       .skip(offset)
       .limit(limit)
       .toArray();
@@ -378,7 +388,7 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
     const collection = this.db.collection(table);
     const query = this.buildMongoQuery(filters, filterLogic);
 
-    return await collection.countDocuments(query);
+    return await collection.countDocuments(query, { maxTimeMS: this.getQueryTimeoutMs() });
   }
 
   async getTableStatistics(schema: string, table: string): Promise<TableStatistics> {
@@ -468,20 +478,143 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Cannot delete: Connection is in read-only mode');
     }
 
-    const collection = this.db.collection(table);
-
-    // Delete multiple rows by primary keys
-    let totalDeleted = 0;
-    for (const primaryKey of primaryKeys) {
-      const filter = this.convertWhereConditions(primaryKey);
-      const result = await collection.deleteOne(filter);
-      totalDeleted += result.deletedCount;
+    if (primaryKeys.length === 0) {
+      return 0;
     }
 
-    return totalDeleted;
+    const collection = this.db.collection(table);
+
+    // Use deleteMany with $or for efficiency instead of N individual deletes
+    const orConditions = primaryKeys.map(pk => this.convertWhereConditions(pk));
+    const result = await collection.deleteMany({ $or: orConditions });
+
+    return result.deletedCount;
   }
 
-  async bulkDeleteRows(schema: string, table: string, whereConditions: Record<string, unknown>[]): Promise<number> {
+  // ==================== Bulk Operations (for large datasets) ====================
+
+  async bulkInsert(
+    schema: string,
+    table: string,
+    rows: Record<string, unknown>[],
+    options: BulkInsertOptions = {}
+  ): Promise<BulkOperationResult> {
+    if (!this.db) {
+      throw new Error('Not connected to MongoDB database');
+    }
+
+    if (this.connectionConfig.readOnly) {
+      throw new Error('Cannot insert: Connection is in read-only mode');
+    }
+
+    if (rows.length === 0) {
+      return { successCount: 0, failureCount: 0 };
+    }
+
+    const { batchSize = 1000, onProgress, skipErrors = false } = options;
+    const collection = this.db.collection(table);
+
+    let successCount = 0;
+    let failureCount = 0;
+    const errors: Array<{ index: number; error: string }> = [];
+    const insertedIds: unknown[] = [];
+
+    for (let i = 0; i < rows.length; i += batchSize) {
+      const batch = rows.slice(i, Math.min(i + batchSize, rows.length));
+
+      try {
+        // Clean up _id if empty/null
+        const cleanedBatch = batch.map(row => {
+          const cleaned = { ...row };
+          if (cleaned._id === null || cleaned._id === '') {
+            delete cleaned._id;
+          }
+          return cleaned;
+        });
+
+        const result = await collection.insertMany(cleanedBatch, { ordered: !skipErrors });
+        successCount += result.insertedCount;
+        insertedIds.push(...Object.values(result.insertedIds).map(id => id.toString()));
+        onProgress?.(successCount, rows.length);
+      } catch (error: any) {
+        if (skipErrors) {
+          // For unordered inserts, some may have succeeded
+          if (error.insertedCount) {
+            successCount += error.insertedCount;
+          }
+          failureCount += batch.length - (error.insertedCount || 0);
+          errors.push({ index: i, error: error instanceof Error ? error.message : String(error) });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    return { successCount, failureCount, errors: errors.length > 0 ? errors : undefined, insertedIds };
+  }
+
+  async bulkUpdate(
+    schema: string,
+    table: string,
+    updates: BulkUpdateItem[],
+    options: BulkUpdateOptions = {}
+  ): Promise<BulkOperationResult> {
+    if (!this.db) {
+      throw new Error('Not connected to MongoDB database');
+    }
+
+    if (this.connectionConfig.readOnly) {
+      throw new Error('Cannot update: Connection is in read-only mode');
+    }
+
+    if (updates.length === 0) {
+      return { successCount: 0, failureCount: 0 };
+    }
+
+    const { batchSize = 500, onProgress, skipErrors = false } = options;
+    const collection = this.db.collection(table);
+
+    let successCount = 0;
+    let failureCount = 0;
+    const errors: Array<{ index: number; error: string }> = [];
+
+    for (let i = 0; i < updates.length; i += batchSize) {
+      const batch = updates.slice(i, Math.min(i + batchSize, updates.length));
+
+      try {
+        // Use bulkWrite for efficiency
+        const bulkOps = batch.map(update => ({
+          updateOne: {
+            filter: this.convertWhereConditions(update.primaryKey),
+            update: { $set: update.values }
+          }
+        }));
+
+        const result = await collection.bulkWrite(bulkOps, { ordered: !skipErrors });
+        successCount += result.modifiedCount;
+        onProgress?.(successCount, updates.length);
+      } catch (error: any) {
+        if (skipErrors) {
+          if (error.result?.nModified) {
+            successCount += error.result.nModified;
+          }
+          failureCount += batch.length - (error.result?.nModified || 0);
+          errors.push({ index: i, error: error instanceof Error ? error.message : String(error) });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    return { successCount, failureCount, errors: errors.length > 0 ? errors : undefined };
+  }
+
+  async bulkDelete(
+    schema: string,
+    table: string,
+    primaryKeys: Record<string, unknown>[],
+    options: BulkDeleteOptions = {}
+  ): Promise<BulkOperationResult> {
     if (!this.db) {
       throw new Error('Not connected to MongoDB database');
     }
@@ -490,17 +623,115 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Cannot delete: Connection is in read-only mode');
     }
 
-    const collection = this.db.collection(table);
-
-    let totalDeleted = 0;
-
-    for (const condition of whereConditions) {
-      const filter = this.convertWhereConditions(condition);
-      const result = await collection.deleteOne(filter);
-      totalDeleted += result.deletedCount;
+    if (primaryKeys.length === 0) {
+      return { successCount: 0, failureCount: 0 };
     }
 
-    return totalDeleted;
+    const { batchSize = 1000, onProgress } = options;
+    const collection = this.db.collection(table);
+
+    let successCount = 0;
+    const errors: Array<{ index: number; error: string }> = [];
+
+    for (let i = 0; i < primaryKeys.length; i += batchSize) {
+      const batch = primaryKeys.slice(i, Math.min(i + batchSize, primaryKeys.length));
+
+      try {
+        // Use deleteMany with $or for batch efficiency
+        const orConditions = batch.map(pk => this.convertWhereConditions(pk));
+        const result = await collection.deleteMany({ $or: orConditions });
+        successCount += result.deletedCount;
+        onProgress?.(successCount, primaryKeys.length);
+      } catch (error) {
+        errors.push({ index: i, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    return { successCount, failureCount: primaryKeys.length - successCount, errors: errors.length > 0 ? errors : undefined };
+  }
+
+  async fetchTableRowsWithCursor(
+    schema: string,
+    table: string,
+    options: FetchOptions = {}
+  ): Promise<CursorResultSet> {
+    if (!this.db) {
+      throw new Error('Not connected to MongoDB database');
+    }
+
+    const { limit = 100, filters = [], filterLogic = 'AND', sortColumn, sortDirection = 'ASC', cursor } = options;
+    const collection = this.db.collection(table);
+
+    // Default to _id for cursor if no sort column specified
+    const cursorColumn = sortColumn || '_id';
+    const sortDir = sortDirection === 'ASC' ? 1 : -1;
+
+    const query = this.buildMongoQuery(filters, filterLogic);
+
+    // Add cursor condition
+    if (cursor && cursor.values[cursorColumn] !== undefined) {
+      const cursorValue = this.convertValue(cursorColumn, cursor.values[cursorColumn]);
+      const operator = cursor.direction === 'forward'
+        ? (sortDirection === 'ASC' ? '$gt' : '$lt')
+        : (sortDirection === 'ASC' ? '$lt' : '$gt');
+
+      if (Object.keys(query).length === 0) {
+        query[cursorColumn] = { [operator]: cursorValue };
+      } else {
+        // Combine with existing query
+        if (query.$and) {
+          query.$and.push({ [cursorColumn]: { [operator]: cursorValue } });
+        } else if (query.$or) {
+          query.$and = [{ $or: query.$or }, { [cursorColumn]: { [operator]: cursorValue } }];
+          delete query.$or;
+        } else {
+          const existingConditions = { ...query };
+          for (const key of Object.keys(existingConditions)) {
+            delete query[key];
+          }
+          query.$and = [existingConditions, { [cursorColumn]: { [operator]: cursorValue } }];
+        }
+      }
+    }
+
+    const fetchLimit = limit + 1;
+    const actualSortDir = cursor?.direction === 'backward' ? -sortDir : sortDir;
+
+    const documents = await collection
+      .find(query, { maxTimeMS: this.getQueryTimeoutMs() })
+      .sort({ [cursorColumn]: actualSortDir } as Record<string, 1 | -1>)
+      .limit(fetchLimit)
+      .toArray();
+
+    let resultRows = documents.map(doc => this.convertDocument(doc));
+
+    const hasMore = resultRows.length > limit;
+    if (hasMore) resultRows = resultRows.slice(0, limit);
+    if (cursor?.direction === 'backward') resultRows.reverse();
+
+    let nextCursor: CursorPosition | undefined;
+    let prevCursor: CursorPosition | undefined;
+
+    if (resultRows.length > 0) {
+      const lastRow = resultRows[resultRows.length - 1];
+      const firstRow = resultRows[0];
+
+      if (hasMore || cursor) {
+        nextCursor = { values: { [cursorColumn]: lastRow[cursorColumn] }, direction: 'forward' };
+      }
+      if (cursor) {
+        prevCursor = { values: { [cursorColumn]: firstRow[cursorColumn] }, direction: 'backward' };
+      }
+    }
+
+    return {
+      columns: resultRows.length > 0 ? Object.keys(resultRows[0]) : [],
+      rows: resultRows,
+      hasNextPage: hasMore,
+      hasPrevPage: !!cursor,
+      nextCursor,
+      prevCursor
+    };
   }
 
   // ==================== Filtering ====================
@@ -633,6 +864,22 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Helper Methods ====================
 
+  /**
+   * Escape special regex characters to prevent ReDoS attacks
+   * and ensure literal string matching
+   */
+  private escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
+   * Get the query timeout in milliseconds
+   * Used to prevent long-running queries from blocking the database
+   */
+  private getQueryTimeoutMs(): number {
+    return (this.connectionConfig as any).queryTimeoutMs ?? 30000; // Default 30 seconds
+  }
+
   quoteIdentifier(identifier: string): string {
     // MongoDB doesn't require quoting, but we use backticks for consistency
     return `\`${identifier}\``;
@@ -676,16 +923,17 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
           conditions.push({ [columnName]: { $ne: this.convertValue(columnName, value) } });
           break;
         case 'contains':
-          conditions.push({ [columnName]: { $regex: String(value), $options: 'i' } });
+          // Escape regex special chars to prevent ReDoS and ensure literal matching
+          conditions.push({ [columnName]: { $regex: this.escapeRegex(String(value)), $options: 'i' } });
           break;
         case 'not_contains':
-          conditions.push({ [columnName]: { $not: { $regex: String(value), $options: 'i' } } });
+          conditions.push({ [columnName]: { $not: { $regex: this.escapeRegex(String(value)), $options: 'i' } } });
           break;
         case 'starts_with':
-          conditions.push({ [columnName]: { $regex: `^${String(value)}`, $options: 'i' } });
+          conditions.push({ [columnName]: { $regex: `^${this.escapeRegex(String(value))}`, $options: 'i' } });
           break;
         case 'ends_with':
-          conditions.push({ [columnName]: { $regex: `${String(value)}$`, $options: 'i' } });
+          conditions.push({ [columnName]: { $regex: `${this.escapeRegex(String(value))}$`, $options: 'i' } });
           break;
         case 'greater_than':
           conditions.push({ [columnName]: { $gt: value } });

@@ -12,7 +12,7 @@ interface AddConnectionDialogProps {
   onSave: () => void;
 }
 
-type DatabaseType = "postgres" | "mysql" | "sqlserver" | "sqlite" | "mongodb" | "redis";
+type DatabaseType = "postgres" | "mysql" | "mariadb" | "sqlserver" | "sqlite" | "mongodb" | "redis" | "cassandra";
 
 interface DatabaseTypeInfo {
   value: DatabaseType;
@@ -24,10 +24,12 @@ interface DatabaseTypeInfo {
 const DATABASE_TYPES: DatabaseTypeInfo[] = [
   { value: "postgres", label: "PostgreSQL", description: "Advanced open-source database", color: "#336791" },
   { value: "mysql", label: "MySQL", description: "Popular relational database", color: "#00758F" },
+  { value: "mariadb", label: "MariaDB", description: "MySQL-compatible database", color: "#003545" },
   { value: "sqlserver", label: "SQL Server", description: "Microsoft SQL Server", color: "#CC2927" },
   { value: "sqlite", label: "SQLite", description: "Embedded file database", color: "#003B57" },
   { value: "mongodb", label: "MongoDB", description: "Document database", color: "#00ED64" },
   { value: "redis", label: "Redis", description: "In-memory data store", color: "#DC382D" },
+  { value: "cassandra", label: "Cassandra", description: "Distributed NoSQL database", color: "#1287B1" },
 ];
 
 // Database Icon
@@ -104,6 +106,10 @@ export function AddConnectionDialog({ open, onOpenChange, onSave }: AddConnectio
   const [trustServerCertificate, setTrustServerCertificate] = useState(false);
   // Redis ACL
   const [redisUsername, setRedisUsername] = useState("");
+  // Cassandra specific
+  const [cassContactPoints, setCassContactPoints] = useState("localhost");
+  const [cassKeyspace, setCassKeyspace] = useState("");
+  const [cassDatacenter, setCassDatacenter] = useState("datacenter1");
   const [isTesting, setIsTesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -124,9 +130,11 @@ export function AddConnectionDialog({ open, onOpenChange, onSave }: AddConnectio
     switch (type) {
       case "postgres": return "5432";
       case "mysql": return "3306";
+      case "mariadb": return "3306";
       case "sqlserver": return "1433";
       case "mongodb": return "27017";
       case "redis": return "6379";
+      case "cassandra": return "9042";
       default: return "";
     }
   };
@@ -157,6 +165,18 @@ export function AddConnectionDialog({ open, onOpenChange, onSave }: AddConnectio
       case "mysql":
         return {
           dbType: "mysql",
+          name: baseName,
+          host,
+          port: parseInt(port),
+          database,
+          user,
+          password,
+          ssl: ssl || undefined,
+          readOnly
+        };
+      case "mariadb":
+        return {
+          dbType: "mariadb",
           name: baseName,
           host,
           port: parseInt(port),
@@ -206,6 +226,19 @@ export function AddConnectionDialog({ open, onOpenChange, onSave }: AddConnectio
           port: parseInt(port),
           database: parseInt(database) || 0,
           username: redisUsername || undefined,
+          password: password || undefined,
+          ssl: ssl || undefined,
+          readOnly
+        };
+      case "cassandra":
+        return {
+          dbType: "cassandra",
+          name: baseName,
+          contactPoints: cassContactPoints.split(',').map(cp => cp.trim()).filter(cp => cp),
+          port: parseInt(port),
+          keyspace: cassKeyspace,
+          localDatacenter: cassDatacenter,
+          username: user || undefined,
           password: password || undefined,
           ssl: ssl || undefined,
           readOnly
@@ -278,16 +311,20 @@ export function AddConnectionDialog({ open, onOpenChange, onSave }: AddConnectio
     setEncrypt(true);
     setTrustServerCertificate(false);
     setRedisUsername("");
+    setCassContactPoints("localhost");
+    setCassKeyspace("");
+    setCassDatacenter("datacenter1");
     setTestResult(null);
     setReadOnly(false);
   };
 
   const currentDbInfo = DATABASE_TYPES.find(db => db.value === dbType)!;
-  const needsHostPort = ["postgres", "mysql", "sqlserver", "mongodb", "redis"].includes(dbType);
-  const needsDatabase = ["postgres", "mysql", "sqlserver", "mongodb"].includes(dbType);
-  const needsAuth = ["postgres", "mysql", "sqlserver", "mongodb"].includes(dbType);
+  const needsHostPort = ["postgres", "mysql", "mariadb", "sqlserver", "mongodb", "redis"].includes(dbType);
+  const needsDatabase = ["postgres", "mysql", "mariadb", "sqlserver", "mongodb"].includes(dbType);
+  const needsAuth = ["postgres", "mysql", "mariadb", "sqlserver", "mongodb", "cassandra"].includes(dbType);
   const needsFilePath = dbType === "sqlite";
   const needsConnectionString = dbType === "mongodb";
+  const isCassandra = dbType === "cassandra";
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -610,8 +647,75 @@ export function AddConnectionDialog({ open, onOpenChange, onSave }: AddConnectio
                         </FormField>
                       )}
 
+                      {/* Cassandra Configuration */}
+                      {isCassandra && (
+                        <>
+                          <FormField label="Contact Points">
+                            <StyledInput
+                              type="text"
+                              value={cassContactPoints}
+                              onChange={(e) => setCassContactPoints(e.target.value)}
+                              placeholder="node1.example.com, node2.example.com"
+                            />
+                            <p className="text-[10px] text-text-tertiary mt-1">
+                              Comma-separated list of Cassandra nodes
+                            </p>
+                          </FormField>
+
+                          <div className="grid grid-cols-3 gap-3">
+                            <FormField label="Port">
+                              <StyledInput
+                                type="text"
+                                value={port}
+                                onChange={(e) => setPort(e.target.value)}
+                                placeholder="9042"
+                              />
+                            </FormField>
+                            <FormField label="Keyspace" className="col-span-2">
+                              <StyledInput
+                                type="text"
+                                value={cassKeyspace}
+                                onChange={(e) => setCassKeyspace(e.target.value)}
+                                placeholder="my_keyspace"
+                              />
+                            </FormField>
+                          </div>
+
+                          <FormField label="Local Datacenter">
+                            <StyledInput
+                              type="text"
+                              value={cassDatacenter}
+                              onChange={(e) => setCassDatacenter(e.target.value)}
+                              placeholder="datacenter1"
+                            />
+                            <p className="text-[10px] text-text-tertiary mt-1">
+                              Required for token-aware load balancing
+                            </p>
+                          </FormField>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <FormField label="Username (optional)">
+                              <StyledInput
+                                type="text"
+                                value={user}
+                                onChange={(e) => setUser(e.target.value)}
+                                placeholder="cassandra"
+                              />
+                            </FormField>
+                            <FormField label="Password (optional)">
+                              <StyledInput
+                                type="password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                placeholder="••••••••"
+                              />
+                            </FormField>
+                          </div>
+                        </>
+                      )}
+
                       {/* SSL/Security Section */}
-                      {["postgres", "mysql", "mongodb", "redis"].includes(dbType) && (
+                      {["postgres", "mysql", "mariadb", "mongodb", "redis", "cassandra"].includes(dbType) && (
                         <div className="space-y-3 pt-2">
                           <label className="flex items-center gap-2 cursor-pointer">
                             <input

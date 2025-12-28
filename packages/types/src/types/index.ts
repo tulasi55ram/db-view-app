@@ -13,7 +13,7 @@ export interface SSLConfig {
 /**
  * Database types supported by dbview
  */
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlserver' | 'sqlite' | 'mongodb' | 'redis';
+export type DatabaseType = 'postgres' | 'mysql' | 'mariadb' | 'sqlserver' | 'sqlite' | 'mongodb' | 'redis' | 'elasticsearch' | 'cassandra';
 
 /**
  * PostgreSQL SSL mode options
@@ -56,6 +56,31 @@ export interface MySQLConnectionConfig {
   database: string;
   ssl?: boolean | SSLConfig;
   sslMode?: MySqlSslMode; // SSL verification mode
+  charset?: string; // Default: 'utf8mb4'
+  savePassword?: boolean;
+  readOnly?: boolean;
+  color?: string;
+}
+
+/**
+ * MariaDB SSL mode options (same as MySQL)
+ */
+export type MariaDBSslMode = 'disabled' | 'preferred' | 'required' | 'verify_ca' | 'verify_identity';
+
+/**
+ * MariaDB connection configuration
+ * MariaDB is a MySQL-compatible fork with additional features
+ */
+export interface MariaDBConnectionConfig {
+  dbType: 'mariadb';
+  name?: string;
+  host: string;
+  port: number;
+  user: string;
+  password?: string;
+  database: string;
+  ssl?: boolean | SSLConfig;
+  sslMode?: MariaDBSslMode; // SSL verification mode
   charset?: string; // Default: 'utf8mb4'
   savePassword?: boolean;
   readOnly?: boolean;
@@ -134,15 +159,100 @@ export interface RedisConnectionConfig {
 }
 
 /**
+ * Elasticsearch connection configuration
+ */
+export interface ElasticsearchConnectionConfig {
+  dbType: 'elasticsearch';
+  name?: string;
+  // Single node or multiple nodes
+  node?: string; // e.g., 'https://localhost:9200'
+  nodes?: string[]; // Multiple nodes for cluster
+  // Cloud connection (Elastic Cloud)
+  cloudId?: string; // Elastic Cloud ID
+  // Authentication
+  username?: string;
+  password?: string;
+  apiKey?: string; // API key authentication (recommended for production)
+  // SSL/TLS
+  ssl?: boolean;
+  caFingerprint?: string; // For self-signed certificates
+  rejectUnauthorized?: boolean; // Default: true
+  // Connection options
+  requestTimeout?: number; // Default: 30000ms
+  pingTimeout?: number; // Default: 3000ms
+  maxRetries?: number; // Default: 3
+  // Common fields
+  savePassword?: boolean;
+  readOnly?: boolean;
+  color?: string;
+}
+
+/**
+ * Cassandra consistency levels
+ */
+export type CassandraConsistency =
+  | 'any'
+  | 'one'
+  | 'two'
+  | 'three'
+  | 'quorum'
+  | 'all'
+  | 'localQuorum'
+  | 'eachQuorum'
+  | 'serial'
+  | 'localSerial'
+  | 'localOne';
+
+/**
+ * Cassandra connection configuration
+ */
+export interface CassandraConnectionConfig {
+  dbType: 'cassandra';
+  name?: string;
+  // Contact points (multiple nodes for fault tolerance)
+  contactPoints: string[]; // e.g., ['node1.example.com', 'node2.example.com']
+  port: number; // Default: 9042
+  // Keyspace (like a database in relational DBs)
+  keyspace: string;
+  // Datacenter (required for token-aware routing)
+  localDatacenter: string;
+  // Authentication (optional - depends on cluster config)
+  username?: string;
+  password?: string;
+  // SSL/TLS
+  ssl?: boolean;
+  sslOptions?: {
+    rejectUnauthorized?: boolean;
+    ca?: string; // CA certificate
+    cert?: string; // Client certificate
+    key?: string; // Client key
+  };
+  // Consistency level (default: localQuorum)
+  consistency?: CassandraConsistency;
+  // Connection options
+  connectTimeout?: number; // Default: 5000ms
+  requestTimeout?: number; // Default: 12000ms
+  // Connection pooling
+  poolSize?: number; // Connections per host (default: 1)
+  // Common fields
+  savePassword?: boolean;
+  readOnly?: boolean;
+  color?: string;
+}
+
+/**
  * Discriminated union of all database connection configurations
  */
 export type DatabaseConnectionConfig =
   | PostgresConnectionConfig
   | MySQLConnectionConfig
+  | MariaDBConnectionConfig
   | SQLServerConnectionConfig
   | SQLiteConnectionConfig
   | MongoDBConnectionConfig
-  | RedisConnectionConfig;
+  | RedisConnectionConfig
+  | ElasticsearchConnectionConfig
+  | CassandraConnectionConfig;
 
 /**
  * Legacy ConnectionConfig for backward compatibility
@@ -159,6 +269,10 @@ export function isMySQLConfig(config: DatabaseConnectionConfig): config is MySQL
   return config.dbType === 'mysql';
 }
 
+export function isMariaDBConfig(config: DatabaseConnectionConfig): config is MariaDBConnectionConfig {
+  return config.dbType === 'mariadb';
+}
+
 export function isSQLServerConfig(config: DatabaseConnectionConfig): config is SQLServerConnectionConfig {
   return config.dbType === 'sqlserver';
 }
@@ -173,6 +287,14 @@ export function isMongoDBConfig(config: DatabaseConnectionConfig): config is Mon
 
 export function isRedisConfig(config: DatabaseConnectionConfig): config is RedisConnectionConfig {
   return config.dbType === 'redis';
+}
+
+export function isElasticsearchConfig(config: DatabaseConnectionConfig): config is ElasticsearchConnectionConfig {
+  return config.dbType === 'elasticsearch';
+}
+
+export function isCassandraConfig(config: DatabaseConnectionConfig): config is CassandraConnectionConfig {
+  return config.dbType === 'cassandra';
 }
 
 export interface Column {
@@ -225,6 +347,8 @@ export interface ColumnMetadata {
   numericScale?: number;
   enumValues?: string[];
   editable: boolean; // computed: not PK and not auto-increment and not generated
+  /** For Cassandra: 'partition' | 'clustering' | 'regular' */
+  keyKind?: 'partition' | 'clustering' | 'regular';
 }
 
 // Cell edit tracking

@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, useLayoutEffect } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { RefreshCw, Plus, Trash2, Info, Save, X, Check, Copy, ArrowUp, ArrowDown, ArrowUpDown, Download, Upload, Lock, Bookmark } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { getElectronAPI } from "@/electron";
@@ -16,6 +17,8 @@ import { FilterPresets } from "./FilterPresets";
 import { SavedViewsPanel } from "./SavedViewsPanel";
 import { DateTimePopover } from "../editors/DateTimePopover";
 import { JSONEditor } from "../editors/JSONEditor";
+import { CassandraValueCell } from "./CassandraValueCell";
+import { CassandraCollectionEditor } from "./CassandraCollectionEditor";
 import { formatAsCSV, formatAsJSON, formatAsSQL } from "@/utils/exportFormatters";
 import { parseCSV, parseJSON } from "@/utils/importParsers";
 
@@ -39,6 +42,11 @@ interface PendingEdit {
 }
 
 export function TableView({ connectionKey, schema, table }: TableViewProps) {
+  // Track table identity to force complete re-render on table change
+  const [currentTableKey, setCurrentTableKey] = useState(`${connectionKey}-${schema}-${table}`);
+  const tableKey = `${connectionKey}-${schema}-${table}`;
+  const isTableChanging = currentTableKey !== tableKey;
+
   const [columns, setColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [metadata, setMetadata] = useState<ColumnMetadata[]>([]);
@@ -67,6 +75,12 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
   const [visibleRowRange, setVisibleRowRange] = useState({ start: 0, end: 0 });
   const [showJumpToRowDialog, setShowJumpToRowDialog] = useState(false);
   const tableContainerRef = useRef<HTMLDivElement>(null);
+  const componentRef = useRef<HTMLDivElement>(null);
+
+  // Track visibility to force virtualizer recalculation when tab becomes visible
+  const [isVisible, setIsVisible] = useState(true);
+  const prevVisibleRef = useRef(true);
+  const [visibilityKey, setVisibilityKey] = useState(0); // Forces re-render when becoming visible
 
   // Saved views state
   const [showSavedViewsPanel, setShowSavedViewsPanel] = useState(false);
@@ -244,6 +258,44 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     }
   }, [api, connectionKey, schema, table, limit, offset, filters, filterLogic, sortColumn, sortDirection]);
 
+  // Reset state when table changes to prevent data overlap
+  useEffect(() => {
+    const newTableKey = `${connectionKey}-${schema}-${table}`;
+
+    // Clear all data state immediately when switching tables
+    setColumns([]);
+    setRows([]);
+    setMetadata([]);
+    setTotalRows(null);
+    setSelectedRows(new Set());
+    setPendingEdits(new Map());
+    setUndoStack([]);
+    setEditingCell(null);
+    setInsertingRow(null);
+    setInsertingRowNullColumns(new Set());
+    setFilters([]);
+    setFilterLogic("AND");
+    setSortColumn(null);
+    setSortDirection("ASC");
+    setOffset(0);
+    setFocusedCell(null);
+    setScrollProgress(0);
+    setVisibleRowRange({ start: 0, end: 0 });
+    setLoading(true); // Show loading state immediately
+    // Scroll to top on table change
+    tableContainerRef.current?.scrollTo({ top: 0 });
+    // Load column widths for this table from localStorage
+    try {
+      const storageKey = `dbview-col-widths-${schema}-${table}`;
+      const saved = localStorage.getItem(storageKey);
+      setColumnWidths(saved ? JSON.parse(saved) : {});
+    } catch {
+      setColumnWidths({});
+    }
+    // Update the current table key to match - this triggers re-render with fresh state
+    setCurrentTableKey(newTableKey);
+  }, [connectionKey, schema, table]);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
@@ -363,8 +415,20 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     toast.success("Undo successful", { description: "Last change reverted" });
   }, [undoStack]);
 
-  // Detect if this is a MongoDB connection
+  // Detect if this is a MongoDB or Elasticsearch connection (document databases)
   const isMongoDB = connectionKey.startsWith("mongodb:");
+  const isElasticsearch = connectionKey.startsWith("elasticsearch:");
+  const isCassandra = connectionKey.startsWith("cassandra:");
+  const isDocumentDB = isMongoDB || isElasticsearch;
+
+  // Cassandra collection editor state
+  const [cassandraEditor, setCassandraEditor] = useState<{
+    open: boolean;
+    rowIndex: number;
+    column: string;
+    value: unknown;
+    columnType: string;
+  } | null>(null);
 
   // Handle cell double-click
   const handleCellDoubleClick = useCallback((
@@ -385,8 +449,29 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     const colMetadata = metadata.find((m) => m.name === column);
     const type = colMetadata?.type.toLowerCase() || "";
 
-    // For MongoDB, show the entire document in JSON editor
-    if (isMongoDB) {
+    // For Cassandra collections and UDTs, use the specialized editor
+    if (isCassandra) {
+      const isCassandraCollection = type.includes("list<") || type.includes("set<") ||
+                                     type.includes("map<") || type.includes("frozen<");
+      // Check for UDT - if it's an object and not a standard type
+      const isUDT = typeof currentValue === "object" && currentValue !== null &&
+                    !Array.isArray(currentValue) &&
+                    !type.includes("timestamp") && !type.includes("date");
+
+      if (isCassandraCollection || isUDT) {
+        setCassandraEditor({
+          open: true,
+          rowIndex,
+          column,
+          value: currentValue,
+          columnType: colMetadata?.type || "unknown",
+        });
+        return;
+      }
+    }
+
+    // For document databases (MongoDB, Elasticsearch), show the entire document in JSON editor
+    if (isDocumentDB) {
       const row = rows[rowIndex];
       // Build the full document, parsing any stringified JSON back to objects
       const fullDocument: Record<string, unknown> = {};
@@ -452,7 +537,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
       column,
       value: formatCellValueForEdit(currentValue),
     });
-  }, [isReadOnly, metadata, isMongoDB, rows]);
+  }, [isReadOnly, metadata, isDocumentDB, isCassandra, rows]);
 
   // Handle edit commit
   const handleEditCommit = useCallback(() => {
@@ -488,8 +573,8 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     if (!jsonEditor || !api) return;
     const { rowIndex, column } = jsonEditor;
 
-    // For MongoDB full document editing
-    if (column === "_document" && isMongoDB) {
+    // For document database (MongoDB/Elasticsearch) full document editing
+    if (column === "_document" && isDocumentDB) {
       try {
         const newDocument = JSON.parse(value);
         if (typeof newDocument !== "object" || newDocument === null || Array.isArray(newDocument)) {
@@ -581,9 +666,43 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     // For single cell updates (SQL databases or single fields)
     handleCellUpdate(rowIndex, column, value);
     setJsonEditor(null);
-  }, [jsonEditor, handleCellUpdate, api, isMongoDB, rows, connectionKey, schema, table, loadData]);
+  }, [jsonEditor, handleCellUpdate, api, isDocumentDB, rows, connectionKey, schema, table, loadData]);
 
-  // Handle MongoDB document editor save (for insert/clone)
+  // Handle Cassandra collection editor save
+  const handleCassandraEditorSave = useCallback(async (newValue: unknown) => {
+    if (!cassandraEditor || !api) return;
+    const { rowIndex, column } = cassandraEditor;
+
+    const row = rows[rowIndex];
+    const pkColumns = getPrimaryKeyColumns();
+    if (pkColumns.length === 0) {
+      toast.error("Cannot update: Table has no primary key");
+      return;
+    }
+
+    try {
+      const primaryKey = getPrimaryKeyValue(row);
+
+      // Update the cell with the new collection/UDT value
+      await api.updateCell({
+        connectionKey,
+        schema,
+        table,
+        primaryKey,
+        column,
+        value: newValue,
+      });
+
+      await loadData();
+      toast.success(`Updated ${column}`);
+      setCassandraEditor(null);
+    } catch (err) {
+      console.error("Failed to update cell:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to update");
+    }
+  }, [cassandraEditor, api, rows, connectionKey, schema, table, getPrimaryKeyColumns, getPrimaryKeyValue, loadData]);
+
+  // Handle document editor save for MongoDB/Elasticsearch (for insert/clone)
   const handleDocumentEditorSave = useCallback(async (jsonValue: string) => {
     if (!api || !documentEditor) return;
 
@@ -729,18 +848,18 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
 
   // Start inline row insertion
   const handleStartInsert = useCallback(() => {
-    // For MongoDB, use the document JSON editor
-    if (isMongoDB) {
+    // For document databases (MongoDB, Elasticsearch), use the document JSON editor
+    if (isDocumentDB) {
       // Create a template document with example fields
       const templateDoc: Record<string, unknown> = {};
       metadata.forEach((col) => {
-        if (col.name === "_id") return; // Skip _id, MongoDB will auto-generate
+        if (col.name === "_id") return; // Skip _id, auto-generated by database
         const type = col.type.toLowerCase();
-        if (type.includes("string")) templateDoc[col.name] = "";
-        else if (type.includes("int") || type.includes("double")) templateDoc[col.name] = 0;
+        if (type.includes("string") || type.includes("text") || type.includes("keyword")) templateDoc[col.name] = "";
+        else if (type.includes("int") || type.includes("long") || type.includes("double") || type.includes("float")) templateDoc[col.name] = 0;
         else if (type.includes("bool")) templateDoc[col.name] = false;
         else if (type.includes("array")) templateDoc[col.name] = [];
-        else if (type.includes("object")) templateDoc[col.name] = {};
+        else if (type.includes("object") || type.includes("nested")) templateDoc[col.name] = {};
         else if (type.includes("date")) templateDoc[col.name] = new Date().toISOString();
         else templateDoc[col.name] = null;
       });
@@ -765,7 +884,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     });
     setInsertingRow(initialValues);
     setInsertingRowNullColumns(new Set());
-  }, [metadata, isMongoDB]);
+  }, [metadata, isDocumentDB]);
 
   // Handle inserting row value change
   const handleInsertingRowChange = useCallback((column: string, value: string) => {
@@ -830,15 +949,17 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     });
   }, []);
 
-  // Detect if this is MongoDB or Redis based on metadata
-  const isMongoDBOrRedis = useCallback((): { isMongo: boolean; isRedis: boolean } => {
+  // Detect document database type based on metadata
+  const detectDocumentDBType = useCallback((): { isMongo: boolean; isRedis: boolean; isElastic: boolean } => {
     const hasObjectId = metadata.some(col => col.type.toLowerCase().includes('objectid'));
     const hasKey = metadata.some(col => col.name === '_key');
+    const hasKeywordId = metadata.some(col => col.name === '_id' && col.type.toLowerCase() === 'keyword');
     return {
       isMongo: hasObjectId || metadata.some(col => col.name === '_id' && col.type === 'ObjectId'),
-      isRedis: hasKey
+      isRedis: hasKey,
+      isElastic: hasKeywordId || isElasticsearch
     };
-  }, [metadata]);
+  }, [metadata, isElasticsearch]);
 
   // Save the inserting row
   const handleSaveInsertingRow = useCallback(async () => {
@@ -955,9 +1076,9 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
 
     if (!selectedRow) return;
 
-    // For MongoDB, use the document JSON editor with the cloned document
-    if (isMongoDB) {
-      // Clone the document, removing _id so MongoDB generates a new one
+    // For document databases (MongoDB, Elasticsearch), use the document JSON editor with the cloned document
+    if (isDocumentDB) {
+      // Clone the document, removing _id so database generates a new one
       const clonedDoc: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(selectedRow)) {
         if (key === "_id") continue; // Skip _id for cloning
@@ -1018,7 +1139,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     setInsertingRowNullColumns(nullColumns);
     setSelectedRows(new Set()); // Clear selection
     toast.info("Row duplicated. Edit and save to insert.");
-  }, [selectedRows, rows, metadata, isMongoDB]);
+  }, [selectedRows, rows, metadata, isDocumentDB]);
 
   // Handle row deletion
   const handleDeleteRows = useCallback(async () => {
@@ -1233,6 +1354,17 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
   // Row height for scroll calculations
   const ROW_HEIGHT = 36;
 
+  // Memoize row data to avoid unnecessary recalculations
+  const rowData = useMemo(() => rows, [rows]);
+
+  // Setup virtualizer for efficient rendering of large datasets
+  const rowVirtualizer = useVirtualizer({
+    count: rowData.length,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10, // Render 10 extra rows above/below viewport for smooth scrolling
+  });
+
   // Handle scroll events for progress bar and visible range
   const handleScroll = useCallback(() => {
     const container = tableContainerRef.current;
@@ -1423,8 +1555,62 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     handleScroll();
   }, [handleScroll, rows]);
 
+  // Detect visibility changes using ResizeObserver
+  // This is critical for fixing the text overlap issue when switching tabs
+  // ResizeObserver detects when display:none changes to display:flex (size goes from 0 to non-zero)
+  useEffect(() => {
+    const element = componentRef.current;
+    if (!element) return;
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const { width, height } = entry.contentRect;
+      // Component is visible if it has non-zero dimensions
+      const nowVisible = width > 0 && height > 0;
+      setIsVisible(nowVisible);
+    });
+
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  // Force virtualizer recalculation when tab becomes visible
+  useLayoutEffect(() => {
+    if (isVisible && !prevVisibleRef.current) {
+      // Tab just became visible - force recalculation
+      // Increment visibility key to force re-render of table content
+      setVisibilityKey(prev => prev + 1);
+
+      const container = tableContainerRef.current;
+      if (container) {
+        // Force a layout recalculation by triggering scroll event
+        const scrollTop = container.scrollTop;
+        container.scrollTop = scrollTop + 1;
+        container.scrollTop = scrollTop;
+        // Also trigger our scroll handler to update visible range
+        handleScroll();
+      }
+      // Force virtualizer to recalculate by triggering a state update
+      rowVirtualizer.measure();
+    }
+    prevVisibleRef.current = isVisible;
+  }, [isVisible, handleScroll, rowVirtualizer]);
+
+  // Prevent rendering stale content when switching tables
+  // This ensures the old table's content is completely cleared before new content loads
+  if (isTableChanging) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="flex items-center gap-2 text-text-secondary">
+          <RefreshCw className="w-5 h-5 animate-spin" />
+          <span>Switching table...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div ref={componentRef} className="flex-1 flex flex-col overflow-hidden">
       {/* Toolbar */}
       <div className="h-10 px-4 flex items-center justify-between border-b border-border bg-bg-secondary">
         <div className="flex items-center gap-2 text-sm text-text-secondary">
@@ -1637,6 +1823,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
       <div className="flex-1 flex flex-col overflow-hidden relative">
         {/* Table with scroll */}
         <div
+          key={`scroll-${connectionKey}-${schema}-${table}`}
           ref={tableContainerRef}
           className="flex-1 overflow-auto"
           onScroll={handleScroll}
@@ -1661,10 +1848,10 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
             </div>
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table key={`${connectionKey}-${schema}-${table}-${visibilityKey}`} className="w-full text-sm">
             <thead className="sticky top-0 z-10 bg-bg-tertiary border-b border-border shadow-sm">
-              <tr>
-                <th className="px-3 py-2 w-10 bg-bg-tertiary">
+              <tr style={{ display: "flex" }}>
+                <th className="px-3 py-2 bg-bg-tertiary" style={{ width: 40, flexShrink: 0, display: "flex", alignItems: "center" }}>
                   <input
                     type="checkbox"
                     checked={selectedRows.size === rows.length && rows.length > 0}
@@ -1677,7 +1864,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                   <th
                     key={column}
                     className="group text-left font-medium text-text-primary whitespace-nowrap bg-bg-tertiary cursor-pointer hover:bg-bg-hover select-none transition-colors relative"
-                    style={{ width: columnWidths[column] || "auto", minWidth: 60 }}
+                    style={{ width: columnWidths[column] || 150, minWidth: 60, flexShrink: 0 }}
                     onClick={() => handleColumnSort(column)}
                     title={`Sort by ${column}${sortColumn === column ? (sortDirection === "ASC" ? " (ascending)" : " (descending)") : ""}`}
                   >
@@ -1706,18 +1893,34 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                 ))}
               </tr>
             </thead>
-            <tbody>
-              {/* Inline inserting row */}
+            <tbody
+              key={`tbody-${visibilityKey}`}
+              style={{
+                height: `${rowVirtualizer.getTotalSize() + (insertingRow ? ROW_HEIGHT : 0)}px`,
+                position: "relative",
+              }}
+            >
+              {/* Inline inserting row - always at top, not virtualized */}
               {insertingRow && (
-                <tr className="border-b-2 border-accent bg-accent/5">
-                  <td className="px-3 py-2">
+                <tr
+                  className="border-b-2 border-accent bg-accent/5"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: `${ROW_HEIGHT}px`,
+                    display: "flex",
+                  }}
+                >
+                  <td className="px-3 py-2" style={{ width: 40, flexShrink: 0 }}>
                     <div className="flex items-center justify-center">
                       <span className="text-xs text-accent font-medium">New</span>
                     </div>
                   </td>
                   {columns.map((column) => {
                     const colMetadata = metadata.find((m) => m.name === column);
-                    if (!colMetadata) return <td key={column} className="px-3 py-2"></td>;
+                    if (!colMetadata) return <td key={column} className="px-3 py-2" style={{ width: columnWidths[column] || 150 }}></td>;
 
                     const type = colMetadata.type.toLowerCase();
                     const isAutoIncrement = type.includes("serial") || type.includes("identity");
@@ -1728,7 +1931,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                     // Skip auto-increment, generated, and non-editable columns
                     if (isAutoIncrement || isNonEditable) {
                       return (
-                        <td key={column} className="px-3 py-2 text-text-tertiary italic text-xs">
+                        <td key={column} className="px-3 py-2 text-text-tertiary italic text-xs" style={{ width: columnWidths[column] || 150 }}>
                           {isAutoIncrement ? "Auto" : colMetadata.isGenerated ? "Generated" : "N/A"}
                         </td>
                       );
@@ -1736,10 +1939,10 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
 
                     const isUUID = type.includes("uuid") || type.includes("guid") || type.includes("uniqueidentifier");
                     const isObjectId = type.toLowerCase().includes("objectid");
-                    const { isMongo } = isMongoDBOrRedis();
+                    const { isMongo } = detectDocumentDBType();
 
                     return (
-                      <td key={column} className="px-3 py-2">
+                      <td key={column} className="px-3 py-2" style={{ width: columnWidths[column] || 150 }}>
                         <div className="flex items-center gap-1">
                           {/* Input field */}
                           <div className="flex-1 min-w-0">
@@ -1841,17 +2044,32 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                 </tr>
               )}
 
-              {/* Existing rows */}
-              {rows.map((row, rowIndex) => {
+              {/* Virtualized rows - only renders visible rows in the DOM */}
+              {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                const rowIndex = virtualRow.index;
+                const row = rowData[rowIndex];
+                const topOffset = insertingRow ? ROW_HEIGHT : 0;
+
                 return (
                   <tr
-                    key={rowIndex}
+                    key={virtualRow.key}
+                    data-index={virtualRow.index}
+                    ref={rowVirtualizer.measureElement}
                     className={cn(
                       "border-b border-border hover:bg-bg-hover transition-colors",
                       selectedRows.has(rowIndex) && "bg-accent/10"
                     )}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: `${virtualRow.size}px`,
+                      transform: `translateY(${virtualRow.start + topOffset}px)`,
+                      display: "flex",
+                    }}
                   >
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2" style={{ width: 40, flexShrink: 0, display: "flex", alignItems: "center" }}>
                       <input
                         type="checkbox"
                         checked={selectedRows.has(rowIndex)}
@@ -1880,7 +2098,13 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                             hasPendingEdit && "border-2 border-orange-500 bg-orange-500/10",
                             isFocused && !hasPendingEdit && "ring-1 ring-accent/50 bg-accent/5"
                           )}
-                          style={{ width: columnWidths[column] || "auto", maxWidth: columnWidths[column] || "none" }}
+                          style={{
+                            width: columnWidths[column] || 150,
+                            maxWidth: columnWidths[column] || "none",
+                            flexShrink: 0,
+                            display: "flex",
+                            alignItems: "center",
+                          }}
                           onClick={() => !isEditing && setFocusedCell({ rowIndex, column })}
                           onDoubleClick={(e) => !isEditing && handleCellDoubleClick(e, rowIndex, column, row[column])}
                           title={hasPendingEdit ? "Pending change - Click Save to commit" : "Click to select, double-click to edit, Ctrl+C to copy"}
@@ -1903,10 +2127,19 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                               autoFocus
                               className="w-full min-w-[100px] px-2 py-1 bg-bg-primary border border-accent rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                             />
+                          ) : isCassandra ? (
+                            // Use rich Cassandra value cell for Cassandra connections
+                            <CassandraValueCell
+                              value={displayValue}
+                              columnName={column}
+                              columnType={metadata.find(m => m.name === column)?.type || "text"}
+                              isCompact={true}
+                            />
                           ) : (
                             <span className={cn(
                               displayValue === null && "text-text-tertiary italic",
-                              hasPendingEdit && "font-medium"
+                              hasPendingEdit && "font-medium",
+                              "truncate"
                             )}>
                               {displayText}
                             </span>
@@ -2139,6 +2372,18 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           onChange={handleDocumentEditorSave}
           columnName={documentEditor.isClone ? "Clone Document" : "New Document"}
           columnType="MongoDB Document"
+        />
+      )}
+
+      {/* Cassandra Collection/UDT Editor */}
+      {cassandraEditor && (
+        <CassandraCollectionEditor
+          open={cassandraEditor.open}
+          onClose={() => setCassandraEditor(null)}
+          value={cassandraEditor.value}
+          columnName={cassandraEditor.column}
+          columnType={cassandraEditor.columnType}
+          onChange={handleCassandraEditorSave}
         />
       )}
     </div>

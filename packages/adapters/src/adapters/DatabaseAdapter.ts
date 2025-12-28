@@ -3,7 +3,7 @@ import type { EventEmitter } from "events";
 /**
  * Database types supported by dbview
  */
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlserver' | 'sqlite' | 'mongodb' | 'redis';
+export type DatabaseType = 'postgres' | 'mysql' | 'mariadb' | 'sqlserver' | 'sqlite' | 'mongodb' | 'redis' | 'elasticsearch' | 'cassandra';
 
 /**
  * Connection status for database adapters
@@ -70,6 +70,26 @@ export interface ColumnMetadata {
   numericScale?: number;
   enumValues?: string[];
   editable: boolean;
+  /**
+   * Whether this column can be sorted.
+   * For Elasticsearch text fields without .keyword sub-field, this will be false.
+   * Default is true for most databases.
+   */
+  sortable?: boolean;
+  /**
+   * The actual field name to use for sorting.
+   * For Elasticsearch text fields, this might be "fieldName.keyword".
+   * If not specified, the column name should be used.
+   */
+  sortField?: string;
+  /**
+   * For Cassandra: indicates key type for wide-column storage model
+   * - 'partition': Partition key (determines data distribution)
+   * - 'clustering': Clustering key (determines sort order within partition)
+   * - 'regular': Regular column
+   * For other databases: undefined
+   */
+  keyKind?: 'partition' | 'clustering' | 'regular';
 }
 
 /**
@@ -214,6 +234,28 @@ export interface FetchOptions {
   orderBy?: string[]; // Column names to order by (defaults to primary key if not provided)
   sortColumn?: string; // Single column to sort by (takes precedence over orderBy)
   sortDirection?: 'ASC' | 'DESC'; // Sort direction (defaults to ASC)
+  // Cursor-based pagination (more efficient for large datasets)
+  cursor?: CursorPosition; // Start from this cursor position
+  useCursor?: boolean; // Enable cursor-based pagination instead of offset
+}
+
+/**
+ * Cursor position for keyset pagination
+ * Contains the values of the sort columns from the last row of the previous page
+ */
+export interface CursorPosition {
+  values: Record<string, unknown>; // Column name -> value mapping for cursor columns
+  direction: 'forward' | 'backward'; // Direction of pagination
+}
+
+/**
+ * Result with cursor information for keyset pagination
+ */
+export interface CursorResultSet extends QueryResultSet {
+  nextCursor?: CursorPosition; // Cursor to fetch next page
+  prevCursor?: CursorPosition; // Cursor to fetch previous page
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
 }
 
 /**
@@ -222,6 +264,141 @@ export interface FetchOptions {
 export interface FilterOptions {
   filters?: FilterCondition[];
   filterLogic?: 'AND' | 'OR';
+}
+
+/**
+ * Bulk operation result
+ */
+export interface BulkOperationResult {
+  successCount: number;
+  failureCount: number;
+  errors?: Array<{ index: number; error: string }>;
+  insertedIds?: unknown[]; // For bulk insert - IDs of inserted rows
+}
+
+/**
+ * Bulk insert options
+ */
+export interface BulkInsertOptions {
+  batchSize?: number; // Number of rows per batch (default: 1000)
+  onProgress?: (inserted: number, total: number) => void; // Progress callback
+  skipErrors?: boolean; // Continue on error instead of rolling back
+}
+
+/**
+ * Bulk update item - specifies which row to update and what values to set
+ */
+export interface BulkUpdateItem {
+  primaryKey: Record<string, unknown>; // Primary key to identify the row
+  values: Record<string, unknown>; // Column values to update
+}
+
+/**
+ * Bulk update options
+ */
+export interface BulkUpdateOptions {
+  batchSize?: number;
+  onProgress?: (updated: number, total: number) => void;
+  skipErrors?: boolean;
+}
+
+/**
+ * Bulk delete options
+ */
+export interface BulkDeleteOptions {
+  batchSize?: number;
+  onProgress?: (deleted: number, total: number) => void;
+}
+
+/**
+ * Connection pool configuration
+ */
+export interface PoolConfig {
+  minConnections?: number; // Minimum connections in pool (default: 0)
+  maxConnections?: number; // Maximum connections in pool (default: 10)
+  idleTimeoutMs?: number; // Close idle connections after this time (default: 30000)
+  connectionTimeoutMs?: number; // Timeout for acquiring a connection (default: 10000)
+}
+
+/**
+ * Filter validation options
+ */
+export interface FilterValidationOptions {
+  maxFilters?: number;         // Maximum number of filters allowed (default: 20)
+  maxValueLength?: number;     // Maximum length of filter values (default: 1000)
+  maxColumnNameLength?: number; // Maximum length of column names (default: 128)
+}
+
+/**
+ * Filter validation result
+ */
+export interface FilterValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+/**
+ * Validate filters for security and performance
+ * Call this before processing filters to prevent abuse
+ */
+export function validateFilters(
+  filters: FilterCondition[],
+  options: FilterValidationOptions = {}
+): FilterValidationResult {
+  const {
+    maxFilters = 20,
+    maxValueLength = 1000,
+    maxColumnNameLength = 128,
+  } = options;
+
+  const errors: string[] = [];
+
+  // Check total filter count
+  if (filters.length > maxFilters) {
+    errors.push(`Too many filters: ${filters.length} (max: ${maxFilters})`);
+  }
+
+  // Validate each filter
+  for (let i = 0; i < filters.length; i++) {
+    const filter = filters[i];
+
+    // Validate column name length
+    if (filter.columnName && filter.columnName.length > maxColumnNameLength) {
+      errors.push(`Filter ${i + 1}: Column name too long (max: ${maxColumnNameLength} chars)`);
+    }
+
+    // Validate value length
+    if (filter.value !== null && filter.value !== undefined) {
+      const valueStr = String(filter.value);
+      if (valueStr.length > maxValueLength) {
+        errors.push(`Filter ${i + 1}: Value too long (max: ${maxValueLength} chars)`);
+      }
+    }
+
+    // Validate value2 for between operator
+    if (filter.value2 !== null && filter.value2 !== undefined) {
+      const value2Str = String(filter.value2);
+      if (value2Str.length > maxValueLength) {
+        errors.push(`Filter ${i + 1}: Second value too long (max: ${maxValueLength} chars)`);
+      }
+    }
+
+    // Validate 'in' operator values
+    if (filter.operator === 'in' && filter.value) {
+      const values = Array.isArray(filter.value)
+        ? filter.value
+        : String(filter.value).split(',');
+
+      if (values.length > 100) {
+        errors.push(`Filter ${i + 1}: Too many values in IN clause (max: 100)`);
+      }
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
 }
 
 /**
@@ -552,6 +729,69 @@ export interface DatabaseAdapter extends EventEmitter {
    * @returns Number of rows deleted
    */
   deleteRows(schema: string, table: string, primaryKeys: Record<string, unknown>[]): Promise<number>;
+
+  // ==================== Bulk Operations (for large datasets) ====================
+
+  /**
+   * Insert multiple rows efficiently in batches
+   * Uses multi-row INSERT syntax or database-specific bulk insert mechanisms
+   * @param schema Schema name
+   * @param table Table name
+   * @param rows Array of row objects to insert
+   * @param options Bulk insert options
+   * @returns Bulk operation result
+   */
+  bulkInsert?(
+    schema: string,
+    table: string,
+    rows: Record<string, unknown>[],
+    options?: BulkInsertOptions
+  ): Promise<BulkOperationResult>;
+
+  /**
+   * Update multiple rows efficiently in batches
+   * @param schema Schema name
+   * @param table Table name
+   * @param updates Array of update items (primaryKey + values to update)
+   * @param options Bulk update options
+   * @returns Bulk operation result
+   */
+  bulkUpdate?(
+    schema: string,
+    table: string,
+    updates: BulkUpdateItem[],
+    options?: BulkUpdateOptions
+  ): Promise<BulkOperationResult>;
+
+  /**
+   * Delete multiple rows efficiently in batches
+   * Uses IN clause batching or database-specific bulk delete mechanisms
+   * @param schema Schema name
+   * @param table Table name
+   * @param primaryKeys Array of primary key values
+   * @param options Bulk delete options
+   * @returns Bulk operation result
+   */
+  bulkDelete?(
+    schema: string,
+    table: string,
+    primaryKeys: Record<string, unknown>[],
+    options?: BulkDeleteOptions
+  ): Promise<BulkOperationResult>;
+
+  /**
+   * Fetch rows using cursor-based pagination (keyset pagination)
+   * More efficient than OFFSET for large datasets
+   * @param schema Schema name
+   * @param table Table name
+   * @param options Fetch options with cursor
+   * @returns Cursor result set with pagination info
+   */
+  fetchTableRowsWithCursor?(
+    schema: string,
+    table: string,
+    options?: FetchOptions
+  ): Promise<CursorResultSet>;
 
   // ==================== Metadata ====================
 

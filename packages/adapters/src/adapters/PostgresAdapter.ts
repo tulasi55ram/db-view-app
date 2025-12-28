@@ -20,6 +20,13 @@ import type {
   FilterOptions,
   DatabaseHierarchy,
   ExplainPlan,
+  CursorPosition,
+  CursorResultSet,
+  BulkOperationResult,
+  BulkInsertOptions,
+  BulkUpdateItem,
+  BulkUpdateOptions,
+  BulkDeleteOptions,
 } from "./DatabaseAdapter";
 import { getDatabaseCapabilities } from "../capabilities/DatabaseCapabilities";
 
@@ -802,6 +809,343 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
     return result.rowCount || 0;
   }
 
+  // ==================== Bulk Operations (for large datasets) ====================
+
+  /**
+   * Insert multiple rows efficiently using multi-row INSERT syntax
+   * Processes rows in batches to avoid memory issues with large datasets
+   */
+  async bulkInsert(
+    schema: string,
+    table: string,
+    rows: Record<string, unknown>[],
+    options: BulkInsertOptions = {}
+  ): Promise<BulkOperationResult> {
+    if (rows.length === 0) {
+      return { successCount: 0, failureCount: 0 };
+    }
+
+    const { batchSize = 1000, onProgress, skipErrors = false } = options;
+    const qualified = `${this.quoteIdentifier(schema)}.${this.quoteIdentifier(table)}`;
+    const columns = Object.keys(rows[0]);
+    const columnList = columns.map(c => this.quoteIdentifier(c)).join(', ');
+
+    let successCount = 0;
+    let failureCount = 0;
+    const errors: Array<{ index: number; error: string }> = [];
+    const insertedIds: unknown[] = [];
+
+    // Process in batches
+    for (let i = 0; i < rows.length; i += batchSize) {
+      const batch = rows.slice(i, Math.min(i + batchSize, rows.length));
+
+      try {
+        // Build multi-row VALUES clause
+        const params: unknown[] = [];
+        const valuesClauses: string[] = [];
+
+        for (let j = 0; j < batch.length; j++) {
+          const row = batch[j];
+          const placeholders = columns.map((col, k) => {
+            params.push(row[col]);
+            return `$${j * columns.length + k + 1}`;
+          });
+          valuesClauses.push(`(${placeholders.join(', ')})`);
+        }
+
+        const sql = `
+          INSERT INTO ${qualified} (${columnList})
+          VALUES ${valuesClauses.join(', ')}
+          RETURNING *
+        `;
+
+        const result = await this.query(sql, params);
+        successCount += result.rowCount || 0;
+
+        // Collect inserted IDs (first column, usually primary key)
+        if (result.rows.length > 0) {
+          const firstCol = Object.keys(result.rows[0])[0];
+          insertedIds.push(...result.rows.map(r => r[firstCol]));
+        }
+
+        onProgress?.(successCount, rows.length);
+      } catch (error) {
+        if (skipErrors) {
+          failureCount += batch.length;
+          errors.push({
+            index: i,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    return { successCount, failureCount, errors: errors.length > 0 ? errors : undefined, insertedIds };
+  }
+
+  /**
+   * Update multiple rows efficiently
+   * Uses a single query with CASE expressions for better performance
+   */
+  async bulkUpdate(
+    schema: string,
+    table: string,
+    updates: BulkUpdateItem[],
+    options: BulkUpdateOptions = {}
+  ): Promise<BulkOperationResult> {
+    if (updates.length === 0) {
+      return { successCount: 0, failureCount: 0 };
+    }
+
+    const { batchSize = 500, onProgress, skipErrors = false } = options;
+    const qualified = `${this.quoteIdentifier(schema)}.${this.quoteIdentifier(table)}`;
+
+    let successCount = 0;
+    let failureCount = 0;
+    const errors: Array<{ index: number; error: string }> = [];
+
+    // Process in batches
+    for (let i = 0; i < updates.length; i += batchSize) {
+      const batch = updates.slice(i, Math.min(i + batchSize, updates.length));
+
+      try {
+        // For each update in the batch, execute individually within a transaction
+        // This is safer and handles different column updates per row
+        const pool = this.pool ?? (this.pool = new Pool(this.config));
+        const client = await pool.connect();
+
+        try {
+          await client.query('BEGIN');
+
+          for (const update of batch) {
+            const pkColumns = Object.keys(update.primaryKey);
+            const valueColumns = Object.keys(update.values);
+
+            const setClause = valueColumns.map((col, idx) =>
+              `${this.quoteIdentifier(col)} = $${idx + 1}`
+            ).join(', ');
+
+            const whereClause = pkColumns.map((col, idx) =>
+              `${this.quoteIdentifier(col)} = $${valueColumns.length + idx + 1}`
+            ).join(' AND ');
+
+            const sql = `UPDATE ${qualified} SET ${setClause} WHERE ${whereClause}`;
+            const params = [...Object.values(update.values), ...Object.values(update.primaryKey)];
+
+            const result = await client.query(sql, params);
+            successCount += result.rowCount || 0;
+          }
+
+          await client.query('COMMIT');
+          onProgress?.(successCount, updates.length);
+        } catch (error) {
+          await client.query('ROLLBACK');
+          throw error;
+        } finally {
+          client.release();
+        }
+      } catch (error) {
+        if (skipErrors) {
+          failureCount += batch.length;
+          errors.push({
+            index: i,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    return { successCount, failureCount, errors: errors.length > 0 ? errors : undefined };
+  }
+
+  /**
+   * Delete multiple rows efficiently using batched IN clauses
+   */
+  async bulkDelete(
+    schema: string,
+    table: string,
+    primaryKeys: Record<string, unknown>[],
+    options: BulkDeleteOptions = {}
+  ): Promise<BulkOperationResult> {
+    if (primaryKeys.length === 0) {
+      return { successCount: 0, failureCount: 0 };
+    }
+
+    const { batchSize = 1000, onProgress } = options;
+    const qualified = `${this.quoteIdentifier(schema)}.${this.quoteIdentifier(table)}`;
+    const pkColumns = Object.keys(primaryKeys[0]);
+
+    let successCount = 0;
+    const errors: Array<{ index: number; error: string }> = [];
+
+    // Process in batches
+    for (let i = 0; i < primaryKeys.length; i += batchSize) {
+      const batch = primaryKeys.slice(i, Math.min(i + batchSize, primaryKeys.length));
+
+      try {
+        // Build WHERE clause with OR conditions for composite keys
+        // or IN clause for single-column keys
+        if (pkColumns.length === 1) {
+          // Single-column primary key - use efficient IN clause
+          const pkCol = pkColumns[0];
+          const values = batch.map(pk => pk[pkCol]);
+          const placeholders = values.map((_, idx) => `$${idx + 1}`).join(', ');
+
+          const sql = `DELETE FROM ${qualified} WHERE ${this.quoteIdentifier(pkCol)} IN (${placeholders})`;
+          const result = await this.query(sql, values);
+          successCount += result.rowCount || 0;
+        } else {
+          // Composite primary key - use OR conditions
+          const params: unknown[] = [];
+          const conditions = batch.map((pk, idx) => {
+            const pkConditions = pkColumns.map((col, j) => {
+              params.push(pk[col]);
+              return `${this.quoteIdentifier(col)} = $${idx * pkColumns.length + j + 1}`;
+            }).join(' AND ');
+            return `(${pkConditions})`;
+          }).join(' OR ');
+
+          const sql = `DELETE FROM ${qualified} WHERE ${conditions}`;
+          const result = await this.query(sql, params);
+          successCount += result.rowCount || 0;
+        }
+
+        onProgress?.(successCount, primaryKeys.length);
+      } catch (error) {
+        errors.push({
+          index: i,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    return {
+      successCount,
+      failureCount: primaryKeys.length - successCount,
+      errors: errors.length > 0 ? errors : undefined
+    };
+  }
+
+  /**
+   * Fetch rows using cursor-based (keyset) pagination
+   * More efficient than OFFSET for large datasets - O(1) instead of O(n)
+   */
+  async fetchTableRowsWithCursor(
+    schema: string,
+    table: string,
+    options: FetchOptions = {}
+  ): Promise<CursorResultSet> {
+    const {
+      limit = 100,
+      filters = [],
+      filterLogic = 'AND',
+      sortColumn,
+      sortDirection = 'ASC',
+      cursor
+    } = options;
+
+    const qualified = `${this.quoteIdentifier(schema)}.${this.quoteIdentifier(table)}`;
+
+    // Get primary key columns for cursor if no sort column specified
+    const metadata = await this.getTableMetadata(schema, table);
+    const pkColumns = metadata.filter(col => col.isPrimaryKey).map(col => col.name);
+    const cursorColumn = sortColumn || (pkColumns.length > 0 ? pkColumns[0] : metadata[0]?.name);
+
+    if (!cursorColumn) {
+      throw new Error('Cannot perform cursor pagination: no sort column or primary key found');
+    }
+
+    const { whereClause: filterWhere, params: filterParams } = this.buildWhereClause(filters, filterLogic);
+    const params: unknown[] = [...filterParams];
+
+    // Build cursor condition
+    let cursorCondition = '';
+    if (cursor && cursor.values[cursorColumn] !== undefined) {
+      const cursorValue = cursor.values[cursorColumn];
+      const operator = cursor.direction === 'forward'
+        ? (sortDirection === 'ASC' ? '>' : '<')
+        : (sortDirection === 'ASC' ? '<' : '>');
+
+      params.push(cursorValue);
+      cursorCondition = `${this.quoteIdentifier(cursorColumn)} ${operator} $${params.length}`;
+    }
+
+    // Build WHERE clause combining filters and cursor
+    let whereClause = '';
+    if (filterWhere && cursorCondition) {
+      whereClause = `WHERE (${filterWhere}) AND ${cursorCondition}`;
+    } else if (filterWhere) {
+      whereClause = `WHERE ${filterWhere}`;
+    } else if (cursorCondition) {
+      whereClause = `WHERE ${cursorCondition}`;
+    }
+
+    // Fetch one extra row to determine if there are more pages
+    const fetchLimit = limit + 1;
+    params.push(fetchLimit);
+
+    const orderDirection = cursor?.direction === 'backward'
+      ? (sortDirection === 'ASC' ? 'DESC' : 'ASC')
+      : sortDirection;
+
+    const sql = `
+      SELECT * FROM ${qualified}
+      ${whereClause}
+      ORDER BY ${this.quoteIdentifier(cursorColumn)} ${orderDirection}
+      LIMIT $${params.length}
+    `;
+
+    const result = await this.query(sql, params);
+    let rows = result.rows as Record<string, unknown>[];
+
+    // Check if there are more pages
+    const hasMore = rows.length > limit;
+    if (hasMore) {
+      rows = rows.slice(0, limit);
+    }
+
+    // Reverse rows if we were paginating backward
+    if (cursor?.direction === 'backward') {
+      rows.reverse();
+    }
+
+    // Build cursor positions
+    let nextCursor: CursorPosition | undefined;
+    let prevCursor: CursorPosition | undefined;
+
+    if (rows.length > 0) {
+      const lastRow = rows[rows.length - 1];
+      const firstRow = rows[0];
+
+      if (hasMore || cursor) {
+        nextCursor = {
+          values: { [cursorColumn]: lastRow[cursorColumn] },
+          direction: 'forward'
+        };
+      }
+
+      if (cursor) {
+        prevCursor = {
+          values: { [cursorColumn]: firstRow[cursorColumn] },
+          direction: 'backward'
+        };
+      }
+    }
+
+    return {
+      columns: result.fields.map(f => f.name),
+      rows,
+      hasNextPage: hasMore,
+      hasPrevPage: !!cursor,
+      nextCursor,
+      prevCursor
+    };
+  }
+
   // ==================== Metadata ====================
 
   async getDatabaseInfo(): Promise<DatabaseInfo> {
@@ -1334,6 +1678,9 @@ function toPoolConfig(connection: ConnectionConfig | PostgresConnectionConfig): 
     }
   }
 
+  // Get pool configuration from connection config or use defaults
+  const poolConfig = (connection as any).pool || {};
+
   return {
     host: connection.host,
     port: connection.port,
@@ -1341,9 +1688,10 @@ function toPoolConfig(connection: ConnectionConfig | PostgresConnectionConfig): 
     password: connection.password ?? '',
     database: connection.database,
     ssl: sslConfig,
-    connectionTimeoutMillis: 10000,
-    idleTimeoutMillis: 30000,
-    max: 10,
+    connectionTimeoutMillis: poolConfig.connectionTimeoutMs ?? 10000,
+    idleTimeoutMillis: poolConfig.idleTimeoutMs ?? 30000,
+    min: poolConfig.minConnections ?? 0,
+    max: poolConfig.maxConnections ?? 20, // Increased default from 10 to 20 for better concurrency
     statement_timeout: 60000
   };
 }

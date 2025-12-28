@@ -1117,14 +1117,16 @@ interface DatabaseAdapter {
 |----------|---------|------------------|-------------|----------|
 | PostgreSQL | ✅ Complete | ✅ Full Support | ✅ Full Support | Full CRUD, schemas, views, functions, procedures, types |
 | MySQL | ✅ Complete | ⏳ Partial | ⏳ Partial | Full CRUD, schemas, views, functions (adapters/MySQLAdapter.ts) |
+| MariaDB | ✅ Complete | ⏳ Partial | ⏳ Partial | Full CRUD, MySQL-compatible (adapters/MariaDBAdapter.ts) |
 | SQL Server | ✅ Complete | ⏳ Partial | ⏳ Partial | Full CRUD, schemas, views, procedures (adapters/SQLServerAdapter.ts) |
 | SQLite | ✅ Complete | ⏳ Partial | ⏳ Partial | Full CRUD, local file, tables, views (adapters/SQLiteAdapter.ts) |
 | MongoDB | ✅ Complete | ⏳ Partial | ⏳ Partial | Collections, documents, aggregation (adapters/MongoDBAdapter.ts) |
 | Redis | ⏳ Partial | ❌ Not Integrated | ❌ Not Integrated | Key browser, TTL viewer (adapters/RedisAdapter.ts - incomplete) |
+| Elasticsearch | ✅ Complete | ⏳ Partial | ⏳ Partial | Indices, documents, Query DSL, mappings (adapters/ElasticsearchAdapter.ts) |
 
 **Implementation Status:**
 - All adapters located in `packages/adapters/src/adapters/`
-- DatabaseAdapterFactory supports all 6 database types
+- DatabaseAdapterFactory supports all 7 database types
 - Shared adapter package used by both VSCode extension and Desktop app
 - Integration tests exist for PostgreSQL and MySQL
 - Advanced features (EXPLAIN, functions, procedures) may vary by database
@@ -1303,6 +1305,71 @@ Turn dbview into a standalone desktop database client.
 | Paste | `Ctrl+V` |
 | Undo | `Ctrl+Z` |
 | Format SQL | `Ctrl+Shift+F` |
+
+---
+
+# Future Database Adapters (Implementation Roadmap)
+
+The following databases are prioritized for future adapter implementation, based on DB-Engines 2025 rankings, Stack Overflow survey data, and market demand.
+
+### Currently Supported
+- PostgreSQL ✅
+- MySQL ✅
+- MariaDB ✅
+- SQL Server ✅
+- SQLite ✅
+- MongoDB ✅
+- Redis ⏳ (partial)
+- Elasticsearch ✅ (NEW)
+
+### High Priority (Popular & Widely Used)
+
+| # | Database | Type | Use Case | Effort |
+|---|----------|------|----------|--------|
+| 1 | ~~**MariaDB**~~ | SQL | ✅ **IMPLEMENTED** | Done |
+| 2 | **Oracle** | SQL | #1 in DB-Engines ranking, enterprise standard | High |
+| 3 | **Elasticsearch** | Search/Document | Full-text search, log analytics, ~8% market share | Medium |
+| 4 | **Cassandra** | Wide-Column NoSQL | Massive scale, high availability (Netflix, Apple use it) | High |
+| 5 | **Neo4j** | Graph | Relationship-focused data, fraud detection, recommendations | Medium |
+| 6 | **DynamoDB** | Key-Value NoSQL | AWS native, serverless, highly scalable | Medium |
+
+### Medium Priority (Growing & Specialized)
+
+| # | Database | Type | Use Case | Effort |
+|---|----------|------|----------|--------|
+| 7 | **InfluxDB** | Time-Series | IoT, monitoring, metrics (75% growth in IoT apps) | Medium |
+| 8 | **CouchDB** | Document NoSQL | Offline-first apps, multi-master replication | Medium |
+| 9 | **Snowflake** | Cloud Data Warehouse | Analytics, top climber in 2025 rankings | High |
+| 10 | **ClickHouse** | Column-Oriented | Fast analytics, BI, telemetry (jumped from #37 to #31) | Medium |
+| 11 | **Firebase/Firestore** | Document NoSQL | Real-time apps, mobile development | Medium |
+| 12 | **CockroachDB** | Distributed SQL | Globally distributed, PostgreSQL compatible | Low (PostgreSQL-compatible) |
+
+### Emerging & Specialized
+
+| # | Database | Type | Use Case | Effort |
+|---|----------|------|----------|--------|
+| 13 | **DuckDB** | Embedded Analytics | In-process OLAP, rising popularity | Low |
+| 14 | **TimescaleDB** | Time-Series (PostgreSQL) | Time-series on PostgreSQL, easy adoption | Low (PostgreSQL extension) |
+| 15 | **OpenSearch** | Search | Elasticsearch fork, open-source (jumped #40 to #32) | Medium |
+| 16 | **Supabase** | PostgreSQL-based | Firebase alternative, real-time subscriptions | Low (PostgreSQL-based) |
+| 17 | **PlanetScale** | MySQL-based | Serverless MySQL, branching workflows | Low (MySQL-compatible) |
+| 18 | **Milvus/Pinecone** | Vector DB | AI/ML embeddings, semantic search | High |
+| 19 | **ScyllaDB** | Wide-Column | Cassandra-compatible, better performance | Medium |
+| 20 | **ArangoDB** | Multi-Model | Graph + Document + Key-Value in one | High |
+
+### Recommended Implementation Order
+
+1. ~~**MariaDB**~~ - ✅ **IMPLEMENTED**
+2. **Elasticsearch** - High demand for search functionality
+3. **Neo4j** - Graph databases are trending
+4. **InfluxDB** - Time-series is growing fast
+5. **DynamoDB** - AWS ecosystem is huge
+6. **Cassandra** - Enterprise distributed workloads
+
+### References
+- [DB-Engines Ranking 2025](https://db-engines.com/en/ranking)
+- [Stack Overflow Developer Survey 2024](https://survey.stackoverflow.co/2024/)
+- [The Most Popular Databases in 2025 - BairesDev](https://www.bairesdev.com/blog/most-popular-databases/)
 
 ---
 

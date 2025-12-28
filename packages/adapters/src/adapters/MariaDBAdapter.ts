@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import * as mysql from 'mysql2/promise';
-import type { MySQLConnectionConfig } from '@dbview/types';
+import type { MariaDBConnectionConfig } from '@dbview/types';
 import type {
   DatabaseAdapter,
   ConnectionStatus,
@@ -27,22 +27,45 @@ import type {
 import { getDatabaseCapabilities } from '../capabilities/DatabaseCapabilities';
 
 /**
- * MySQL Database Adapter
+ * MariaDB Database Adapter
  *
- * Key MySQL differences:
+ * MariaDB is a community-developed fork of MySQL with high compatibility.
+ * Key characteristics:
+ * - Uses mysql2 driver (protocol-compatible with MySQL)
  * - Databases are like PostgreSQL schemas (flat hierarchy)
  * - Backtick quoting: `identifier` instead of "identifier"
  * - Parameter placeholders: ? instead of $1, $2
  * - INFORMATION_SCHEMA for metadata
- * - Default port: 3306
+ * - Default port: 3306 (same as MySQL)
+ *
+ * MariaDB-specific features:
+ * - Better performance for certain operations
+ * - Additional storage engines (Aria, ColumnStore)
+ * - More advanced JSON functions
+ * - Sequences (similar to PostgreSQL)
+ * - System-versioned tables
  */
-export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
-  readonly type = 'mysql' as const;
-  readonly capabilities = getDatabaseCapabilities('mysql');
+/**
+ * Helper to get column value regardless of case
+ * MariaDB/MySQL information_schema may return column names in different cases
+ */
+function getCol(row: any, ...names: string[]): any {
+  if (!row) return undefined;
+  for (const name of names) {
+    if (row[name] !== undefined) return row[name];
+    if (row[name.toLowerCase()] !== undefined) return row[name.toLowerCase()];
+    if (row[name.toUpperCase()] !== undefined) return row[name.toUpperCase()];
+  }
+  return undefined;
+}
+
+export class MariaDBAdapter extends EventEmitter implements DatabaseAdapter {
+  readonly type = 'mariadb' as const;
+  readonly capabilities = getDatabaseCapabilities('mariadb');
 
   private pool: mysql.Pool | undefined;
   private config: mysql.PoolOptions;
-  private connectionConfig: MySQLConnectionConfig;
+  private connectionConfig: MariaDBConnectionConfig;
   private _status: ConnectionStatus = 'disconnected';
   private _lastError: Error | undefined;
   private healthCheckInterval: NodeJS.Timeout | undefined;
@@ -50,7 +73,7 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
   private readonly maxReconnectAttempts = 3;
   private readonly baseReconnectDelayMs = 1000;
 
-  constructor(config: MySQLConnectionConfig) {
+  constructor(config: MariaDBConnectionConfig) {
     super();
 
     this.connectionConfig = config;
@@ -65,10 +88,24 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       password: config.password,
       database: config.database,
       charset: config.charset || 'utf8mb4',
-      connectionLimit: poolConfig.maxConnections ?? 20, // Increased default from 10 to 20
-      waitForConnections: true,
-      queueLimit: 0,
-      connectTimeout: poolConfig.connectionTimeoutMs ?? 10000,
+
+      // Connection pool settings (best practices for MariaDB)
+      connectionLimit: poolConfig.maxConnections ?? 20,       // Increased from 10 to 20
+      waitForConnections: true,  // Queue requests when no connections available
+      queueLimit: 0,             // Unlimited queue (0 = no limit)
+      maxIdle: 10,               // Max idle connections (same as connectionLimit)
+      idleTimeout: 60000,        // Close idle connections after 60s (must be < server wait_timeout)
+
+      // Connection stability settings
+      enableKeepAlive: true,           // Prevent connections from being closed by server wait_timeout
+      keepAliveInitialDelay: 10000,    // Start keepalive after 10s of idle
+      connectTimeout: 10000,           // 10s timeout for initial connection
+
+      // Date/time handling
+      timezone: 'Z',                   // Use UTC for consistency (can be overridden)
+      dateStrings: false,              // Return Date objects, not strings
+
+      // SSL configuration
       ssl: typeof config.ssl === 'boolean'
         ? (config.ssl ? {} : undefined)
         : config.ssl
@@ -116,13 +153,13 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
 
       // If pool already exists and is connected, just verify the connection
       if (this.pool && this._status === 'connected') {
-        console.log('[MySQLAdapter] Pool already exists and connected, skipping reconnect');
+        console.log('[MariaDBAdapter] Pool already exists and connected, skipping reconnect');
         return;
       }
 
       // Close existing pool if any
       if (this.pool) {
-        console.log('[MySQLAdapter] Closing existing pool before reconnecting');
+        console.log('[MariaDBAdapter] Closing existing pool before reconnecting');
         await this.pool.end();
       }
 
@@ -133,14 +170,14 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       try {
         await connection.ping();
         this.setStatus('connected');
-        console.log('[MySQLAdapter] Connected successfully');
+        console.log('[MariaDBAdapter] Connected successfully');
       } finally {
         connection.release();
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       this.setStatus('error', err);
-      console.error('[MySQLAdapter] Connection failed:', err);
+      console.error('[MariaDBAdapter] Connection failed:', err);
       throw err;
     }
   }
@@ -151,9 +188,9 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     if (this.pool) {
       try {
         await this.pool.end();
-        console.log('[MySQLAdapter] Disconnected successfully');
+        console.log('[MariaDBAdapter] Disconnected successfully');
       } catch (error) {
-        console.error('[MySQLAdapter] Error during disconnect:', error);
+        console.error('[MariaDBAdapter] Error during disconnect:', error);
       }
       this.pool = undefined;
     }
@@ -191,7 +228,7 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       try {
         await this.ping();
       } catch (error) {
-        console.error('[MySQLAdapter] Health check error:', error);
+        console.error('[MariaDBAdapter] Health check error:', error);
         const err = error instanceof Error ? error : new Error(String(error));
         this.setStatus('error', err);
       }
@@ -216,13 +253,13 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
 
   async reconnect(): Promise<boolean> {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log(`[MySQLAdapter] Max reconnect attempts (${this.maxReconnectAttempts}) reached`);
+      console.log(`[MariaDBAdapter] Max reconnect attempts (${this.maxReconnectAttempts}) reached`);
       return false;
     }
 
     this.reconnectAttempts++;
     const delay = this.baseReconnectDelayMs * Math.pow(2, this.reconnectAttempts - 1);
-    console.log(`[MySQLAdapter] Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} after ${delay}ms`);
+    console.log(`[MariaDBAdapter] Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} after ${delay}ms`);
 
     await new Promise(resolve => setTimeout(resolve, delay));
 
@@ -230,10 +267,10 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       await this.disconnect();
       await this.connect();
       this.reconnectAttempts = 0; // Reset on success
-      console.log('[MySQLAdapter] Reconnect successful');
+      console.log('[MariaDBAdapter] Reconnect successful');
       return true;
     } catch (error) {
-      console.error(`[MySQLAdapter] Reconnect attempt ${this.reconnectAttempts} failed:`, error);
+      console.error(`[MariaDBAdapter] Reconnect attempt ${this.reconnectAttempts} failed:`, error);
 
       // Try again if we haven't exceeded max attempts
       if (this.reconnectAttempts < this.maxReconnectAttempts) {
@@ -252,7 +289,7 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
   }
 
   async getHierarchy(): Promise<DatabaseHierarchy> {
-    // MySQL uses a flat hierarchy - databases are the top level
+    // MariaDB uses a flat hierarchy - databases are the top level (same as MySQL)
     return {
       type: 'database-based',
       levels: ['database', 'table'],
@@ -261,7 +298,7 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
   }
 
   async listSchemas(database?: string): Promise<string[]> {
-    // In MySQL, schemas are databases
+    // In MariaDB, schemas are databases (same as MySQL)
     return this.listDatabases();
   }
 
@@ -271,54 +308,56 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     // Filter out system databases
     const systemDbs = ['information_schema', 'mysql', 'performance_schema', 'sys'];
     return rows
-      .map((row: any) => row.Database)
-      .filter((db: string) => !systemDbs.includes(db));
+      .map((row: any) => getCol(row, 'Database', 'database', 'DATABASE'))
+      .filter((db: string) => db && !systemDbs.includes(db));
   }
 
   async listTables(schema: string): Promise<TableInfo[]> {
     const query = `
       SELECT
-        table_name as name,
-        (data_length + index_length) as size_bytes,
-        table_rows as row_count
+        TABLE_NAME as tbl_name,
+        (DATA_LENGTH + INDEX_LENGTH) as size_bytes,
+        TABLE_ROWS as row_count
       FROM information_schema.tables
       WHERE table_schema = ?
         AND table_type = 'BASE TABLE'
-      ORDER BY table_name
+      ORDER BY TABLE_NAME
     `;
 
     const [rows] = await this.execute<any[]>(query, [schema]);
 
     return rows.map((row: any) => ({
-      name: row.name,
-      sizeBytes: row.size_bytes ? parseInt(row.size_bytes) : undefined,
-      rowCount: row.row_count ? parseInt(row.row_count) : undefined,
+      // Handle case sensitivity - MariaDB may return column names in different cases
+      name: row.tbl_name || row.TBL_NAME || row.name || row.NAME || row.TABLE_NAME || row.table_name,
+      sizeBytes: parseInt(row.size_bytes || row.SIZE_BYTES || 0) || undefined,
+      rowCount: parseInt(row.row_count || row.ROW_COUNT || 0) || undefined,
     }));
   }
 
   async listViews(schema: string): Promise<string[]> {
     const query = `
-      SELECT table_name
+      SELECT TABLE_NAME as view_name
       FROM information_schema.tables
       WHERE table_schema = ?
         AND table_type = 'VIEW'
-      ORDER BY table_name
+      ORDER BY TABLE_NAME
     `;
 
     const [rows] = await this.execute<any[]>(query, [schema]);
-    return rows.map((row: any) => row.table_name);
+    // Handle case sensitivity - MariaDB may return column names in different cases
+    return rows.map((row: any) => row.view_name || row.VIEW_NAME || row.table_name || row.TABLE_NAME);
   }
 
   async getTableColumns(schema: string, table: string): Promise<ColumnInfo[]> {
     // Get column information
     const columnsQuery = `
       SELECT
-        column_name as name,
-        data_type,
-        is_nullable,
-        column_default,
-        column_key,
-        extra
+        COLUMN_NAME as col_name,
+        DATA_TYPE as data_type,
+        IS_NULLABLE as is_nullable,
+        COLUMN_DEFAULT as col_default,
+        COLUMN_KEY as col_key,
+        EXTRA as extra
       FROM information_schema.columns
       WHERE table_schema = ?
         AND table_name = ?
@@ -330,15 +369,23 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     // Get foreign key information
     const fkMap = await this.getForeignKeyMap(schema, table);
 
-    return rows.map((row: any) => ({
-      name: row.name,
-      dataType: row.data_type,
-      isNullable: row.is_nullable === 'YES',
-      defaultValue: row.column_default,
-      isPrimaryKey: row.column_key === 'PRI',
-      isForeignKey: fkMap.has(row.name),
-      foreignKeyRef: fkMap.get(row.name) || null,
-    }));
+    return rows.map((row: any) => {
+      const name = getCol(row, 'col_name', 'COLUMN_NAME', 'column_name', 'name');
+      const dataType = getCol(row, 'data_type', 'DATA_TYPE');
+      const isNullable = getCol(row, 'is_nullable', 'IS_NULLABLE');
+      const colDefault = getCol(row, 'col_default', 'COLUMN_DEFAULT', 'column_default');
+      const colKey = getCol(row, 'col_key', 'COLUMN_KEY', 'column_key');
+
+      return {
+        name,
+        dataType,
+        isNullable: isNullable === 'YES',
+        defaultValue: colDefault,
+        isPrimaryKey: colKey === 'PRI',
+        isForeignKey: fkMap.has(name),
+        foreignKeyRef: fkMap.get(name) || null,
+      };
+    });
   }
 
   /**
@@ -348,22 +395,27 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
   private async getForeignKeyMap(schema: string, table: string): Promise<Map<string, string>> {
     const fkQuery = `
       SELECT
-        kcu.column_name,
-        kcu.referenced_table_schema,
-        kcu.referenced_table_name,
-        kcu.referenced_column_name
-      FROM information_schema.key_column_usage kcu
-      WHERE kcu.table_schema = ?
-        AND kcu.table_name = ?
-        AND kcu.referenced_table_name IS NOT NULL
+        COLUMN_NAME as col_name,
+        REFERENCED_TABLE_SCHEMA as ref_schema,
+        REFERENCED_TABLE_NAME as ref_table,
+        REFERENCED_COLUMN_NAME as ref_column
+      FROM information_schema.key_column_usage
+      WHERE table_schema = ?
+        AND table_name = ?
+        AND REFERENCED_TABLE_NAME IS NOT NULL
     `;
 
     const [fkRows] = await this.execute<any[]>(fkQuery, [schema, table]);
 
     const fkMap = new Map<string, string>();
     for (const fk of fkRows) {
-      const ref = `${fk.referenced_table_name}.${fk.referenced_column_name}`;
-      fkMap.set(fk.column_name, ref);
+      const colName = getCol(fk, 'col_name', 'COLUMN_NAME', 'column_name');
+      const refTable = getCol(fk, 'ref_table', 'REFERENCED_TABLE_NAME', 'referenced_table_name');
+      const refColumn = getCol(fk, 'ref_column', 'REFERENCED_COLUMN_NAME', 'referenced_column_name');
+      if (colName && refTable && refColumn) {
+        const ref = `${refTable}.${refColumn}`;
+        fkMap.set(colName, ref);
+      }
     }
 
     return fkMap;
@@ -376,15 +428,15 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
   async getTableMetadata(schema: string, table: string): Promise<ColumnMetadata[]> {
     const query = `
       SELECT
-        column_name as name,
-        data_type as type,
-        is_nullable,
-        column_default as default_value,
-        column_key,
-        extra,
-        character_maximum_length as max_length,
-        numeric_precision,
-        numeric_scale
+        COLUMN_NAME as col_name,
+        DATA_TYPE as data_type,
+        IS_NULLABLE as is_nullable,
+        COLUMN_DEFAULT as col_default,
+        COLUMN_KEY as col_key,
+        EXTRA as extra,
+        CHARACTER_MAXIMUM_LENGTH as max_len,
+        NUMERIC_PRECISION as num_precision,
+        NUMERIC_SCALE as num_scale
       FROM information_schema.columns
       WHERE table_schema = ?
         AND table_name = ?
@@ -397,36 +449,45 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     const fkMap = await this.getForeignKeyMap(schema, table);
 
     return rows.map((row: any) => {
-      const extra = row.extra || '';
-      const isForeignKey = fkMap.has(row.name);
+      const name = getCol(row, 'col_name', 'COLUMN_NAME', 'column_name', 'name');
+      const type = getCol(row, 'data_type', 'DATA_TYPE', 'type');
+      const isNullable = getCol(row, 'is_nullable', 'IS_NULLABLE');
+      const defaultValue = getCol(row, 'col_default', 'COLUMN_DEFAULT', 'column_default', 'default_value');
+      const colKey = getCol(row, 'col_key', 'COLUMN_KEY', 'column_key');
+      const extra = getCol(row, 'extra', 'EXTRA') || '';
+      const maxLength = getCol(row, 'max_len', 'CHARACTER_MAXIMUM_LENGTH', 'max_length');
+      const numPrecision = getCol(row, 'num_precision', 'NUMERIC_PRECISION', 'numeric_precision');
+      const numScale = getCol(row, 'num_scale', 'NUMERIC_SCALE', 'numeric_scale');
+
+      const isForeignKey = fkMap.has(name);
       return {
-        name: row.name,
-        type: row.type,
-        nullable: row.is_nullable === 'YES',
-        defaultValue: row.default_value,
-        isPrimaryKey: row.column_key === 'PRI',
+        name,
+        type,
+        nullable: isNullable === 'YES',
+        defaultValue,
+        isPrimaryKey: colKey === 'PRI',
         isForeignKey,
-        foreignKeyRef: fkMap.get(row.name) || null,
-        isAutoIncrement: extra.includes('auto_increment'),
-        isGenerated: extra.includes('GENERATED'),
-        maxLength: row.max_length ? parseInt(row.max_length) : undefined,
-        numericPrecision: row.numeric_precision ? parseInt(row.numeric_precision) : undefined,
-        numericScale: row.numeric_scale ? parseInt(row.numeric_scale) : undefined,
-        editable: row.column_key !== 'PRI' && !extra.includes('auto_increment') && !extra.includes('GENERATED'),
+        foreignKeyRef: fkMap.get(name) || null,
+        isAutoIncrement: extra.toLowerCase().includes('auto_increment'),
+        isGenerated: extra.toUpperCase().includes('GENERATED'),
+        maxLength: maxLength ? parseInt(maxLength) : undefined,
+        numericPrecision: numPrecision ? parseInt(numPrecision) : undefined,
+        numericScale: numScale ? parseInt(numScale) : undefined,
+        editable: colKey !== 'PRI' && !extra.toLowerCase().includes('auto_increment') && !extra.toUpperCase().includes('GENERATED'),
       };
     });
   }
 
   async getObjectCounts(schema: string): Promise<ObjectCounts> {
     const tablesQuery = `
-      SELECT COUNT(*) as count
+      SELECT COUNT(*) as cnt
       FROM information_schema.tables
       WHERE table_schema = ?
         AND table_type = 'BASE TABLE'
     `;
 
     const viewsQuery = `
-      SELECT COUNT(*) as count
+      SELECT COUNT(*) as cnt
       FROM information_schema.tables
       WHERE table_schema = ?
         AND table_type = 'VIEW'
@@ -435,13 +496,21 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     const [tablesResult] = await this.execute<any[]>(tablesQuery, [schema]);
     const [viewsResult] = await this.execute<any[]>(viewsQuery, [schema]);
 
+    // Helper to get count value handling case sensitivity
+    const getCount = (result: any[]): number => {
+      if (!result || result.length === 0) return 0;
+      const row = result[0];
+      // Try different possible column names
+      return parseInt(row.cnt || row.CNT || row.count || row.COUNT || row['COUNT(*)'] || 0);
+    };
+
     return {
-      tables: tablesResult[0]?.count || 0,
-      views: viewsResult[0]?.count || 0,
-      materializedViews: 0, // MySQL doesn't have materialized views
+      tables: getCount(tablesResult),
+      views: getCount(viewsResult),
+      materializedViews: 0, // MariaDB doesn't have materialized views
       functions: 0, // Would need SHOW FUNCTION STATUS
       procedures: 0, // Would need SHOW PROCEDURE STATUS
-      types: 0, // MySQL doesn't have user-defined types like PostgreSQL
+      types: 0, // MariaDB doesn't have user-defined types like PostgreSQL
     };
   }
 
@@ -456,7 +525,7 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     sortColumn?: string,
     sortDirection: 'ASC' | 'DESC' = 'ASC'
   ): Promise<QueryResultSet> {
-    // Use MAX_EXECUTION_TIME optimizer hint to prevent long-running queries (MySQL 5.7.8+)
+    // Use MAX_EXECUTION_TIME optimizer hint to prevent long-running queries (MariaDB 10.1.1+)
     const timeoutMs = this.getQueryTimeoutMs();
     let query = `SELECT /*+ MAX_EXECUTION_TIME(${timeoutMs}) */ * FROM ${this.quoteIdentifier(schema)}.${this.quoteIdentifier(table)}`;
     const params: unknown[] = [];
@@ -477,7 +546,7 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       query += ` ORDER BY ${orderByClause}`;
     }
 
-    // MySQL doesn't handle placeholders well for LIMIT/OFFSET, use direct values
+    // MariaDB doesn't handle placeholders well for LIMIT/OFFSET, use direct values
     const safeLimit = Math.max(0, parseInt(String(limit)));
     const safeOffset = Math.max(0, parseInt(String(offset)));
     query += ` LIMIT ${safeLimit} OFFSET ${safeOffset}`;
@@ -523,7 +592,7 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     filterLogic: 'AND' | 'OR' = 'AND'
   ): Promise<number> {
     const timeoutMs = this.getQueryTimeoutMs();
-    let query = `SELECT /*+ MAX_EXECUTION_TIME(${timeoutMs}) */ COUNT(*) as count FROM ${this.quoteIdentifier(schema)}.${this.quoteIdentifier(table)}`;
+    let query = `SELECT /*+ MAX_EXECUTION_TIME(${timeoutMs}) */ COUNT(*) as cnt FROM ${this.quoteIdentifier(schema)}.${this.quoteIdentifier(table)}`;
     const params: unknown[] = [];
 
     if (filters && filters.length > 0) {
@@ -535,7 +604,8 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     }
 
     const [rows] = await this.execute<any[]>(query, params);
-    return rows[0]?.count || 0;
+    const count = getCol(rows[0], 'cnt', 'count', 'COUNT(*)', 'CNT', 'COUNT');
+    return parseInt(count) || 0;
   }
 
   /**
@@ -611,11 +681,11 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
   async getTableStatistics(schema: string, table: string): Promise<TableStatistics> {
     const query = `
       SELECT
-        table_rows as row_count,
-        data_length + index_length as total_size,
-        data_length as table_size,
-        index_length as indexes_size,
-        update_time as last_update
+        TABLE_ROWS as row_cnt,
+        DATA_LENGTH + INDEX_LENGTH as total_sz,
+        DATA_LENGTH as table_sz,
+        INDEX_LENGTH as indexes_sz,
+        UPDATE_TIME as last_upd
       FROM information_schema.tables
       WHERE table_schema = ?
         AND table_name = ?
@@ -636,13 +706,19 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     };
 
+    const rowCount = getCol(row, 'row_cnt', 'TABLE_ROWS', 'table_rows', 'row_count');
+    const totalSize = getCol(row, 'total_sz', 'total_size');
+    const tableSize = getCol(row, 'table_sz', 'DATA_LENGTH', 'data_length', 'table_size');
+    const indexesSize = getCol(row, 'indexes_sz', 'INDEX_LENGTH', 'index_length', 'indexes_size');
+    const lastUpdate = getCol(row, 'last_upd', 'UPDATE_TIME', 'update_time', 'last_update');
+
     return {
-      rowCount: parseInt(row.row_count) || 0,
-      totalSize: formatBytes(parseInt(row.total_size) || 0),
-      tableSize: formatBytes(parseInt(row.table_size) || 0),
-      indexesSize: formatBytes(parseInt(row.indexes_size) || 0),
-      lastVacuum: null, // MySQL doesn't have vacuum
-      lastAnalyze: row.last_update || null,
+      rowCount: parseInt(rowCount) || 0,
+      totalSize: formatBytes(parseInt(totalSize) || 0),
+      tableSize: formatBytes(parseInt(tableSize) || 0),
+      indexesSize: formatBytes(parseInt(indexesSize) || 0),
+      lastVacuum: null, // MariaDB doesn't have vacuum
+      lastAnalyze: lastUpdate || null,
       lastAutoVacuum: null,
       lastAutoAnalyze: null,
     };
@@ -651,26 +727,27 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
   async getDatabaseSize(): Promise<number> {
     const query = `
       SELECT
-        SUM(data_length + index_length) as size_bytes
+        SUM(DATA_LENGTH + INDEX_LENGTH) as sz_bytes
       FROM information_schema.tables
       WHERE table_schema = ?
     `;
 
     const [rows] = await this.execute<any[]>(query, [this.config.database]);
-    return parseInt(rows[0]?.size_bytes || '0');
+    const sizeBytes = getCol(rows[0], 'sz_bytes', 'size_bytes', 'SZ_BYTES');
+    return parseInt(sizeBytes || '0');
   }
 
   async getDatabaseInfo(): Promise<DatabaseInfo> {
-    const [versionRows] = await this.execute<any[]>('SELECT VERSION() as version');
+    const [versionRows] = await this.execute<any[]>('SELECT VERSION() as ver');
     const [sizeRows] = await this.execute<any[]>(`
       SELECT
-        SUM(data_length + index_length) as size_bytes
+        SUM(DATA_LENGTH + INDEX_LENGTH) as sz_bytes
       FROM information_schema.tables
       WHERE table_schema = ?
     `, [this.config.database]);
 
     const [tableCountRows] = await this.execute<any[]>(`
-      SELECT COUNT(*) as count
+      SELECT COUNT(*) as cnt
       FROM information_schema.tables
       WHERE table_schema = ?
         AND table_type = 'BASE TABLE'
@@ -679,26 +756,35 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     const [connRows] = await this.execute<any[]>('SHOW STATUS LIKE "Threads_connected"');
     const [maxConnRows] = await this.execute<any[]>('SHOW VARIABLES LIKE "max_connections"');
     const [uptimeRows] = await this.execute<any[]>('SHOW STATUS LIKE "Uptime"');
-    const [charsetRows] = await this.execute<any[]>('SELECT @@character_set_database as charset');
+    const [charsetRows] = await this.execute<any[]>('SELECT @@character_set_database as db_charset');
 
-    const sizeBytes = sizeRows[0]?.size_bytes || 0;
+    const sizeBytes = getCol(sizeRows[0], 'sz_bytes', 'size_bytes', 'SZ_BYTES') || 0;
     const sizeMB = (sizeBytes / 1024 / 1024).toFixed(2);
 
-    const uptimeSeconds = parseInt(uptimeRows[0]?.Value || '0');
+    // SHOW STATUS returns Variable_name and Value columns
+    const connValue = getCol(connRows[0], 'Value', 'value', 'VALUE') || '0';
+    const maxConnValue = getCol(maxConnRows[0], 'Value', 'value', 'VALUE') || '0';
+    const uptimeValue = getCol(uptimeRows[0], 'Value', 'value', 'VALUE') || '0';
+
+    const uptimeSeconds = parseInt(uptimeValue);
     const days = Math.floor(uptimeSeconds / 86400);
     const hours = Math.floor((uptimeSeconds % 86400) / 3600);
     const minutes = Math.floor((uptimeSeconds % 3600) / 60);
 
+    const version = getCol(versionRows[0], 'ver', 'version', 'VERSION') || 'Unknown';
+    const tableCount = getCol(tableCountRows[0], 'cnt', 'count', 'COUNT', 'CNT') || 0;
+    const charset = getCol(charsetRows[0], 'db_charset', 'charset', 'CHARSET') || 'Unknown';
+
     return {
       databaseName: this.config.database as string,
-      version: versionRows[0]?.version || 'Unknown',
+      version,
       size: `${sizeMB} MB`,
-      tableCount: tableCountRows[0]?.count || 0,
+      tableCount: parseInt(tableCount) || 0,
       schemaCount: 1, // Current database only
-      activeConnections: parseInt(connRows[0]?.Value || '0'),
-      maxConnections: parseInt(maxConnRows[0]?.Value || '0'),
+      activeConnections: parseInt(connValue),
+      maxConnections: parseInt(maxConnValue),
       uptime: `${days}d ${hours}h ${minutes}m`,
-      encoding: charsetRows[0]?.charset || 'Unknown',
+      encoding: charset,
     };
   }
 
@@ -790,9 +876,6 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Bulk Operations (for large datasets) ====================
 
-  /**
-   * Insert multiple rows efficiently using multi-row INSERT syntax
-   */
   async bulkInsert(
     schema: string,
     table: string,
@@ -821,14 +904,10 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
         const valuesClauses: string[] = [];
 
         for (const row of batch) {
-          const placeholders = columns.map(() => {
-            params.push(row[columns[params.length % columns.length]]);
-            return '?';
-          });
-          // Fix: push values correctly
-          params.length = params.length - columns.length; // Reset
+          const placeholders: string[] = [];
           for (const col of columns) {
             params.push(row[col]);
+            placeholders.push('?');
           }
           valuesClauses.push(`(${placeholders.join(', ')})`);
         }
@@ -838,7 +917,6 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
         const affectedRows = (result as any).affectedRows || 0;
         successCount += affectedRows;
 
-        // Get last insert ID
         const insertId = (result as any).insertId;
         if (insertId) {
           for (let j = 0; j < affectedRows; j++) {
@@ -850,10 +928,7 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       } catch (error) {
         if (skipErrors) {
           failureCount += batch.length;
-          errors.push({
-            index: i,
-            error: error instanceof Error ? error.message : String(error)
-          });
+          errors.push({ index: i, error: error instanceof Error ? error.message : String(error) });
         } else {
           throw error;
         }
@@ -863,9 +938,6 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     return { successCount, failureCount, errors: errors.length > 0 ? errors : undefined, insertedIds };
   }
 
-  /**
-   * Update multiple rows efficiently using transactions
-   */
   async bulkUpdate(
     schema: string,
     table: string,
@@ -916,10 +988,7 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       } catch (error) {
         if (skipErrors) {
           failureCount += batch.length;
-          errors.push({
-            index: i,
-            error: error instanceof Error ? error.message : String(error)
-          });
+          errors.push({ index: i, error: error instanceof Error ? error.message : String(error) });
         } else {
           throw error;
         }
@@ -929,9 +998,6 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     return { successCount, failureCount, errors: errors.length > 0 ? errors : undefined };
   }
 
-  /**
-   * Delete multiple rows efficiently using batched IN clauses
-   */
   async bulkDelete(
     schema: string,
     table: string,
@@ -978,40 +1044,21 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
 
         onProgress?.(successCount, primaryKeys.length);
       } catch (error) {
-        errors.push({
-          index: i,
-          error: error instanceof Error ? error.message : String(error)
-        });
+        errors.push({ index: i, error: error instanceof Error ? error.message : String(error) });
       }
     }
 
-    return {
-      successCount,
-      failureCount: primaryKeys.length - successCount,
-      errors: errors.length > 0 ? errors : undefined
-    };
+    return { successCount, failureCount: primaryKeys.length - successCount, errors: errors.length > 0 ? errors : undefined };
   }
 
-  /**
-   * Fetch rows using cursor-based (keyset) pagination
-   */
   async fetchTableRowsWithCursor(
     schema: string,
     table: string,
     options: FetchOptions = {}
   ): Promise<CursorResultSet> {
-    const {
-      limit = 100,
-      filters = [],
-      filterLogic = 'AND',
-      sortColumn,
-      sortDirection = 'ASC',
-      cursor
-    } = options;
-
+    const { limit = 100, filters = [], filterLogic = 'AND', sortColumn, sortDirection = 'ASC', cursor } = options;
     const qualified = `${this.quoteIdentifier(schema)}.${this.quoteIdentifier(table)}`;
 
-    // Get primary key columns for cursor if no sort column specified
     const metadata = await this.getTableMetadata(schema, table);
     const pkColumns = metadata.filter(col => col.isPrimaryKey).map(col => col.name);
     const cursorColumn = sortColumn || (pkColumns.length > 0 ? pkColumns[0] : metadata[0]?.name);
@@ -1023,19 +1070,16 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     const { whereClause: filterWhere, params: filterParams } = this.buildWhereClause(filters, filterLogic);
     const params: unknown[] = [...filterParams];
 
-    // Build cursor condition
     let cursorCondition = '';
     if (cursor && cursor.values[cursorColumn] !== undefined) {
       const cursorValue = cursor.values[cursorColumn];
       const operator = cursor.direction === 'forward'
         ? (sortDirection === 'ASC' ? '>' : '<')
         : (sortDirection === 'ASC' ? '<' : '>');
-
       params.push(cursorValue);
       cursorCondition = `${this.quoteIdentifier(cursorColumn)} ${operator} ?`;
     }
 
-    // Build WHERE clause
     let whereClause = '';
     if (filterWhere && cursorCondition) {
       whereClause = `WHERE (${filterWhere}) AND ${cursorCondition}`;
@@ -1051,24 +1095,14 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       : sortDirection;
 
     const timeoutMs = this.getQueryTimeoutMs();
-    const sql = `
-      SELECT /*+ MAX_EXECUTION_TIME(${timeoutMs}) */ * FROM ${qualified}
-      ${whereClause}
-      ORDER BY ${this.quoteIdentifier(cursorColumn)} ${orderDirection}
-      LIMIT ${fetchLimit}
-    `;
+    const sql = `SELECT /*+ MAX_EXECUTION_TIME(${timeoutMs}) */ * FROM ${qualified} ${whereClause} ORDER BY ${this.quoteIdentifier(cursorColumn)} ${orderDirection} LIMIT ${fetchLimit}`;
 
     const [rows] = await this.execute<any[]>(sql, params);
     let resultRows = rows as Record<string, unknown>[];
 
     const hasMore = resultRows.length > limit;
-    if (hasMore) {
-      resultRows = resultRows.slice(0, limit);
-    }
-
-    if (cursor?.direction === 'backward') {
-      resultRows.reverse();
-    }
+    if (hasMore) resultRows = resultRows.slice(0, limit);
+    if (cursor?.direction === 'backward') resultRows.reverse();
 
     let nextCursor: CursorPosition | undefined;
     let prevCursor: CursorPosition | undefined;
@@ -1078,17 +1112,10 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       const firstRow = resultRows[0];
 
       if (hasMore || cursor) {
-        nextCursor = {
-          values: { [cursorColumn]: lastRow[cursorColumn] },
-          direction: 'forward'
-        };
+        nextCursor = { values: { [cursorColumn]: lastRow[cursorColumn] }, direction: 'forward' };
       }
-
       if (cursor) {
-        prevCursor = {
-          values: { [cursorColumn]: firstRow[cursorColumn] },
-          direction: 'backward'
-        };
+        prevCursor = { values: { [cursorColumn]: firstRow[cursorColumn] }, direction: 'backward' };
       }
     }
 
@@ -1102,6 +1129,124 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     };
   }
 
+  /**
+   * List functions in a schema/database
+   */
+  async listFunctions(schema: string): Promise<string[]> {
+    const query = `
+      SELECT ROUTINE_NAME as func_name
+      FROM information_schema.routines
+      WHERE routine_schema = ?
+        AND routine_type = 'FUNCTION'
+      ORDER BY ROUTINE_NAME
+    `;
+
+    const [rows] = await this.execute<any[]>(query, [schema]);
+    return rows.map((row: any) => getCol(row, 'func_name', 'ROUTINE_NAME', 'routine_name') || '');
+  }
+
+  /**
+   * List procedures in a schema/database
+   */
+  async listProcedures(schema: string): Promise<string[]> {
+    const query = `
+      SELECT ROUTINE_NAME as proc_name
+      FROM information_schema.routines
+      WHERE routine_schema = ?
+        AND routine_type = 'PROCEDURE'
+      ORDER BY ROUTINE_NAME
+    `;
+
+    const [rows] = await this.execute<any[]>(query, [schema]);
+    return rows.map((row: any) => getCol(row, 'proc_name', 'ROUTINE_NAME', 'routine_name') || '');
+  }
+
+  /**
+   * List triggers in a schema/database
+   */
+  async listTriggers(schema: string): Promise<string[]> {
+    const query = `
+      SELECT TRIGGER_NAME as trig_name
+      FROM information_schema.triggers
+      WHERE trigger_schema = ?
+      ORDER BY TRIGGER_NAME
+    `;
+
+    const [rows] = await this.execute<any[]>(query, [schema]);
+    return rows.map((row: any) => getCol(row, 'trig_name', 'TRIGGER_NAME', 'trigger_name') || '');
+  }
+
+  /**
+   * Get indexes for a table
+   */
+  async getIndexes(schema: string, table: string): Promise<TableIndex[]> {
+    const query = `
+      SELECT
+        INDEX_NAME as idx_name,
+        COLUMN_NAME as col_name,
+        NON_UNIQUE as non_unique,
+        SEQ_IN_INDEX as seq_num,
+        INDEX_TYPE as idx_type
+      FROM information_schema.statistics
+      WHERE table_schema = ?
+        AND table_name = ?
+      ORDER BY INDEX_NAME, SEQ_IN_INDEX
+    `;
+
+    const [rows] = await this.execute<any[]>(query, [schema, table]);
+
+    // Group columns by index name
+    const indexMap = new Map<string, { index: TableIndex; columns: string[] }>();
+
+    for (const row of rows) {
+      const indexName = getCol(row, 'idx_name', 'INDEX_NAME', 'index_name');
+      const columnName = getCol(row, 'col_name', 'COLUMN_NAME', 'column_name');
+      const nonUnique = getCol(row, 'non_unique', 'NON_UNIQUE');
+      const indexType = getCol(row, 'idx_type', 'INDEX_TYPE', 'index_type') || 'BTREE';
+
+      if (!indexMap.has(indexName)) {
+        indexMap.set(indexName, {
+          index: {
+            name: indexName,
+            columns: [],
+            isUnique: nonUnique === 0 || nonUnique === '0',
+            isPrimary: indexName === 'PRIMARY',
+            type: indexType.toLowerCase(),
+            definition: '', // Will be filled after collecting all columns
+          },
+          columns: [],
+        });
+      }
+
+      indexMap.get(indexName)!.columns.push(columnName);
+    }
+
+    // Build definitions and finalize indexes
+    const result: TableIndex[] = [];
+    for (const [, { index, columns }] of indexMap) {
+      index.columns = columns;
+      const uniqueStr = index.isUnique ? 'UNIQUE ' : '';
+      const typeStr = index.type.toUpperCase();
+      index.definition = `${uniqueStr}INDEX ${this.quoteIdentifier(index.name)} USING ${typeStr} (${columns.map(c => this.quoteIdentifier(c)).join(', ')})`;
+      result.push(index);
+    }
+
+    return result;
+  }
+
+  /**
+   * Explain a query for execution plan analysis
+   */
+  async explainQuery(sql: string): Promise<any> {
+    const explainSql = `EXPLAIN ${sql}`;
+    const [rows] = await this.execute<any[]>(explainSql);
+
+    return {
+      plan: rows,
+      format: 'traditional',
+    };
+  }
+
   quoteIdentifier(identifier: string): string {
     return `\`${identifier.replace(/`/g, '``')}\``;
   }
@@ -1112,7 +1257,7 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
 
   /**
    * Get the query timeout in milliseconds for MAX_EXECUTION_TIME hint
-   * MySQL 5.7.8+ and MariaDB 10.1.1+ support this optimizer hint
+   * MariaDB 10.1.1+ supports this optimizer hint
    */
   private getQueryTimeoutMs(): number {
     return (this.connectionConfig as any).queryTimeoutMs ?? 30000; // Default 30 seconds
@@ -1201,16 +1346,69 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     return { whereClause, params };
   }
 
+  /**
+   * Check if an error is a connection-related error that might benefit from retry
+   */
+  private isConnectionError(error: any): boolean {
+    if (!error) return false;
+
+    // MySQL/MariaDB error codes that indicate connection issues
+    const connectionErrorCodes = [
+      'ECONNREFUSED',      // Connection refused
+      'ECONNRESET',        // Connection reset
+      'ETIMEDOUT',         // Connection timed out
+      'ENOTFOUND',         // DNS lookup failed
+      'PROTOCOL_CONNECTION_LOST',  // Connection lost
+      'ER_CON_COUNT_ERROR',        // Too many connections
+    ];
+
+    // MySQL/MariaDB error numbers for connection issues
+    const connectionErrorNumbers = [
+      2002,  // Can't connect to local MySQL server
+      2003,  // Can't connect to MySQL server
+      2006,  // MySQL server has gone away
+      2013,  // Lost connection to MySQL server during query
+      1040,  // Too many connections
+      1042,  // Unable to connect to any of the specified MySQL hosts
+      1043,  // Bad handshake
+      1152,  // Aborted connection
+      1158,  // Got an error reading communication packets
+      1159,  // Got timeout reading communication packets
+      1160,  // Got an error writing communication packets
+      1161,  // Got timeout writing communication packets
+    ];
+
+    const code = error.code || error.errno;
+    const errno = error.errno;
+
+    return connectionErrorCodes.includes(code) ||
+           connectionErrorNumbers.includes(errno) ||
+           (error.message && error.message.includes('Connection lost'));
+  }
+
   private async execute<T = any>(sql: string, params?: unknown[]): Promise<[T, mysql.FieldPacket[]]> {
     if (!this.pool) {
-      throw new Error('Not connected to MySQL database');
+      throw new Error('Not connected to MariaDB database');
     }
 
     try {
       return await this.pool.execute<any>(sql, params);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      this.setStatus('error', err);
+
+      // Check if this is a connection error
+      if (this.isConnectionError(error)) {
+        console.error('[MariaDBAdapter] Connection error detected:', err.message);
+        this.setStatus('error', err);
+
+        // The pool should handle reconnection automatically,
+        // but we mark the status as error so the UI can show it
+      } else {
+        // For non-connection errors (query errors), we don't change status
+        // as the connection might still be valid
+        console.error('[MariaDBAdapter] Query error:', err.message);
+      }
+
       throw err;
     }
   }

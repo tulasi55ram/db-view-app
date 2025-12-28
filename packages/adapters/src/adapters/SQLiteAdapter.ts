@@ -17,6 +17,13 @@ import type {
   FilterCondition,
   FetchOptions,
   FilterOptions,
+  CursorPosition,
+  CursorResultSet,
+  BulkOperationResult,
+  BulkInsertOptions,
+  BulkUpdateItem,
+  BulkUpdateOptions,
+  BulkDeleteOptions,
 } from './DatabaseAdapter';
 import { getDatabaseCapabilities } from '../capabilities/DatabaseCapabilities';
 
@@ -559,6 +566,237 @@ export class SQLiteAdapter extends EventEmitter implements DatabaseAdapter {
 
     const result = this.db!.prepare(query).run(...params);
     return result.changes;
+  }
+
+  // ==================== Bulk Operations (for large datasets) ====================
+
+  async bulkInsert(
+    schema: string,
+    table: string,
+    rows: Record<string, unknown>[],
+    options: BulkInsertOptions = {}
+  ): Promise<BulkOperationResult> {
+    if (rows.length === 0) {
+      return { successCount: 0, failureCount: 0 };
+    }
+
+    const { batchSize = 1000, onProgress, skipErrors = false } = options;
+    const columns = Object.keys(rows[0]);
+    const columnList = columns.map(c => this.quoteIdentifier(c)).join(', ');
+    const placeholders = columns.map(() => '?').join(', ');
+
+    let successCount = 0;
+    let failureCount = 0;
+    const errors: Array<{ index: number; error: string }> = [];
+    const insertedIds: unknown[] = [];
+
+    // Use transaction for better performance
+    const insertStmt = this.db!.prepare(`INSERT INTO ${this.quoteIdentifier(table)} (${columnList}) VALUES (${placeholders})`);
+
+    const insertBatch = this.db!.transaction((batch: Record<string, unknown>[]) => {
+      for (const row of batch) {
+        const result = insertStmt.run(...columns.map(col => row[col]));
+        insertedIds.push(result.lastInsertRowid);
+      }
+      return batch.length;
+    });
+
+    for (let i = 0; i < rows.length; i += batchSize) {
+      const batch = rows.slice(i, Math.min(i + batchSize, rows.length));
+
+      try {
+        const count = insertBatch(batch);
+        successCount += count;
+        onProgress?.(successCount, rows.length);
+      } catch (error) {
+        if (skipErrors) {
+          failureCount += batch.length;
+          errors.push({ index: i, error: error instanceof Error ? error.message : String(error) });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    return { successCount, failureCount, errors: errors.length > 0 ? errors : undefined, insertedIds };
+  }
+
+  async bulkUpdate(
+    schema: string,
+    table: string,
+    updates: BulkUpdateItem[],
+    options: BulkUpdateOptions = {}
+  ): Promise<BulkOperationResult> {
+    if (updates.length === 0) {
+      return { successCount: 0, failureCount: 0 };
+    }
+
+    const { batchSize = 500, onProgress, skipErrors = false } = options;
+
+    let successCount = 0;
+    let failureCount = 0;
+    const errors: Array<{ index: number; error: string }> = [];
+
+    const updateBatch = this.db!.transaction((batch: BulkUpdateItem[]) => {
+      let count = 0;
+      for (const update of batch) {
+        const pkColumns = Object.keys(update.primaryKey);
+        const valueColumns = Object.keys(update.values);
+
+        const setClause = valueColumns.map(col => `${this.quoteIdentifier(col)} = ?`).join(', ');
+        const whereClause = pkColumns.map(col => `${this.quoteIdentifier(col)} = ?`).join(' AND ');
+
+        const sql = `UPDATE ${this.quoteIdentifier(table)} SET ${setClause} WHERE ${whereClause}`;
+        const params = [...Object.values(update.values), ...Object.values(update.primaryKey)];
+
+        const result = this.db!.prepare(sql).run(...params);
+        count += result.changes;
+      }
+      return count;
+    });
+
+    for (let i = 0; i < updates.length; i += batchSize) {
+      const batch = updates.slice(i, Math.min(i + batchSize, updates.length));
+
+      try {
+        successCount += updateBatch(batch);
+        onProgress?.(successCount, updates.length);
+      } catch (error) {
+        if (skipErrors) {
+          failureCount += batch.length;
+          errors.push({ index: i, error: error instanceof Error ? error.message : String(error) });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    return { successCount, failureCount, errors: errors.length > 0 ? errors : undefined };
+  }
+
+  async bulkDelete(
+    schema: string,
+    table: string,
+    primaryKeys: Record<string, unknown>[],
+    options: BulkDeleteOptions = {}
+  ): Promise<BulkOperationResult> {
+    if (primaryKeys.length === 0) {
+      return { successCount: 0, failureCount: 0 };
+    }
+
+    const { batchSize = 1000, onProgress } = options;
+    const pkColumns = Object.keys(primaryKeys[0]);
+
+    let successCount = 0;
+    const errors: Array<{ index: number; error: string }> = [];
+
+    const deleteBatch = this.db!.transaction((batch: Record<string, unknown>[]) => {
+      if (pkColumns.length === 1) {
+        const pkCol = pkColumns[0];
+        const values = batch.map(pk => pk[pkCol]);
+        const placeholders = values.map(() => '?').join(', ');
+        const sql = `DELETE FROM ${this.quoteIdentifier(table)} WHERE ${this.quoteIdentifier(pkCol)} IN (${placeholders})`;
+        const result = this.db!.prepare(sql).run(...values);
+        return result.changes;
+      } else {
+        const conditions = batch.map(() => {
+          return `(${pkColumns.map(col => `${this.quoteIdentifier(col)} = ?`).join(' AND ')})`;
+        }).join(' OR ');
+        const params = batch.flatMap(pk => Object.values(pk));
+        const sql = `DELETE FROM ${this.quoteIdentifier(table)} WHERE ${conditions}`;
+        const result = this.db!.prepare(sql).run(...params);
+        return result.changes;
+      }
+    });
+
+    for (let i = 0; i < primaryKeys.length; i += batchSize) {
+      const batch = primaryKeys.slice(i, Math.min(i + batchSize, primaryKeys.length));
+
+      try {
+        successCount += deleteBatch(batch);
+        onProgress?.(successCount, primaryKeys.length);
+      } catch (error) {
+        errors.push({ index: i, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    return { successCount, failureCount: primaryKeys.length - successCount, errors: errors.length > 0 ? errors : undefined };
+  }
+
+  async fetchTableRowsWithCursor(
+    schema: string,
+    table: string,
+    options: FetchOptions = {}
+  ): Promise<CursorResultSet> {
+    const { limit = 100, filters = [], filterLogic = 'AND', sortColumn, sortDirection = 'ASC', cursor } = options;
+
+    const metadata = await this.getTableMetadata(schema, table);
+    const pkColumns = metadata.filter(col => col.isPrimaryKey).map(col => col.name);
+    const cursorColumn = sortColumn || (pkColumns.length > 0 ? pkColumns[0] : metadata[0]?.name);
+
+    if (!cursorColumn) {
+      throw new Error('Cannot perform cursor pagination: no sort column or primary key found');
+    }
+
+    const { whereClause: filterWhere, params: filterParams } = this.buildWhereClause(filters, filterLogic);
+    const params: unknown[] = [...filterParams];
+
+    let cursorCondition = '';
+    if (cursor && cursor.values[cursorColumn] !== undefined) {
+      const cursorValue = cursor.values[cursorColumn];
+      const operator = cursor.direction === 'forward'
+        ? (sortDirection === 'ASC' ? '>' : '<')
+        : (sortDirection === 'ASC' ? '<' : '>');
+      params.push(cursorValue);
+      cursorCondition = `${this.quoteIdentifier(cursorColumn)} ${operator} ?`;
+    }
+
+    let whereClause = '';
+    if (filterWhere && cursorCondition) {
+      whereClause = `WHERE (${filterWhere}) AND ${cursorCondition}`;
+    } else if (filterWhere) {
+      whereClause = `WHERE ${filterWhere}`;
+    } else if (cursorCondition) {
+      whereClause = `WHERE ${cursorCondition}`;
+    }
+
+    const fetchLimit = limit + 1;
+    const orderDirection = cursor?.direction === 'backward'
+      ? (sortDirection === 'ASC' ? 'DESC' : 'ASC')
+      : sortDirection;
+
+    params.push(fetchLimit);
+    const sql = `SELECT * FROM ${this.quoteIdentifier(table)} ${whereClause} ORDER BY ${this.quoteIdentifier(cursorColumn)} ${orderDirection} LIMIT ?`;
+
+    let resultRows = this.db!.prepare(sql).all(...params) as Record<string, unknown>[];
+
+    const hasMore = resultRows.length > limit;
+    if (hasMore) resultRows = resultRows.slice(0, limit);
+    if (cursor?.direction === 'backward') resultRows.reverse();
+
+    let nextCursor: CursorPosition | undefined;
+    let prevCursor: CursorPosition | undefined;
+
+    if (resultRows.length > 0) {
+      const lastRow = resultRows[resultRows.length - 1];
+      const firstRow = resultRows[0];
+
+      if (hasMore || cursor) {
+        nextCursor = { values: { [cursorColumn]: lastRow[cursorColumn] }, direction: 'forward' };
+      }
+      if (cursor) {
+        prevCursor = { values: { [cursorColumn]: firstRow[cursorColumn] }, direction: 'backward' };
+      }
+    }
+
+    return {
+      columns: resultRows.length > 0 ? Object.keys(resultRows[0]) : [],
+      rows: resultRows,
+      hasNextPage: hasMore,
+      hasPrevPage: !!cursor,
+      nextCursor,
+      prevCursor
+    };
   }
 
   // ==================== Metadata ====================

@@ -12,7 +12,7 @@ interface AddConnectionViewProps {
   editingConnectionKey?: string | null;
 }
 
-type DatabaseType = "postgres" | "mysql" | "sqlserver" | "sqlite" | "mongodb" | "redis";
+type DatabaseType = "postgres" | "mysql" | "mariadb" | "sqlserver" | "sqlite" | "mongodb" | "redis" | "elasticsearch" | "cassandra";
 
 interface DatabaseTypeInfo {
   value: DatabaseType;
@@ -24,10 +24,13 @@ interface DatabaseTypeInfo {
 const DATABASE_TYPES: DatabaseTypeInfo[] = [
   { value: "postgres", label: "PostgreSQL", description: "Advanced open-source relational database", color: "#336791" },
   { value: "mysql", label: "MySQL", description: "Popular open-source relational database", color: "#00758F" },
+  { value: "mariadb", label: "MariaDB", description: "MySQL-compatible community database", color: "#003545" },
   { value: "sqlserver", label: "SQL Server", description: "Microsoft SQL Server database", color: "#CC2927" },
   { value: "sqlite", label: "SQLite", description: "Lightweight embedded database", color: "#003B57" },
   { value: "mongodb", label: "MongoDB", description: "NoSQL document database", color: "#00ED64" },
   { value: "redis", label: "Redis", description: "In-memory key-value data store", color: "#DC382D" },
+  { value: "elasticsearch", label: "Elasticsearch", description: "Distributed search & analytics engine", color: "#FEC514" },
+  { value: "cassandra", label: "Cassandra", description: "Distributed NoSQL wide-column database", color: "#1287B1" },
 ];
 
 // Database Icon
@@ -112,6 +115,16 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
   const [trustServerCertificate, setTrustServerCertificate] = useState(false);
   // Redis ACL
   const [redisUsername, setRedisUsername] = useState("");
+  // Elasticsearch specific
+  const [esNode, setEsNode] = useState("http://localhost:9200");
+  const [esCloudId, setEsCloudId] = useState("");
+  const [esApiKey, setEsApiKey] = useState("");
+  const [esCaFingerprint, setEsCaFingerprint] = useState("");
+  // Cassandra specific
+  const [cassContactPoints, setCassContactPoints] = useState("localhost");
+  const [cassKeyspace, setCassKeyspace] = useState("");
+  const [cassDatacenter, setCassDatacenter] = useState("datacenter1");
+  const [cassConsistency, setCassConsistency] = useState<"one" | "quorum" | "localQuorum" | "all">("localQuorum");
   const [color, setColor] = useState("#3B82F6"); // Default blue
   const [readOnly, setReadOnly] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -215,9 +228,12 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
     switch (type) {
       case "postgres": return "5432";
       case "mysql": return "3306";
+      case "mariadb": return "3306";
       case "sqlserver": return "1433";
       case "mongodb": return "27017";
       case "redis": return "6379";
+      case "elasticsearch": return "9200";
+      case "cassandra": return "9042";
       default: return "";
     }
   };
@@ -249,6 +265,19 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
       case "mysql":
         return {
           dbType: "mysql",
+          name: baseName,
+          host,
+          port: parseInt(port),
+          database,
+          user,
+          password,
+          ssl: ssl || undefined,
+          color,
+          readOnly
+        };
+      case "mariadb":
+        return {
+          dbType: "mariadb",
           name: baseName,
           host,
           port: parseInt(port),
@@ -306,6 +335,36 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           color,
           readOnly
         };
+      case "elasticsearch":
+        return {
+          dbType: "elasticsearch",
+          name: baseName,
+          node: esCloudId ? undefined : esNode || `http://${host}:${port}`,
+          cloudId: esCloudId || undefined,
+          username: !esApiKey && user ? user : undefined,
+          password: !esApiKey && password ? password : undefined,
+          apiKey: esApiKey || undefined,
+          ssl: ssl || undefined,
+          caFingerprint: esCaFingerprint || undefined,
+          rejectUnauthorized: ssl ? true : undefined,
+          color,
+          readOnly
+        };
+      case "cassandra":
+        return {
+          dbType: "cassandra",
+          name: baseName,
+          contactPoints: cassContactPoints.split(',').map(cp => cp.trim()).filter(cp => cp),
+          port: parseInt(port),
+          keyspace: cassKeyspace,
+          localDatacenter: cassDatacenter,
+          username: user || undefined,
+          password: password || undefined,
+          ssl: ssl || undefined,
+          consistency: cassConsistency,
+          color,
+          readOnly
+        };
       default:
         throw new Error(`Unknown database type: ${dbType}`);
     }
@@ -355,11 +414,13 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
   };
 
   const currentDbInfo = DATABASE_TYPES.find(db => db.value === dbType)!;
-  const needsHostPort = ["postgres", "mysql", "sqlserver", "mongodb", "redis"].includes(dbType);
-  const needsDatabase = ["postgres", "mysql", "sqlserver", "mongodb"].includes(dbType);
-  const needsAuth = ["postgres", "mysql", "sqlserver", "mongodb"].includes(dbType);
+  const needsHostPort = ["postgres", "mysql", "mariadb", "sqlserver", "mongodb", "redis"].includes(dbType);
+  const needsDatabase = ["postgres", "mysql", "mariadb", "sqlserver", "mongodb"].includes(dbType);
+  const needsAuth = ["postgres", "mysql", "mariadb", "sqlserver", "mongodb", "elasticsearch", "cassandra"].includes(dbType);
   const needsFilePath = dbType === "sqlite";
   const needsConnectionString = dbType === "mongodb";
+  const isElasticsearch = dbType === "elasticsearch";
+  const isCassandra = dbType === "cassandra";
 
   return (
     <div className="flex-1 flex overflow-hidden bg-bg-primary">
@@ -668,8 +729,168 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
               </FormField>
             )}
 
+            {/* Elasticsearch Configuration */}
+            {isElasticsearch && (
+              <>
+                <FormField label="Node URL" hint="Single node or first node of cluster">
+                  <StyledInput
+                    type="text"
+                    value={esNode}
+                    onChange={(e) => setEsNode(e.target.value)}
+                    placeholder="http://localhost:9200"
+                  />
+                  <p className="text-xs text-text-tertiary mt-1">
+                    Use https:// for secure connections
+                  </p>
+                </FormField>
+
+                <FormField label="Cloud ID" hint="For Elastic Cloud - overrides node URL">
+                  <StyledInput
+                    type="text"
+                    value={esCloudId}
+                    onChange={(e) => setEsCloudId(e.target.value)}
+                    placeholder="deployment-name:dXMtY2VudHJhbC0xLmdj..."
+                  />
+                </FormField>
+
+                <div className="pt-2 pb-1">
+                  <div className="text-xs font-medium text-text-secondary mb-2">Authentication</div>
+                  <p className="text-xs text-text-tertiary mb-3">
+                    Choose API Key (recommended) or Username/Password
+                  </p>
+                </div>
+
+                <FormField label="API Key" hint="Recommended for production">
+                  <StyledInput
+                    type="password"
+                    value={esApiKey}
+                    onChange={(e) => setEsApiKey(e.target.value)}
+                    placeholder="Enter API key"
+                  />
+                </FormField>
+
+                {!esApiKey && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField label="Username" hint="If not using API Key">
+                      <StyledInput
+                        type="text"
+                        value={user}
+                        onChange={(e) => setUser(e.target.value)}
+                        placeholder="elastic"
+                      />
+                    </FormField>
+                    <FormField label="Password">
+                      <StyledInput
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Enter password"
+                      />
+                    </FormField>
+                  </div>
+                )}
+
+                <FormField label="CA Fingerprint" hint="For self-signed certificates">
+                  <StyledInput
+                    type="text"
+                    value={esCaFingerprint}
+                    onChange={(e) => setEsCaFingerprint(e.target.value)}
+                    placeholder="64:31:E5:1C:AB:..."
+                  />
+                </FormField>
+              </>
+            )}
+
+            {/* Cassandra Configuration */}
+            {isCassandra && (
+              <>
+                <FormField label="Contact Points" hint="Comma-separated list of hosts">
+                  <StyledInput
+                    type="text"
+                    value={cassContactPoints}
+                    onChange={(e) => setCassContactPoints(e.target.value)}
+                    placeholder="node1.example.com, node2.example.com"
+                  />
+                  <p className="text-xs text-text-tertiary mt-1">
+                    List of Cassandra nodes to connect to (e.g., localhost or node1,node2,node3)
+                  </p>
+                </FormField>
+
+                <div className="grid grid-cols-4 gap-4">
+                  <FormField label="Port" className="col-span-1">
+                    <StyledInput
+                      type="text"
+                      value={port}
+                      onChange={(e) => setPort(e.target.value)}
+                      placeholder="9042"
+                    />
+                  </FormField>
+                  <FormField label="Keyspace" className="col-span-3">
+                    <StyledInput
+                      type="text"
+                      value={cassKeyspace}
+                      onChange={(e) => setCassKeyspace(e.target.value)}
+                      placeholder="my_keyspace"
+                    />
+                  </FormField>
+                </div>
+
+                <FormField label="Local Datacenter" hint="Required for token-aware routing">
+                  <StyledInput
+                    type="text"
+                    value={cassDatacenter}
+                    onChange={(e) => setCassDatacenter(e.target.value)}
+                    placeholder="datacenter1"
+                  />
+                  <p className="text-xs text-text-tertiary mt-1">
+                    The datacenter name for token-aware load balancing
+                  </p>
+                </FormField>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField label="Username" hint="Optional">
+                    <StyledInput
+                      type="text"
+                      value={user}
+                      onChange={(e) => setUser(e.target.value)}
+                      placeholder="cassandra"
+                    />
+                  </FormField>
+                  <FormField label="Password" hint="Optional">
+                    <StyledInput
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter password"
+                    />
+                  </FormField>
+                </div>
+
+                <FormField label="Consistency Level">
+                  <select
+                    value={cassConsistency}
+                    onChange={(e) => setCassConsistency(e.target.value as typeof cassConsistency)}
+                    className={cn(
+                      "w-full h-10 px-3 rounded-lg text-sm",
+                      "bg-bg-tertiary border border-border",
+                      "text-text-primary",
+                      "focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                    )}
+                  >
+                    <option value="one">ONE - Low latency, eventual consistency</option>
+                    <option value="quorum">QUORUM - Majority of replicas</option>
+                    <option value="localQuorum">LOCAL_QUORUM - Majority in local DC (Recommended)</option>
+                    <option value="all">ALL - All replicas (highest consistency)</option>
+                  </select>
+                  <p className="text-xs text-text-tertiary mt-1">
+                    LOCAL_QUORUM is recommended for multi-datacenter deployments
+                  </p>
+                </FormField>
+              </>
+            )}
+
             {/* SSL/Security Section */}
-            {["postgres", "mysql", "mongodb", "redis"].includes(dbType) && (
+            {["postgres", "mysql", "mariadb", "mongodb", "redis", "elasticsearch", "cassandra"].includes(dbType) && (
               <div className="space-y-3 pt-2">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
