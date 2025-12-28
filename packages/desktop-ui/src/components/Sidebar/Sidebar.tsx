@@ -30,6 +30,7 @@ import { Tooltip } from "@/primitives/Tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { toast } from "sonner";
+import { RedisSidebarTree } from "./RedisSidebarTree";
 
 // Types
 interface ConnectionInfo {
@@ -926,24 +927,39 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
 
         {/* Children */}
         <AnimatePresence>
-          {isExpanded && node.children && (
+          {isExpanded && (
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               transition={{ duration: 0.15 }}
             >
-              {node.children.map((child) => renderNode(child, depth + 1))}
-              {node.children.length === 0 && !isLoading && (
-                <div
-                  className="text-xs text-text-tertiary italic py-1"
-                  style={{ paddingLeft: `${(depth + 1) * 12 + 24}px` }}
-                >
-                  {node.type === "connection" && "No schemas"}
-                  {node.type === "schema" && "Loading..."}
-                  {node.type === "objectTypeContainer" && "Empty"}
-                  {node.type === "table" && "No columns"}
-                </div>
+              {/* Special handling for Redis Keys - use RedisSidebarTree */}
+              {node.type === "objectTypeContainer" &&
+               node.objectType === "tables" &&
+               node.dbType === "redis" &&
+               node.connectionKey &&
+               node.connectionName ? (
+                <RedisSidebarTree
+                  connectionKey={node.connectionKey}
+                  connectionName={node.connectionName}
+                  onKeySelect={onTableSelect}
+                />
+              ) : (
+                <>
+                  {node.children?.map((child) => renderNode(child, depth + 1))}
+                  {(!node.children || node.children.length === 0) && !isLoading && (
+                    <div
+                      className="text-xs text-text-tertiary italic py-1"
+                      style={{ paddingLeft: `${(depth + 1) * 12 + 24}px` }}
+                    >
+                      {node.type === "connection" && "No schemas"}
+                      {node.type === "schema" && "Loading..."}
+                      {node.type === "objectTypeContainer" && "Empty"}
+                      {node.type === "table" && "No columns"}
+                    </div>
+                  )}
+                </>
               )}
             </motion.div>
           )}

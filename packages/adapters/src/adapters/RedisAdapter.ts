@@ -805,8 +805,8 @@ export class RedisAdapter extends EventEmitter implements DatabaseAdapter {
     if (!this.client) throw new Error("Not connected");
 
     try {
-      // Parse the Redis command
-      const parts = command.trim().split(/\s+/);
+      // Parse the Redis command - handle quoted strings properly
+      const parts = this.parseRedisCommand(command);
       const cmd = parts[0].toUpperCase();
       const args = parts.slice(1);
 
@@ -1055,5 +1055,60 @@ export class RedisAdapter extends EventEmitter implements DatabaseAdapter {
     if (minutes > 0) parts.push(`${minutes}m`);
 
     return parts.length > 0 ? parts.join(" ") : "< 1m";
+  }
+
+  /**
+   * Parse a Redis command string, properly handling quoted arguments
+   * Supports both single and double quotes, and JSON-style escaped strings
+   */
+  private parseRedisCommand(command: string): string[] {
+    const parts: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    let quoteChar = '';
+    let escaped = false;
+
+    for (let i = 0; i < command.length; i++) {
+      const char = command[i];
+
+      if (escaped) {
+        current += char;
+        escaped = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if ((char === '"' || char === "'") && !inQuotes) {
+        inQuotes = true;
+        quoteChar = char;
+        continue;
+      }
+
+      if (char === quoteChar && inQuotes) {
+        inQuotes = false;
+        quoteChar = '';
+        continue;
+      }
+
+      if (char === ' ' && !inQuotes) {
+        if (current.length > 0) {
+          parts.push(current);
+          current = '';
+        }
+        continue;
+      }
+
+      current += char;
+    }
+
+    if (current.length > 0) {
+      parts.push(current);
+    }
+
+    return parts;
   }
 }

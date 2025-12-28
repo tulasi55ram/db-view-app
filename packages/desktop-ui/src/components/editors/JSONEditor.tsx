@@ -236,51 +236,35 @@ export function JSONEditor({
 
     viewRef.current = view;
 
-    // Handle clipboard events for Electron
-    // For copy/cut: use e.clipboardData.setData() synchronously (required by browser)
-    // For paste: use Electron's async clipboard API
+    // Add custom keyboard handlers for clipboard in Electron
     const api = getElectronAPI();
     if (api) {
-      const handleClipboardCopy = (e: ClipboardEvent) => {
-        const { from, to } = view.state.selection.main;
-        // Get the text to copy - selection if exists, otherwise whole document
-        const textToCopy = from !== to
-          ? view.state.sliceDoc(from, to)
-          : view.state.doc.toString();
+      const handleKeyDown = async (e: KeyboardEvent) => {
+        const isMod = e.metaKey || e.ctrlKey;
 
-        // Use the synchronous clipboardData API (required for copy events)
-        if (e.clipboardData) {
+        if (isMod && e.key === "c") {
           e.preventDefault();
-          e.clipboardData.setData("text/plain", textToCopy);
-          // Also write to Electron clipboard for cross-app compatibility
-          api.copyToClipboard(textToCopy);
-        }
-      };
-
-      const handleClipboardPaste = async (e: ClipboardEvent) => {
-        e.preventDefault();
-        // Read from Electron clipboard (async)
-        const clipboardText = await api.readFromClipboard();
-        if (clipboardText) {
           const { from, to } = view.state.selection.main;
-          view.dispatch({
-            changes: { from, to, insert: clipboardText },
-            selection: { anchor: from + clipboardText.length },
-          });
-        }
-      };
-
-      const handleClipboardCut = (e: ClipboardEvent) => {
-        const { from, to } = view.state.selection.main;
-        // Only cut if there's a selection
-        if (from !== to) {
-          const selection = view.state.sliceDoc(from, to);
-          if (e.clipboardData) {
-            e.preventDefault();
-            e.clipboardData.setData("text/plain", selection);
-            // Also write to Electron clipboard
-            api.copyToClipboard(selection);
-            // Remove the selected text
+          const content = from !== to
+            ? view.state.sliceDoc(from, to)
+            : view.state.doc.toString();
+          await api.copyToClipboard(content);
+        } else if (isMod && e.key === "v") {
+          e.preventDefault();
+          const text = await api.readFromClipboard();
+          if (text) {
+            const { from, to } = view.state.selection.main;
+            view.dispatch({
+              changes: { from, to, insert: text },
+              selection: { anchor: from + text.length },
+            });
+          }
+        } else if (isMod && e.key === "x") {
+          e.preventDefault();
+          const { from, to } = view.state.selection.main;
+          if (from !== to) {
+            const content = view.state.sliceDoc(from, to);
+            await api.copyToClipboard(content);
             view.dispatch({
               changes: { from, to, insert: "" },
             });
@@ -288,16 +272,9 @@ export function JSONEditor({
         }
       };
 
-      const editorDom = view.dom;
-      editorDom.addEventListener("copy", handleClipboardCopy);
-      editorDom.addEventListener("paste", handleClipboardPaste);
-      editorDom.addEventListener("cut", handleClipboardCut);
-
-      // Store cleanup function
-      (view as any)._clipboardCleanup = () => {
-        editorDom.removeEventListener("copy", handleClipboardCopy);
-        editorDom.removeEventListener("paste", handleClipboardPaste);
-        editorDom.removeEventListener("cut", handleClipboardCut);
+      view.dom.addEventListener("keydown", handleKeyDown);
+      (view as any)._keydownCleanup = () => {
+        view.dom.removeEventListener("keydown", handleKeyDown);
       };
     }
 
@@ -310,9 +287,9 @@ export function JSONEditor({
     }
 
     return () => {
-      // Clean up clipboard event listeners
-      if ((view as any)._clipboardCleanup) {
-        (view as any)._clipboardCleanup();
+      // Clean up keydown listener
+      if ((view as any)._keydownCleanup) {
+        (view as any)._keydownCleanup();
       }
       view.destroy();
       viewRef.current = null;
@@ -382,35 +359,47 @@ export function JSONEditor({
       ? view.state.sliceDoc(from, to)
       : view.state.doc.toString();
 
-    const api = getElectronAPI();
-    if (api) {
-      await api.copyToClipboard(content);
-    } else {
-      await navigator.clipboard.writeText(content);
+    try {
+      // Try Electron API first, then fall back to navigator.clipboard
+      const api = getElectronAPI();
+      if (api) {
+        await api.copyToClipboard(content);
+      } else {
+        await navigator.clipboard.writeText(content);
+      }
+      toast.success(from !== to ? "Selection copied" : "Copied to clipboard");
+    } catch (err) {
+      console.error("Copy failed:", err);
+      toast.error("Failed to copy to clipboard");
     }
-    toast.success(from !== to ? "Selection copied" : "Copied to clipboard");
   }, []);
 
   const handlePaste = useCallback(async () => {
     if (!viewRef.current) return;
 
-    const api = getElectronAPI();
-    let clipboardText = "";
+    try {
+      // Try Electron API first, then fall back to navigator.clipboard
+      const api = getElectronAPI();
+      let clipboardText = "";
 
-    if (api) {
-      clipboardText = await api.readFromClipboard();
-    } else {
-      clipboardText = await navigator.clipboard.readText();
-    }
+      if (api) {
+        clipboardText = await api.readFromClipboard();
+      } else {
+        clipboardText = await navigator.clipboard.readText();
+      }
 
-    if (clipboardText) {
-      const view = viewRef.current;
-      const { from, to } = view.state.selection.main;
-      view.dispatch({
-        changes: { from, to, insert: clipboardText },
-        selection: { anchor: from + clipboardText.length },
-      });
-      toast.success("Pasted from clipboard");
+      if (clipboardText) {
+        const view = viewRef.current;
+        const { from, to } = view.state.selection.main;
+        view.dispatch({
+          changes: { from, to, insert: clipboardText },
+          selection: { anchor: from + clipboardText.length },
+        });
+        toast.success("Pasted from clipboard");
+      }
+    } catch (err) {
+      console.error("Paste failed:", err);
+      toast.error("Failed to paste from clipboard");
     }
   }, []);
 

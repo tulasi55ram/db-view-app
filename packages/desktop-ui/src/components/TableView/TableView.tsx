@@ -1330,12 +1330,18 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
       const container = tableContainerRef.current;
       if (!container) return;
 
-      // Skip if user is typing in an input
+      // Skip if user is typing in an input, textarea, or contenteditable (CodeMirror)
       const activeElement = document.activeElement;
-      const isTyping = activeElement?.tagName === "INPUT" || activeElement?.tagName === "TEXTAREA";
+      const isTyping = activeElement?.tagName === "INPUT" ||
+        activeElement?.tagName === "TEXTAREA" ||
+        (activeElement as HTMLElement)?.isContentEditable;
 
-      // Copy shortcut: Ctrl+C / Cmd+C (when not typing)
-      if ((e.ctrlKey || e.metaKey) && e.key === "c" && !isTyping) {
+      // Skip if a modal/dialog is open (check for dialog elements or role="dialog")
+      const isModalOpen = document.querySelector('[role="dialog"]') !== null ||
+        document.querySelector('[data-state="open"]') !== null;
+
+      // Copy shortcut: Ctrl+C / Cmd+C (when not typing and no modal open)
+      if ((e.ctrlKey || e.metaKey) && e.key === "c" && !isTyping && !isModalOpen) {
         if (selectedRows.size > 0) {
           e.preventDefault();
           handleCopySelectedRows();
@@ -1347,15 +1353,15 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
         }
       }
 
-      // Undo shortcut: Ctrl+Z / Cmd+Z (when not typing)
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !isTyping) {
+      // Undo shortcut: Ctrl+Z / Cmd+Z (when not typing and no modal open)
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !isTyping && !isModalOpen) {
         e.preventDefault();
         handleUndo();
         return;
       }
 
-      // Focus search with "/" key (when not typing)
-      if (e.key === "/" && !isTyping && !e.ctrlKey && !e.metaKey) {
+      // Focus search with "/" key (when not typing and no modal open)
+      if (e.key === "/" && !isTyping && !isModalOpen && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         // Find and focus the search input
         const searchInput = document.querySelector('input[placeholder*="Quick search"]') as HTMLInputElement;
@@ -1363,15 +1369,15 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
         return;
       }
 
-      // Jump to row dialog: Ctrl+G / Cmd+G
-      if ((e.ctrlKey || e.metaKey) && e.key === "g" && !isTyping) {
+      // Jump to row dialog: Ctrl+G / Cmd+G (when no modal open)
+      if ((e.ctrlKey || e.metaKey) && e.key === "g" && !isTyping && !isModalOpen) {
         e.preventDefault();
         setShowJumpToRowDialog(true);
         return;
       }
 
-      // Pagination shortcuts (work globally when not typing)
-      if ((e.ctrlKey || e.metaKey) && !isTyping && totalRows !== null) {
+      // Pagination shortcuts (work globally when not typing and no modal open)
+      if ((e.ctrlKey || e.metaKey) && !isTyping && !isModalOpen && totalRows !== null) {
         const totalPages = Math.ceil(totalRows / limit);
         const currentPage = Math.floor(offset / limit) + 1;
 

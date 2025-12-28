@@ -5,6 +5,7 @@ import { AppShell } from "@/layout";
 import { Sidebar } from "@/components/Sidebar";
 import { TabBar } from "@/components/TabBar";
 import { TableView } from "@/components/TableView";
+import { RedisDataView } from "@/components/RedisDataView";
 import { QueryView } from "@/components/QueryView";
 import { ERDiagramPanel } from "@/components/ERDiagramPanel";
 import { AddConnectionView } from "@/components/AddConnectionView";
@@ -282,6 +283,17 @@ function AppContent() {
     if (!tab) return null;
 
     if (tab.type === "table" && tab.schema !== undefined && tab.table && tab.connectionKey) {
+      // Use RedisDataView for Redis connections
+      if (tab.connectionKey.startsWith("redis:")) {
+        return (
+          <RedisDataView
+            key={tab.id}
+            connectionKey={tab.connectionKey}
+            schema={tab.schema}
+            table={tab.table}
+          />
+        );
+      }
       return (
         <TableView
           key={tab.id}
@@ -329,6 +341,18 @@ function AppContent() {
       };
 
       if (tab.type === "table" && tab.schema !== undefined && tab.table && tab.connectionKey) {
+        // Use RedisDataView for Redis connections
+        if (tab.connectionKey.startsWith("redis:")) {
+          return (
+            <div key={tab.id} style={style}>
+              <RedisDataView
+                connectionKey={tab.connectionKey}
+                schema={tab.schema}
+                table={tab.table}
+              />
+            </div>
+          );
+        }
         return (
           <div key={tab.id} style={style}>
             <TableView
