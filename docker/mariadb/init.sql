@@ -86,7 +86,7 @@ INSERT INTO users (email, name, role, metadata) VALUES
 ('sam@example.com', 'Sam Robinson', 'user', '{"department": "Finance", "level": 3}'),
 ('tina@example.com', 'Tina Clark', 'user', '{"department": "Content", "level": 3}');
 
--- Generate 1000 more users using a stored procedure
+-- Generate 10000 more users using a stored procedure
 DELIMITER $$
 CREATE PROCEDURE generate_users()
 BEGIN
@@ -96,7 +96,7 @@ BEGIN
     DECLARE departments TEXT DEFAULT 'Engineering,Sales,Marketing,Support,HR,Finance,Operations,Design,Product,QA';
     DECLARE roles TEXT DEFAULT 'user,user,user,user,moderator,admin';
 
-    WHILE i <= 1000 DO
+    WHILE i <= 10000 DO
         INSERT INTO users (email, name, role, is_active, metadata)
         VALUES (
             CONCAT('user', i, '@example.com'),

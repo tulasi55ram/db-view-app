@@ -95,8 +95,8 @@ INSERT INTO users (email, name, role, metadata) VALUES
 ('tina@example.com', 'Tina Clark', 'user', '{"department": "Content", "level": 3}');
 EOF
 
-# Generate 1000 more users using a shell loop
-echo "Generating 1000 additional users..."
+# Generate 10000 more users using a shell loop
+echo "Generating 10000 additional users..."
 
 # Use space-separated strings instead of bash arrays
 FIRST_NAMES="James Mary John Patricia Robert Jennifer Michael Linda William Barbara David Elizabeth Richard Susan Joseph Jessica Thomas Sarah Charles Karen Christopher Nancy Daniel Lisa Matthew Betty Anthony Margaret Mark Sandra Donald Ashley Steven Kimberly Paul Emily Andrew Donna Joshua Michelle Kenneth Dorothy Kevin Carol Brian Amanda George Melissa Timothy Deborah"
@@ -114,7 +114,7 @@ get_word() {
     echo "$string" | awk -v idx="$index" '{print $(idx + 1)}'
 }
 
-for i in $(seq 1 1000); do
+for i in $(seq 1 10000); do
     first_idx=$((i % 50))
     last_idx=$((i % 50))
     dept_idx=$((i % 10))
@@ -164,7 +164,7 @@ INSERT INTO order_items (order_id, product_id, quantity, unit_price, subtotal) V
 (4, 2, 1, 49.99, 49.99);
 EOF
 
-echo "SQLite database initialized successfully with 1020 users!"
+echo "SQLite database initialized successfully with 10020 users!"
 
 # Set permissions
 chmod 644 "$DB_FILE"

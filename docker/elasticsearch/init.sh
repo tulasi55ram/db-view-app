@@ -34,8 +34,8 @@ curl -s -X PUT "$ES_HOST/users" \
   }'
 echo ""
 
-# Insert users
-echo "Inserting users..."
+# Insert sample named users
+echo "Inserting named users..."
 curl -s -X POST "$ES_HOST/users/_doc/1" -u "$AUTH" -H "Content-Type: application/json" -d '{
   "email": "alice@example.com",
   "name": "Alice Johnson",
@@ -100,6 +100,66 @@ curl -s -X POST "$ES_HOST/users/_doc/5" -u "$AUTH" -H "Content-Type: application
   "updatedAt": "2024-12-10T10:00:00Z"
 }'
 echo ""
+
+# Generate 10000 additional users using bulk API
+echo "Generating 10000 additional users..."
+
+FIRST_NAMES="James Mary John Patricia Robert Jennifer Michael Linda William Barbara David Elizabeth Richard Susan Joseph Jessica Thomas Sarah Charles Karen Christopher Nancy Daniel Lisa Matthew Betty Anthony Margaret Mark Sandra Donald Ashley Steven Kimberly Paul Emily Andrew Donna Joshua Michelle Kenneth Dorothy Kevin Carol Brian Amanda George Melissa Timothy Deborah"
+LAST_NAMES="Smith Johnson Williams Brown Jones Garcia Miller Davis Rodriguez Martinez Hernandez Lopez Gonzalez Wilson Anderson Thomas Taylor Moore Jackson Martin Lee Perez Thompson White Harris Sanchez Clark Ramirez Lewis Robinson Walker Young Allen King Wright Scott Torres Nguyen Hill Flores Green Adams Nelson Baker Hall Rivera Campbell Mitchell Carter Roberts"
+DEPARTMENTS="Engineering Sales Marketing Support HR Finance Operations Design Product QA"
+ROLES="user user user user moderator admin"
+SKILLS_POOL="javascript python java go rust typescript react angular vue nodejs docker kubernetes aws azure sql mongodb redis elasticsearch kafka"
+
+get_word() {
+    echo "$1" | awk -v idx="$2" '{print $(idx + 1)}'
+}
+
+# Process in batches of 500 for bulk API
+batch_size=500
+total_users=10000
+
+for batch_start in $(seq 1 $batch_size $total_users); do
+    batch_end=$((batch_start + batch_size - 1))
+    if [ $batch_end -gt $total_users ]; then
+        batch_end=$total_users
+    fi
+
+    # Build bulk request body
+    bulk_body=""
+    for i in $(seq $batch_start $batch_end); do
+        first_idx=$((i % 50))
+        last_idx=$((i % 50))
+        dept_idx=$((i % 10))
+        role_idx=$((i % 6))
+        level=$((1 + (i % 5)))
+
+        first_name=$(get_word "$FIRST_NAMES" $first_idx)
+        last_name=$(get_word "$LAST_NAMES" $last_idx)
+        dept=$(get_word "$DEPARTMENTS" $dept_idx)
+        role=$(get_word "$ROLES" $role_idx)
+
+        is_active="true"
+        if [ $((i % 10)) -eq 0 ]; then
+            is_active="false"
+        fi
+
+        # Generate some random skills
+        skill1=$(get_word "$SKILLS_POOL" $((i % 17)))
+        skill2=$(get_word "$SKILLS_POOL" $(((i + 3) % 17)))
+
+        doc_id=$((i + 5))
+
+        bulk_body="${bulk_body}{\"index\":{\"_id\":\"${doc_id}\"}}\n"
+        bulk_body="${bulk_body}{\"email\":\"user${i}@example.com\",\"name\":\"${first_name} ${last_name}\",\"role\":\"${role}\",\"isActive\":${is_active},\"department\":\"${dept}\",\"level\":${level},\"skills\":[\"${skill1}\",\"${skill2}\"],\"createdAt\":\"2024-01-01T10:00:00Z\",\"updatedAt\":\"2024-12-01T10:00:00Z\"}\n"
+    done
+
+    # Send bulk request
+    printf "$bulk_body" | curl -s -X POST "$ES_HOST/users/_bulk" -u "$AUTH" -H "Content-Type: application/x-ndjson" --data-binary @- > /dev/null
+
+    echo "Inserted users $batch_start to $batch_end"
+done
+
+echo "Finished generating 10000 users"
 
 # ============================================
 # Create Products Index with Mapping
