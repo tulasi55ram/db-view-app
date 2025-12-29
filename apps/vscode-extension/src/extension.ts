@@ -1068,30 +1068,93 @@ function formatConnectionDetailedDisplay(connection: DatabaseConnectionConfig): 
 }
 
 function buildConnectionString(connection: DatabaseConnectionConfig): string {
-  // Only works for host-based databases
-  if (!('host' in connection) || !('port' in connection) || !('database' in connection) || !('user' in connection)) {
-    throw new Error('Connection string not supported for this database type');
-  }
+  const dbType = connection.dbType;
 
-  const user = connection.user || '';  // Fallback for optional user (e.g., SQL Server Windows Auth)
-  const encodedUser = encodeURIComponent(user);
-  const password = ('password' in connection) ? connection.password : undefined;
-  const encodedPassword = password ? `:${encodeURIComponent(password)}` : "";
-  const auth = `${encodedUser}${encodedPassword}@`;
-  const host = connection.host;
-  const port = connection.port;
-  const database = encodeURIComponent(connection.database);
+  // Handle each database type explicitly
+  switch (dbType) {
+    case 'postgres': {
+      const c = connection;
+      const auth = c.password
+        ? `${encodeURIComponent(c.user)}:${encodeURIComponent(c.password)}@`
+        : `${encodeURIComponent(c.user)}@`;
+      return `postgresql://${auth}${c.host}:${c.port}/${encodeURIComponent(c.database)}`;
+    }
 
-  // Format based on database type (SQLite already filtered out by guard above)
-  if (connection.dbType === 'postgres') {
-    return `postgresql://${auth}${host}:${port}/${database}`;
-  } else if (connection.dbType === 'mysql') {
-    return `mysql://${auth}${host}:${port}/${database}`;
-  } else if (connection.dbType === 'sqlserver') {
-    return `mssql://${auth}${host}:${port}/${database}`;
-  } else if (connection.dbType === 'mongodb') {
-    return `mongodb://${auth}${host}:${port}/${database}`;
-  } else {
-    throw new Error(`Unknown database type: ${(connection as any).dbType}`);
+    case 'mysql':
+    case 'mariadb': {
+      const c = connection;
+      const auth = c.password
+        ? `${encodeURIComponent(c.user)}:${encodeURIComponent(c.password)}@`
+        : `${encodeURIComponent(c.user)}@`;
+      return `mysql://${auth}${c.host}:${c.port}/${encodeURIComponent(c.database)}`;
+    }
+
+    case 'sqlserver': {
+      const c = connection;
+      const user = c.user || '';
+      const auth = c.password && user
+        ? `${encodeURIComponent(user)}:${encodeURIComponent(c.password)}@`
+        : user ? `${encodeURIComponent(user)}@` : '';
+      return `mssql://${auth}${c.host}:${c.port || 1433}/${encodeURIComponent(c.database)}`;
+    }
+
+    case 'sqlite': {
+      // SQLite doesn't have a standard connection string, return the file path
+      return connection.filePath;
+    }
+
+    case 'mongodb': {
+      const c = connection;
+      if (c.connectionString) {
+        return c.connectionString;
+      }
+      const auth = c.user && c.password
+        ? `${encodeURIComponent(c.user)}:${encodeURIComponent(c.password)}@`
+        : c.user ? `${encodeURIComponent(c.user)}@` : '';
+      return `mongodb://${auth}${c.host || 'localhost'}:${c.port || 27017}/${encodeURIComponent(c.database)}`;
+    }
+
+    case 'redis': {
+      const c = connection;
+      // Redis URI format: redis://[username:password@]host:port[/database]
+      let auth = '';
+      if (c.password) {
+        const user = c.username || 'default';
+        auth = `${encodeURIComponent(user)}:${encodeURIComponent(c.password)}@`;
+      }
+      const db = c.database !== undefined ? `/${c.database}` : '';
+      return `redis://${auth}${c.host}:${c.port}${db}`;
+    }
+
+    case 'elasticsearch': {
+      const c = connection;
+      // Return the node URL(s) or construct from cloud ID
+      if (c.node) {
+        return c.node;
+      }
+      if (c.nodes && c.nodes.length > 0) {
+        return c.nodes.join(',');
+      }
+      if (c.cloudId) {
+        return `cloud:${c.cloudId}`;
+      }
+      return 'elasticsearch://localhost:9200';
+    }
+
+    case 'cassandra': {
+      const c = connection;
+      // Cassandra uses contact points - return as comma-separated list
+      const auth = c.username && c.password
+        ? `${encodeURIComponent(c.username)}:${encodeURIComponent(c.password)}@`
+        : '';
+      const hosts = c.contactPoints.join(',');
+      return `cassandra://${auth}${hosts}:${c.port}/${encodeURIComponent(c.keyspace)}`;
+    }
+
+    default: {
+      // TypeScript exhaustiveness check
+      const _exhaustive: never = dbType;
+      throw new Error(`Unknown database type: ${_exhaustive}`);
+    }
   }
 }

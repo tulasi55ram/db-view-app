@@ -7,6 +7,14 @@ export default defineConfig({
     react()
   ],
   base: "./",
+  resolve: {
+    alias: {
+      // Resolve @/ imports from shared-ui to the shared-ui/src directory
+      "@/": resolve(__dirname, "../shared-ui/src") + "/",
+      // Also allow direct @dbview/shared-ui imports to work during development
+      "@dbview/shared-ui": resolve(__dirname, "../shared-ui/src"),
+    }
+  },
   server: {
     host: "127.0.0.1",
     port: 5173

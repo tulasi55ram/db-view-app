@@ -9,7 +9,7 @@ apps/desktop/dist/
 packages/types/dist/
 packages/adapters/dist/
 packages/ui/dist/
-packages/desktop-ui/dist/
+packages/shared-ui/dist/
 packages/utils/dist/
 
 # compiled files in source directories (should not be committed)

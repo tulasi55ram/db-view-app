@@ -1,234 +1,53 @@
 /**
  * Electron API wrapper
  *
- * This module provides access to the Electron API exposed via the preload script.
- * It mirrors the structure of vscode.ts for consistency.
+ * Re-exports from @dbview/shared-ui for backward compatibility.
+ * The shared-ui package provides the unified API that works across platforms.
  */
 
-import type {
-  DatabaseConnectionConfig,
-  ColumnMetadata,
-  SavedView,
-  ERDiagramData,
-  FilterCondition,
-  TableInfo,
-  TableStatistics,
-  TableIndex,
-  ExplainPlan,
-} from "@dbview/types";
+// Re-export everything from shared-ui
+export {
+  // Platform detection
+  detectPlatform,
+  isElectron,
+  isVSCode,
+  isWeb,
+  // API access
+  getAPI,
+  getAPI as getElectronAPI,
+} from "@dbview/shared-ui";
 
-// Re-export types for convenience
-export type { ElectronAPI } from "./types/electron";
+// Re-export types
+export type {
+  Platform,
+  DatabaseAPI,
+  ConnectionInfo,
+  LoadTableRowsParams,
+  GetRowCountParams,
+  GetTableMetadataParams,
+  UpdateCellParams,
+  InsertRowParams,
+  DeleteRowsParams,
+  RunQueryParams,
+  QueryResult,
+  ExplainQueryParams,
+  GetViewsParams,
+  SaveViewParams,
+  DeleteViewParams,
+  ExportDataParams,
+  ImportDataParams,
+  AutocompleteData,
+  ImportResult,
+  SaveDialogOptions,
+  OpenDialogOptions,
+  DialogResult,
+  QueryHistoryEntry,
+  SavedQuery,
+  FilterPreset,
+  PersistedTab,
+  TabsState,
+} from "@dbview/shared-ui";
 
-// Declare the Electron API interface
-export interface ElectronAPI {
-  // Connection management
-  getConnections(): Promise<ConnectionInfo[]>;
-  saveConnection(config: DatabaseConnectionConfig): Promise<void>;
-  deleteConnection(name: string): Promise<void>;
-  testConnection(config: DatabaseConnectionConfig): Promise<{ success: boolean; message: string }>;
-  connectToDatabase(connectionKey: string): Promise<void>;
-  disconnectFromDatabase(connectionKey: string): Promise<void>;
-
-  // Schema operations
-  listSchemas(connectionKey: string): Promise<string[]>;
-  listTables(connectionKey: string, schema: string): Promise<TableInfo[]>;
-  getHierarchy(connectionKey: string): Promise<any>;
-
-  // Table operations
-  loadTableRows(params: LoadTableRowsParams): Promise<{ columns: string[]; rows: Record<string, unknown>[] }>;
-  getRowCount(params: GetRowCountParams): Promise<number>;
-  getTableMetadata(params: GetTableMetadataParams): Promise<ColumnMetadata[]>;
-  getTableStatistics(params: GetTableMetadataParams): Promise<TableStatistics>;
-  getTableIndexes(params: GetTableMetadataParams): Promise<TableIndex[]>;
-  updateCell(params: UpdateCellParams): Promise<void>;
-  insertRow(params: InsertRowParams): Promise<Record<string, unknown>>;
-  deleteRows(params: DeleteRowsParams): Promise<number>;
-
-  // Query operations
-  runQuery(params: RunQueryParams): Promise<{ columns: string[]; rows: Record<string, unknown>[] }>;
-  formatSql(sql: string): Promise<string>;
-  explainQuery(params: ExplainQueryParams): Promise<ExplainPlan>;
-
-  // Saved views
-  getViews(params: GetViewsParams): Promise<SavedView[]>;
-  saveView(params: SaveViewParams): Promise<void>;
-  deleteView(params: DeleteViewParams): Promise<void>;
-
-  // ER Diagram
-  getERDiagram(connectionKey: string, schemas: string[]): Promise<ERDiagramData>;
-
-  // Autocomplete
-  getAutocompleteData(connectionKey: string): Promise<AutocompleteData>;
-
-  // Export/Import
-  exportData(params: ExportDataParams): Promise<string | null>;
-  importData(params: ImportDataParams): Promise<ImportResult>;
-
-  // Clipboard
-  copyToClipboard(text: string): Promise<void>;
-
-  // File dialogs
-  showSaveDialog(options: SaveDialogOptions): Promise<DialogResult>;
-  showOpenDialog(options: OpenDialogOptions): Promise<DialogResult>;
-
-  // Theme
-  getTheme(): Promise<"light" | "dark">;
-
-  // Event subscriptions
-  onConnectionStatusChange(callback: (data: { connectionKey: string; status: string }) => void): () => void;
-  onThemeChange(callback: (theme: "light" | "dark") => void): () => void;
-  onMenuNewQuery(callback: () => void): () => void;
-  onMenuAddConnection(callback: () => void): () => void;
-  onMenuOpenSqlite(callback: (filePath: string) => void): () => void;
-  onMenuToggleSidebar(callback: () => void): () => void;
-  onMenuRunQuery(callback: () => void): () => void;
-  onMenuFormatSql(callback: () => void): () => void;
-  onMenuExplainQuery(callback: () => void): () => void;
-}
-
-// Parameter types
-export interface ConnectionInfo {
-  config: Omit<DatabaseConnectionConfig, "password">;
-  status: "connected" | "disconnected" | "connecting" | "error";
-  error?: string;
-}
-
-export interface LoadTableRowsParams {
-  connectionKey: string;
-  schema: string;
-  table: string;
-  limit: number;
-  offset: number;
-  filters?: FilterCondition[];
-  filterLogic?: "AND" | "OR";
-}
-
-export interface GetRowCountParams {
-  connectionKey: string;
-  schema: string;
-  table: string;
-  filters?: FilterCondition[];
-  filterLogic?: "AND" | "OR";
-}
-
-export interface GetTableMetadataParams {
-  connectionKey: string;
-  schema: string;
-  table: string;
-}
-
-export interface UpdateCellParams {
-  connectionKey: string;
-  schema: string;
-  table: string;
-  primaryKey: Record<string, unknown>;
-  column: string;
-  value: unknown;
-}
-
-export interface InsertRowParams {
-  connectionKey: string;
-  schema: string;
-  table: string;
-  values: Record<string, unknown>;
-}
-
-export interface DeleteRowsParams {
-  connectionKey: string;
-  schema: string;
-  table: string;
-  primaryKeys: Record<string, unknown>[];
-}
-
-export interface RunQueryParams {
-  connectionKey: string;
-  sql: string;
-}
-
-export interface ExplainQueryParams {
-  connectionKey: string;
-  sql: string;
-}
-
-export interface GetViewsParams {
-  schema: string;
-  table: string;
-}
-
-export interface SaveViewParams {
-  schema: string;
-  table: string;
-  view: SavedView;
-}
-
-export interface DeleteViewParams {
-  schema: string;
-  table: string;
-  viewId: string;
-}
-
-export interface ExportDataParams {
-  connectionKey: string;
-  schema: string;
-  table: string;
-  content: string;
-  extension: string;
-}
-
-export interface ImportDataParams {
-  connectionKey: string;
-  schema: string;
-  table: string;
-  rows: Record<string, unknown>[];
-}
-
-export interface AutocompleteData {
-  schemas: string[];
-  tables: TableInfo[];
-  columns: Record<string, ColumnMetadata[]>;
-}
-
-export interface ImportResult {
-  insertedCount: number;
-  errors?: string[];
-}
-
-export interface SaveDialogOptions {
-  defaultPath?: string;
-  filters?: Array<{ name: string; extensions: string[] }>;
-}
-
-export interface OpenDialogOptions {
-  filters?: Array<{ name: string; extensions: string[] }>;
-  properties?: Array<"openFile" | "openDirectory" | "multiSelections">;
-}
-
-export interface DialogResult {
-  canceled: boolean;
-  filePaths: string[];
-}
-
-// Declare the global window interface extension
-declare global {
-  interface Window {
-    electronAPI?: ElectronAPI;
-  }
-}
-
-/**
- * Check if running in Electron
- */
-export function isElectron(): boolean {
-  return typeof window !== "undefined" && "electronAPI" in window && window.electronAPI !== undefined;
-}
-
-/**
- * Get the Electron API if available
- */
-export function getElectronAPI(): ElectronAPI | undefined {
-  if (isElectron()) {
-    return window.electronAPI;
-  }
-  return undefined;
-}
+// Re-export Electron-specific extensions
+export { getElectronAPIExtended } from "@dbview/shared-ui/electron";
+export type { ElectronAPI, UpdateInfo, UpdateProgress, UpdateStatus } from "@dbview/shared-ui/electron";

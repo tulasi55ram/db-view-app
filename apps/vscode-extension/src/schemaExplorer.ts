@@ -60,6 +60,8 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
   // Client cache for multiple connections (lazy-connect)
   private clients: Map<string, DatabaseAdapter> = new Map();
   private clientStatuses: Map<string, ConnectionStatus> = new Map();
+  // Track which connections have shown error notifications (to avoid spam)
+  private shownErrorNotifications: Set<string> = new Set();
 
   constructor(
     private client: DatabaseAdapter | undefined,
@@ -96,8 +98,21 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
           return `${dbType}:${(conn as any).connectionString}`;
         }
         return `${dbType}:${(conn as any).user || 'anonymous'}@${(conn as any).host || 'localhost'}:${(conn as any).port || 27017}/${(conn as any).database}`;
+      case 'redis':
+        return `${dbType}:${(conn as any).host}:${(conn as any).port}/${(conn as any).database || 0}`;
+      case 'elasticsearch':
+        if ((conn as any).cloudId) {
+          return `${dbType}:cloud:${(conn as any).cloudId}`;
+        }
+        if ((conn as any).node) {
+          return `${dbType}:${(conn as any).node}`;
+        }
+        return `${dbType}:${((conn as any).nodes || []).join(',')}`;
+      case 'cassandra':
+        return `${dbType}:${((conn as any).contactPoints || []).join(',')}:${(conn as any).port || 9042}/${(conn as any).keyspace}`;
       case 'postgres':
       case 'mysql':
+      case 'mariadb':
       case 'sqlserver':
         // All have host:port/database structure
         return `${dbType}:${(conn as any).user}@${(conn as any).host}:${(conn as any).port}/${(conn as any).database}`;
@@ -112,8 +127,23 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       return conn.name;
     }
 
-    if ('dbType' in conn && conn.dbType === 'sqlite') {
-      return conn.filePath;
+    if ('dbType' in conn) {
+      switch (conn.dbType) {
+        case 'sqlite':
+          return conn.filePath;
+        case 'redis':
+          return `Redis ${(conn as any).host}:${(conn as any).port}`;
+        case 'elasticsearch':
+          if ((conn as any).cloudId) {
+            return 'Elastic Cloud';
+          }
+          if ((conn as any).node) {
+            return (conn as any).node;
+          }
+          return 'Elasticsearch';
+        case 'cassandra':
+          return (conn as any).keyspace || 'Cassandra';
+      }
     }
 
     // For all other types that have a database property
@@ -174,13 +204,20 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       // Delayed refresh to avoid being ignored during getChildren()
       setTimeout(() => this.emitter.fire(), 100);
 
-      // Show notification for connection errors
-      if (event.status === 'error' && event.error) {
+      // Clear error notification flag when connection recovers
+      if (event.status === 'connected') {
+        this.shownErrorNotifications.delete(key);
+      }
+
+      // Show notification for connection errors (only once per error state)
+      if (event.status === 'error' && event.error && !this.shownErrorNotifications.has(key)) {
+        this.shownErrorNotifications.add(key);
         vscode.window.showWarningMessage(
           `dbview: ${this.getConnectionDisplayName(conn)} - ${event.error.message}`,
           'Reconnect'
         ).then(selection => {
           if (selection === 'Reconnect') {
+            this.shownErrorNotifications.delete(key); // Allow showing error again if reconnect fails
             this.reconnectClient(conn);
           }
         });
@@ -469,19 +506,25 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.connectionError = errorMessage;
+        const connKey = this.getConnectionKey(conn);
 
-        // Provide helpful message for authentication errors
-        if (errorMessage.includes("SASL") || errorMessage.includes("password")) {
-          vscode.window.showErrorMessage(
-            "dbview: Authentication failed. Please reconfigure your connection with the correct password.",
-            "Configure Connection"
-          ).then(selection => {
-            if (selection === "Configure Connection") {
-              vscode.commands.executeCommand("dbview.configureConnection");
-            }
-          });
-        } else {
-          vscode.window.showErrorMessage(`dbview: Failed to connect - ${errorMessage}`);
+        // Only show error notification once per connection (until it recovers)
+        if (!this.shownErrorNotifications.has(connKey)) {
+          this.shownErrorNotifications.add(connKey);
+
+          // Provide helpful message for authentication errors
+          if (errorMessage.includes("SASL") || errorMessage.includes("password")) {
+            vscode.window.showErrorMessage(
+              "dbview: Authentication failed. Please reconfigure your connection with the correct password.",
+              "Configure Connection"
+            ).then(selection => {
+              if (selection === "Configure Connection") {
+                vscode.commands.executeCommand("dbview.configureConnection");
+              }
+            });
+          } else {
+            vscode.window.showErrorMessage(`dbview: Failed to connect - ${errorMessage}`);
+          }
         }
         console.error("[dbview] Connection error:", error);
         return [];
@@ -835,7 +878,10 @@ export class SchemaTreeItem extends vscode.TreeItem {
       this.tooltip = new vscode.MarkdownString();
       this.tooltip.appendMarkdown(`**Get Started**\n\n`);
       this.tooltip.appendMarkdown(`Click to configure your first database connection.\n\n`);
-      this.tooltip.appendMarkdown(`Supported: PostgreSQL`);
+      this.tooltip.appendMarkdown(`**Supported databases:**\n`);
+      this.tooltip.appendMarkdown(`- PostgreSQL, MySQL, MariaDB, SQL Server\n`);
+      this.tooltip.appendMarkdown(`- SQLite, MongoDB\n`);
+      this.tooltip.appendMarkdown(`- Redis, Elasticsearch, Cassandra`);
       this.command = {
         command: "dbview.configureConnection",
         title: "Configure Connection"

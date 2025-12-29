@@ -2,18 +2,28 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================
+   CSS Variables - Unified Design Tokens
+
+   This file maps VS Code theme variables to the shared-ui
+   semantic naming convention, enabling component sharing
+   between VS Code and desktop platforms.
+   ============================================ */
+
 :root {
-  /* VS Code Theme Variables */
+  /* Typography */
   --vscode-font-family: "Inter", "Segoe UI", system-ui, sans-serif;
   --vscode-font-mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
 }
 
-/* Dark Theme (default) */
+/* ============================================
+   Dark Theme (VS Code default)
+   ============================================ */
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
 
-  /* Colors */
+  /* VS Code native colors */
   --color-bg: #1e1e1e;
   --color-bg-light: #252526;
   --color-bg-lighter: #2d2d2d;
@@ -34,13 +44,42 @@
   --color-number: #b5cea8;
   --color-boolean: #569cd6;
   --color-json: #d7ba7d;
+
+  /* Shared-UI semantic mappings */
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #252526;
+  --bg-tertiary: #2d2d2d;
+  --bg-hover: #37373d;
+  --bg-active: #094771;
+
+  --text-primary: #cccccc;
+  --text-secondary: #858585;
+  --text-tertiary: #6e6e6e;
+
+  --border-default: #3c3c3c;
+  --border-subtle: #454545;
+  --border-focus: #007acc;
+
+  --accent: #007acc;
+  --accent-hover: #005a9e;
+  --accent-muted: #004578;
+
+  --success: #4ec9b0;
+  --warning: #dcdcaa;
+  --error: #f14c4c;
+
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(121, 121, 121, 0.4);
+  --scrollbar-thumb-hover: rgba(121, 121, 121, 0.7);
 }
 
-/* Light Theme */
+/* ============================================
+   Light Theme
+   ============================================ */
 [data-theme="light"] {
   color-scheme: light;
 
-  /* Colors */
+  /* VS Code native colors */
   --color-bg: #ffffff;
   --color-bg-light: #f3f3f3;
   --color-bg-lighter: #e8e8e8;
@@ -61,13 +100,42 @@
   --color-number: #098658;
   --color-boolean: #0000ff;
   --color-json: #795e26;
+
+  /* Shared-UI semantic mappings */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f3f3f3;
+  --bg-tertiary: #e8e8e8;
+  --bg-hover: #e4e6f1;
+  --bg-active: #cce8ff;
+
+  --text-primary: #333333;
+  --text-secondary: #717171;
+  --text-tertiary: #999999;
+
+  --border-default: #cecece;
+  --border-subtle: #dddddd;
+  --border-focus: #0066b8;
+
+  --accent: #0066b8;
+  --accent-hover: #004c8c;
+  --accent-muted: #003366;
+
+  --success: #388a34;
+  --warning: #bf8803;
+  --error: #d32f2f;
+
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.35);
 }
 
-/* High Contrast Theme */
+/* ============================================
+   High Contrast Theme
+   ============================================ */
 [data-theme="high-contrast"] {
   color-scheme: dark;
 
-  /* Colors */
+  /* VS Code native colors */
   --color-bg: #000000;
   --color-bg-light: #0a0a0a;
   --color-bg-lighter: #1a1a1a;
@@ -88,13 +156,42 @@
   --color-number: #b5cea8;
   --color-boolean: #6fc3df;
   --color-json: #d7ba7d;
+
+  /* Shared-UI semantic mappings */
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-tertiary: #1a1a1a;
+  --bg-hover: #2a2a2a;
+  --bg-active: #0066cc;
+
+  --text-primary: #ffffff;
+  --text-secondary: #d4d4d4;
+  --text-tertiary: #b0b0b0;
+
+  --border-default: #6fc3df;
+  --border-subtle: #6fc3df;
+  --border-focus: #6fc3df;
+
+  --accent: #6fc3df;
+  --accent-hover: #4db8d4;
+  --accent-muted: #2da8c9;
+
+  --success: #89d185;
+  --warning: #ffcc00;
+  --error: #ff6666;
+
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(111, 195, 223, 0.4);
+  --scrollbar-thumb-hover: rgba(111, 195, 223, 0.7);
 }
 
-/* High Contrast Light Theme */
+/* ============================================
+   High Contrast Light Theme
+   ============================================ */
 [data-theme="high-contrast-light"] {
   color-scheme: light;
 
-  /* Colors */
+  /* VS Code native colors */
   --color-bg: #ffffff;
   --color-bg-light: #f5f5f5;
   --color-bg-lighter: #eeeeee;
@@ -115,7 +212,38 @@
   --color-number: #098658;
   --color-boolean: #0000cd;
   --color-json: #795e26;
+
+  /* Shared-UI semantic mappings */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f5;
+  --bg-tertiary: #eeeeee;
+  --bg-hover: #d4d4d4;
+  --bg-active: #add6ff;
+
+  --text-primary: #000000;
+  --text-secondary: #292929;
+  --text-tertiary: #525252;
+
+  --border-default: #0f4a85;
+  --border-subtle: #0f4a85;
+  --border-focus: #0f4a85;
+
+  --accent: #0f4a85;
+  --accent-hover: #0c3a6a;
+  --accent-muted: #092a4f;
+
+  --success: #006600;
+  --warning: #8b6914;
+  --error: #a80000;
+
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(15, 74, 133, 0.3);
+  --scrollbar-thumb-hover: rgba(15, 74, 133, 0.5);
 }
+
+/* ============================================
+   Base Styles
+   ============================================ */
 
 html,
 body,
@@ -129,77 +257,108 @@ body {
   font-family: var(--vscode-font-family);
   font-size: 13px;
   line-height: 1.5;
-  color: var(--color-text);
-  background-color: var(--color-bg);
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar styling */
+/* ============================================
+   Scrollbar Styling
+   ============================================ */
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(121, 121, 121, 0.4);
-  border-radius: 5px;
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(121, 121, 121, 0.7);
+  background: var(--scrollbar-thumb-hover);
 }
 
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
 
-/* Focus styles */
+/* ============================================
+   Focus Styles
+   ============================================ */
+
 *:focus {
   outline: none;
 }
 
 *:focus-visible {
-  outline: 1px solid var(--color-accent);
+  outline: 1px solid var(--border-focus);
   outline-offset: -1px;
 }
 
-/* Selection */
+/* ============================================
+   Selection
+   ============================================ */
+
 ::selection {
   background-color: rgba(0, 122, 204, 0.4);
 }
 
-/* Custom utility classes */
+/* ============================================
+   Utility Classes (Tailwind @layer)
+   ============================================ */
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ============================================
+   Component Classes (Tailwind @layer)
+   ============================================ */
+
 @layer components {
   .btn {
     @apply inline-flex items-center justify-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium transition-colors;
-    @apply focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-0 focus-visible:outline-brand;
+    @apply focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-0;
   }
 
   .btn-primary {
-    @apply bg-brand text-white hover:bg-brand-dark active:bg-brand-dark;
+    @apply bg-accent text-white hover:bg-accent-hover active:bg-accent-muted;
   }
 
   .btn-secondary {
-    @apply bg-vscode-bg-lighter text-vscode-text hover:bg-vscode-bg-hover active:bg-vscode-bg-active;
+    @apply bg-bg-tertiary text-text-primary hover:bg-bg-hover active:bg-bg-active;
   }
 
   .btn-ghost {
-    @apply bg-transparent text-vscode-text-muted hover:bg-vscode-bg-hover hover:text-vscode-text active:bg-vscode-bg-active;
+    @apply bg-transparent text-text-secondary hover:bg-bg-hover hover:text-text-primary active:bg-bg-active;
   }
 
   .btn-icon {
-    @apply p-1.5 rounded hover:bg-vscode-bg-hover active:bg-vscode-bg-active;
+    @apply p-1.5 rounded hover:bg-bg-hover active:bg-bg-active;
   }
 
   .input {
-    @apply w-full rounded border border-vscode-border bg-vscode-bg-light px-3 py-2 text-sm text-vscode-text;
-    @apply placeholder:text-vscode-text-muted;
-    @apply focus:border-brand focus:outline-none;
+    @apply w-full rounded border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary;
+    @apply placeholder:text-text-tertiary;
+    @apply focus:border-accent focus:outline-none;
   }
 
   .badge {
@@ -207,23 +366,61 @@ body {
   }
 
   .badge-info {
-    @apply bg-vscode-info/20 text-vscode-info;
+    @apply bg-info/20 text-info;
   }
 
   .badge-success {
-    @apply bg-vscode-success/20 text-vscode-success;
+    @apply bg-success/20 text-success;
   }
 
   .badge-warning {
-    @apply bg-vscode-warning/20 text-vscode-warning;
+    @apply bg-warning/20 text-warning;
   }
 
   .badge-error {
-    @apply bg-vscode-error/20 text-vscode-error;
+    @apply bg-error/20 text-error;
+  }
+
+  /* Panel resize handle */
+  .resize-handle {
+    @apply w-1 bg-transparent hover:bg-accent/50 transition-colors cursor-col-resize;
+  }
+
+  .resize-handle-horizontal {
+    @apply h-1 bg-transparent hover:bg-accent/50 transition-colors cursor-row-resize;
+  }
+
+  /* Skeleton loading */
+  .skeleton {
+    @apply bg-gradient-to-r from-bg-tertiary via-bg-hover to-bg-tertiary bg-[length:200%_100%] animate-shimmer rounded;
+  }
+
+  /* Status indicators */
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .status-connected {
+    @apply bg-success;
+  }
+
+  .status-disconnected {
+    @apply bg-neutral-500;
+  }
+
+  .status-connecting {
+    @apply bg-warning animate-pulse;
+  }
+
+  .status-error {
+    @apply bg-error;
   }
 }
 
-/* Data type colors for cells */
+/* ============================================
+   Data Type Colors for Cells
+   ============================================ */
+
 .cell-null {
   color: var(--color-null);
   font-style: italic;
@@ -245,52 +442,19 @@ body {
   color: var(--color-json);
 }
 
-/* Animations */
+/* ============================================
+   Animations
+   ============================================ */
+
 @keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
+  from {
     background-position: 200% 0;
   }
-}
-
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--color-bg-lighter) 25%,
-    var(--color-bg-hover) 50%,
-    var(--color-bg-lighter) 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-}
-
-/* Virtual Scrolling Styles */
-.will-change-scroll {
-  will-change: scroll-position;
-}
-
-/* Smooth scrolling with reduced motion support */
-@media (prefers-reduced-motion: no-preference) {
-  .smooth-scroll {
-    scroll-behavior: smooth;
+  to {
+    background-position: -200% 0;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .smooth-scroll {
-    scroll-behavior: auto;
-  }
-}
-
-/* Virtual row optimization */
-.virtual-row {
-  contain: layout style;
-  will-change: transform;
-}
-
-/* Floating button animations */
 @keyframes fade-in-up {
   from {
     opacity: 0;
@@ -318,4 +482,29 @@ body {
 
 .progress-glow {
   animation: progress-glow 2s ease-in-out infinite;
+}
+
+/* ============================================
+   Virtual Scrolling Optimization
+   ============================================ */
+
+.will-change-scroll {
+  will-change: scroll-position;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .smooth-scroll {
+    scroll-behavior: smooth;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .smooth-scroll {
+    scroll-behavior: auto;
+  }
+}
+
+.virtual-row {
+  contain: layout style;
+  will-change: transform;
 }

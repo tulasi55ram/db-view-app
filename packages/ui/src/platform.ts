@@ -1,54 +1,44 @@
 /**
  * Platform abstraction layer
  *
- * Provides a unified API for both VS Code webview and Electron renderer contexts.
- * The UI components can use this abstraction to work in both environments.
+ * Re-exports from @dbview/shared-ui for backward compatibility.
+ * The shared-ui package provides a unified API for both VS Code webview and Electron.
  */
 
-import { getVsCodeApi } from "./vscode";
-import { getElectronAPI, isElectron } from "./electron";
-import type { ElectronAPI } from "./electron";
+import {
+  detectPlatform,
+  isElectron,
+  isVSCode,
+  isWeb,
+  getAPI,
+} from "@dbview/shared-ui";
 
-export type Platform = "vscode" | "electron" | "web";
+import type { Platform, DatabaseAPI } from "@dbview/shared-ui";
 
-/**
- * Detect the current platform
- */
-export function getPlatform(): Platform {
-  if (isElectron()) {
-    return "electron";
-  }
-  if (typeof window !== "undefined" && typeof (window as any).acquireVsCodeApi === "function") {
-    return "vscode";
-  }
-  return "web";
-}
+// Re-export platform detection
+export { detectPlatform, isElectron, isVSCode, isWeb };
+export type { Platform };
 
-/**
- * Check if running in VS Code
- */
-export function isVSCode(): boolean {
-  return getPlatform() === "vscode";
-}
+// Backward compatibility: getPlatform is an alias for detectPlatform
+export const getPlatform = detectPlatform;
 
 /**
  * Platform-specific messaging abstraction
  *
- * In VS Code: Uses postMessage/onMessage pattern
- * In Electron: Uses direct IPC invoke pattern (Promise-based)
+ * This class provides a unified interface that wraps the shared-ui getAPI().
+ * It maintains backward compatibility with the old PlatformMessenger API
+ * while using the new shared DatabaseAPI under the hood.
  */
 export class PlatformMessenger {
   private platform: Platform;
-  private vscodeApi: ReturnType<typeof getVsCodeApi>;
-  private electronApi: ElectronAPI | undefined;
-  private messageHandlers: Map<string, ((data: any) => void)[]> = new Map();
+  private api: DatabaseAPI | undefined;
+  private messageHandlers: Map<string, ((data: unknown) => void)[]> = new Map();
 
   constructor() {
-    this.platform = getPlatform();
-    this.vscodeApi = getVsCodeApi();
-    this.electronApi = getElectronAPI();
+    this.platform = detectPlatform();
+    this.api = getAPI();
 
-    // Set up VS Code message listener
+    // Set up VS Code message listener for event handling
     if (this.platform === "vscode") {
       window.addEventListener("message", (event) => {
         const message = event.data;
@@ -71,29 +61,22 @@ export class PlatformMessenger {
   /**
    * Send a message and optionally wait for response
    *
-   * In VS Code: Posts message, response comes via message event
-   * In Electron: Invokes IPC handler, returns Promise directly
+   * For most operations, prefer using getAPI() directly from @dbview/shared-ui
+   * which provides a Promise-based interface for all platforms.
    */
-  async send<T = void>(type: string, payload?: any): Promise<T> {
-    if (this.platform === "electron" && this.electronApi) {
-      return this.invokeElectronAPI<T>(type, payload);
+  async send<T = void>(type: string, payload?: Record<string, unknown>): Promise<T> {
+    if (!this.api) {
+      throw new Error(`Platform ${this.platform} not supported for messaging`);
     }
 
-    if (this.platform === "vscode" && this.vscodeApi) {
-      // VS Code uses fire-and-forget postMessage
-      this.vscodeApi.postMessage({ type, ...payload });
-
-      // Return immediately for commands that don't expect a response
-      return undefined as T;
-    }
-
-    throw new Error(`Platform ${this.platform} not supported for messaging`);
+    // Map message types to API methods
+    return this.invokeAPI<T>(type, payload);
   }
 
   /**
    * Register a handler for incoming messages (VS Code pattern)
    */
-  onMessage(type: string, handler: (data: any) => void): () => void {
+  onMessage(type: string, handler: (data: unknown) => void): () => void {
     const handlers = this.messageHandlers.get(type) || [];
     handlers.push(handler);
     this.messageHandlers.set(type, handlers);
@@ -110,78 +93,90 @@ export class PlatformMessenger {
   }
 
   /**
-   * Map VS Code message types to Electron API calls
+   * Map message types to API methods
    */
-  private async invokeElectronAPI<T>(type: string, payload: any): Promise<T> {
-    if (!this.electronApi) {
-      throw new Error("Electron API not available");
+  private async invokeAPI<T>(type: string, payload?: Record<string, unknown>): Promise<T> {
+    if (!this.api) {
+      throw new Error("API not available");
     }
 
-    // Map message types to Electron API methods
+    const p = payload || {};
+
+    // Map message types to DatabaseAPI methods
     switch (type) {
       // Connection management
       case "GET_CONNECTIONS":
-        return this.electronApi.getConnections() as Promise<T>;
+        return this.api.getConnections() as Promise<T>;
       case "SAVE_CONNECTION":
-        return this.electronApi.saveConnection(payload.config) as Promise<T>;
+        return this.api.saveConnection(p.config as Parameters<DatabaseAPI['saveConnection']>[0]) as Promise<T>;
       case "DELETE_CONNECTION":
-        return this.electronApi.deleteConnection(payload.name) as Promise<T>;
+        return this.api.deleteConnection(p.name as string) as Promise<T>;
       case "TEST_CONNECTION":
-        return this.electronApi.testConnection(payload.config) as Promise<T>;
+        return this.api.testConnection(p.config as Parameters<DatabaseAPI['testConnection']>[0]) as Promise<T>;
+      case "CONNECT":
+        return this.api.connectToDatabase(p.connectionKey as string) as Promise<T>;
+      case "DISCONNECT":
+        return this.api.disconnectFromDatabase(p.connectionKey as string) as Promise<T>;
+
+      // Schema operations
+      case "LIST_SCHEMAS":
+        return this.api.listSchemas(p.connectionKey as string) as Promise<T>;
+      case "LIST_TABLES":
+        return this.api.listTables(p.connectionKey as string, p.schema as string) as Promise<T>;
+      case "GET_HIERARCHY":
+        return this.api.getHierarchy(p.connectionKey as string) as Promise<T>;
 
       // Table operations
       case "LOAD_TABLE_ROWS":
-        return this.electronApi.loadTableRows(payload) as Promise<T>;
+        return this.api.loadTableRows(p as Parameters<DatabaseAPI['loadTableRows']>[0]) as Promise<T>;
       case "GET_ROW_COUNT":
-        return this.electronApi.getRowCount(payload) as Promise<T>;
+        return this.api.getRowCount(p as Parameters<DatabaseAPI['getRowCount']>[0]) as Promise<T>;
       case "GET_TABLE_METADATA":
-        return this.electronApi.getTableMetadata(payload) as Promise<T>;
+        return this.api.getTableMetadata(p as Parameters<DatabaseAPI['getTableMetadata']>[0]) as Promise<T>;
       case "UPDATE_CELL":
-        return this.electronApi.updateCell(payload) as Promise<T>;
+        return this.api.updateCell(p as Parameters<DatabaseAPI['updateCell']>[0]) as Promise<T>;
       case "INSERT_ROW":
-        return this.electronApi.insertRow(payload) as Promise<T>;
+        return this.api.insertRow(p as Parameters<DatabaseAPI['insertRow']>[0]) as Promise<T>;
       case "DELETE_ROWS":
-        return this.electronApi.deleteRows(payload) as Promise<T>;
+        return this.api.deleteRows(p as Parameters<DatabaseAPI['deleteRows']>[0]) as Promise<T>;
 
       // Query operations
       case "RUN_QUERY":
-        return this.electronApi.runQuery(payload) as Promise<T>;
+        return this.api.runQuery(p as Parameters<DatabaseAPI['runQuery']>[0]) as Promise<T>;
       case "FORMAT_SQL":
-        return this.electronApi.formatSql(payload.sql) as Promise<T>;
+        return this.api.formatSql(p.sql as string) as Promise<T>;
       case "EXPLAIN_QUERY":
-        return this.electronApi.explainQuery(payload) as Promise<T>;
+        return this.api.explainQuery(p as Parameters<DatabaseAPI['explainQuery']>[0]) as Promise<T>;
 
       // Views
       case "GET_VIEWS":
-        return this.electronApi.getViews(payload) as Promise<T>;
+        return this.api.getViews(p as Parameters<DatabaseAPI['getViews']>[0]) as Promise<T>;
       case "SAVE_VIEW":
-        return this.electronApi.saveView(payload) as Promise<T>;
+        return this.api.saveView(p as Parameters<DatabaseAPI['saveView']>[0]) as Promise<T>;
       case "DELETE_VIEW":
-        return this.electronApi.deleteView(payload) as Promise<T>;
+        return this.api.deleteView(p as Parameters<DatabaseAPI['deleteView']>[0]) as Promise<T>;
 
       // ER Diagram
       case "GET_ER_DIAGRAM":
-        return this.electronApi.getERDiagram(payload.connectionKey, payload.schemas) as Promise<T>;
+        return this.api.getERDiagram(p.connectionKey as string, p.schemas as string[]) as Promise<T>;
 
       // Autocomplete
       case "GET_AUTOCOMPLETE_DATA":
-        return this.electronApi.getAutocompleteData(payload.connectionKey) as Promise<T>;
+        return this.api.getAutocompleteData(p.connectionKey as string) as Promise<T>;
 
       // Export/Import
       case "EXPORT_DATA":
-        return this.electronApi.exportData(payload) as Promise<T>;
+        return this.api.exportData(p as Parameters<DatabaseAPI['exportData']>[0]) as Promise<T>;
       case "IMPORT_DATA":
-        return this.electronApi.importData(payload) as Promise<T>;
+        return this.api.importData(p as Parameters<DatabaseAPI['importData']>[0]) as Promise<T>;
 
       // Clipboard
       case "COPY_TO_CLIPBOARD":
-        return this.electronApi.copyToClipboard(payload.content) as Promise<T>;
+        return this.api.copyToClipboard(p.text as string) as Promise<T>;
 
-      // Schema
-      case "LIST_SCHEMAS":
-        return this.electronApi.listSchemas(payload.connectionKey) as Promise<T>;
-      case "LIST_TABLES":
-        return this.electronApi.listTables(payload.connectionKey, payload.schema) as Promise<T>;
+      // Theme
+      case "GET_THEME":
+        return this.api.getTheme() as Promise<T>;
 
       default:
         throw new Error(`Unknown message type: ${type}`);
@@ -189,10 +184,10 @@ export class PlatformMessenger {
   }
 
   /**
-   * Get the Electron API directly (for Electron-specific features)
+   * Get the DatabaseAPI directly
    */
-  getElectronAPI(): ElectronAPI | undefined {
-    return this.electronApi;
+  getAPI(): DatabaseAPI | undefined {
+    return this.api;
   }
 
   /**

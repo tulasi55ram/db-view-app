@@ -1,4 +1,4 @@
-import { useState, useMemo, type FC, type ReactNode } from "react";
+import { useState, useMemo, type FC } from "react";
 import { ChevronRight, Copy, Check } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { tryParseJson, truncateJson } from "@/utils/jsonUtils";

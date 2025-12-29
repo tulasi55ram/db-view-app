@@ -400,7 +400,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
   };
 
   const handleBrowseSqlite = async () => {
-    if (!api) return;
+    if (!api || !api.showOpenDialog) return;
     const result = await api.showOpenDialog({
       filters: [
         { name: "SQLite Database", extensions: ["db", "sqlite", "sqlite3"] },

@@ -246,7 +246,7 @@ export function JSONEditor({
             ? view.state.sliceDoc(from, to)
             : view.state.doc.toString();
           await api.copyToClipboard(content);
-        } else if (isMod && e.key === "v") {
+        } else if (isMod && e.key === "v" && api.readFromClipboard) {
           e.preventDefault();
           const text = await api.readFromClipboard();
           if (text) {
@@ -379,7 +379,7 @@ export function JSONEditor({
       const api = getElectronAPI();
       let clipboardText = "";
 
-      if (api) {
+      if (api && api.readFromClipboard) {
         clipboardText = await api.readFromClipboard();
       } else {
         clipboardText = await navigator.clipboard.readText();

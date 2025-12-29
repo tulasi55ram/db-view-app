@@ -79,7 +79,7 @@ jobs:
         run: |
           pnpm --filter @dbview/types build
           pnpm --filter @dbview/adapters build
-          pnpm --filter @dbview/desktop-ui build
+          pnpm --filter @dbview/shared-ui build
           pnpm --filter @dbview/desktop build
 
       - name: Build Electron app (no publish)

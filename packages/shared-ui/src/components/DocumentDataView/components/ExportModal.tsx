@@ -202,7 +202,7 @@ export function ExportModal({
       }
 
       // Use Electron API to save file if available
-      if (api) {
+      if (api && api.showSaveDialog) {
         const result = await api.showSaveDialog({
           defaultPath: `${tableName}_export.${extension}`,
           filters: [

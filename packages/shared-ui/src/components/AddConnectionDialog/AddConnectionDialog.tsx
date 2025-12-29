@@ -280,7 +280,7 @@ export function AddConnectionDialog({ open, onOpenChange, onSave }: AddConnectio
   };
 
   const handleBrowseSqlite = async () => {
-    if (!api) return;
+    if (!api || !api.showOpenDialog) return;
     const result = await api.showOpenDialog({
       filters: [
         { name: "SQLite Database", extensions: ["db", "sqlite", "sqlite3"] },

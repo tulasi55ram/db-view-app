@@ -5,9 +5,41 @@ import { getWebviewHtml, getThemeKind, type ThemeKind } from "./webviewHost";
 import type { SavedView, FilterCondition, ColumnMetadata, TableInfo, DatabaseConnectionConfig } from "@dbview/types";
 import { format as formatSql } from "sql-formatter";
 
+// Local type definitions for API types (mirrors shared-ui/api/types.ts)
+interface FilterPreset {
+  id: string;
+  name: string;
+  filters: Array<{
+    id: string;
+    columnName: string;
+    operator: string;
+    value: unknown;
+  }>;
+  logic: "AND" | "OR";
+  createdAt: number;
+}
+
+interface QueryHistoryEntry {
+  id: string;
+  sql: string;
+  executedAt: number;
+  duration?: number;
+  rowCount?: number;
+  success: boolean;
+  error?: string;
+  starred?: boolean;
+}
+
+interface SavedQuery {
+  id: string;
+  name: string;
+  sql: string;
+  description?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // Get autocomplete performance limits from VS Code settings
-// Users can adjust these in Settings > Extensions > DBView if they have large databases
-// TODO: Implement lazy loading - fetch column metadata on-demand when user types specific table names
 function getAutocompleteLimits() {
   const config = vscode.workspace.getConfiguration('dbview.autocomplete');
   return {
@@ -28,12 +60,10 @@ const panelMessageQueues: Map<string, any[]> = new Map();
 function getConnectionKey(config: DatabaseConnectionConfig): string {
   const dbType = config.dbType || 'postgres';
 
-  // Use name if available, with dbType prefix
   if (config.name) {
     return `${dbType}:${config.name}`;
   }
 
-  // Generate key based on database type
   switch (dbType) {
     case 'sqlite':
       return `${dbType}:${(config as any).filePath}`;
@@ -42,14 +72,34 @@ function getConnectionKey(config: DatabaseConnectionConfig): string {
         return `${dbType}:${(config as any).connectionString}`;
       }
       return `${dbType}:${(config as any).user || 'anonymous'}@${(config as any).host || 'localhost'}:${(config as any).port || 27017}/${(config as any).database}`;
+    case 'redis':
+      return `${dbType}:${(config as any).host || 'localhost'}:${(config as any).port || 6379}/${(config as any).database || 0}`;
+    case 'elasticsearch':
+      if ((config as any).cloudId) {
+        return `${dbType}:cloud:${(config as any).cloudId}`;
+      }
+      return `${dbType}:${(config as any).nodes?.[0] || (config as any).host || 'localhost'}`;
+    case 'cassandra':
+      return `${dbType}:${((config as any).contactPoints || []).join(',')}:${(config as any).port || 9042}/${(config as any).keyspace}`;
     case 'postgres':
     case 'mysql':
+    case 'mariadb':
     case 'sqlserver':
-      // All have host:port/database structure
       return `${dbType}:${(config as any).user}@${(config as any).host}:${(config as any).port}/${(config as any).database}`;
     default:
-      // Future database types - use JSON as fallback
       return `${dbType}:${JSON.stringify(config)}`;
+  }
+}
+
+// Helper to send response with requestId pattern
+function sendResponse(panel: vscode.WebviewPanel, requestId: number | undefined, data: unknown, error?: string): void {
+  if (requestId !== undefined) {
+    // New pattern: respond with requestId
+    panel.webview.postMessage({
+      requestId,
+      data: error ? undefined : data,
+      error
+    });
   }
 }
 
@@ -75,7 +125,6 @@ function sendMessageToPanel(connectionKey: string, message: any): void {
 
 export function updateWebviewTheme(): void {
   const theme = getThemeKind();
-  // Update theme for all panels
   for (const panel of panels.values()) {
     panel.webview.postMessage({
       type: "THEME_CHANGE",
@@ -88,11 +137,6 @@ function isReadOnlyMode(config: DatabaseConnectionConfig): boolean {
   return config.readOnly === true;
 }
 
-/**
- * Get existing panel for a connection config
- * @param config Connection configuration (must match what was used to create panel)
- * @returns The webview panel if it exists, undefined otherwise
- */
 export function getPanelForConnection(config: DatabaseConnectionConfig): vscode.WebviewPanel | undefined {
   const key = getConnectionKey(config);
   return panels.get(key);
@@ -102,15 +146,11 @@ export function getAllPanels(): vscode.WebviewPanel[] {
   return Array.from(panels.values());
 }
 
-/**
- * Close existing panel for a connection config
- * @param config Connection configuration (must match what was used to create panel)
- */
 export function closePanelForConnection(config: DatabaseConnectionConfig): void {
   const key = getConnectionKey(config);
   const panel = panels.get(key);
   if (panel) {
-    panel.dispose(); // This will trigger disposal handler which cleans up maps
+    panel.dispose();
   }
 }
 
@@ -126,25 +166,17 @@ export async function getOrCreateMainPanel(
   if ('host' in connectionConfig) connInfo.host = connectionConfig.host;
   if ('port' in connectionConfig) connInfo.port = connectionConfig.port;
 
-  console.log(`[dbview-mainPanel] ========== getOrCreateMainPanel CALLED ==========`);
-  console.log(`[dbview-mainPanel] Connection config:`, JSON.stringify(connInfo, null, 2));
-  console.log(`[dbview-mainPanel] Generated connection key: "${key}"`);
-  console.log(`[dbview-mainPanel] Current panels map size: ${panels.size}`);
-  console.log(`[dbview-mainPanel] Current panel keys:`, Array.from(panels.keys()));
+  console.log(`[dbview-mainPanel] getOrCreateMainPanel for key: "${key}"`);
 
-  // If panel exists for this connection, reveal and return it
   const existingPanel = panels.get(key);
   if (existingPanel) {
-    console.log(`[dbview-mainPanel] ✓ REUSING existing panel for connection key: "${key}"`);
-    vscode.window.showInformationMessage(`[DEBUG] Reusing panel: ${key}`);
+    console.log(`[dbview-mainPanel] Reusing existing panel for: "${key}"`);
     existingPanel.reveal(vscode.ViewColumn.Active);
     return existingPanel;
   }
 
-  // Create new panel for this connection
   const connectionTitle = connectionConfig.name || ('database' in connectionConfig ? connectionConfig.database : connectionConfig.dbType);
-  console.log(`[dbview-mainPanel] ✓ CREATING NEW panel for connection: ${connectionTitle} (key: "${key}")`);
-  vscode.window.showInformationMessage(`[DEBUG] Creating NEW panel: ${connectionTitle}`);
+  console.log(`[dbview-mainPanel] Creating new panel for: ${connectionTitle}`);
 
   const panel = vscode.window.createWebviewPanel(
     "dbview.mainView",
@@ -152,47 +184,40 @@ export async function getOrCreateMainPanel(
     vscode.ViewColumn.Active,
     {
       enableScripts: true,
-      retainContextWhenHidden: true, // Keep state when panel is hidden
+      retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, "media", "webview")],
       enableCommandUris: true
     }
   );
 
-  // Store panel, config, and client in maps
   panels.set(key, panel);
   panelConfigs.set(key, connectionConfig);
   panelClients.set(key, client);
   panelReadyState.set(key, false);
   panelMessageQueues.set(key, []);
 
-  console.log(`[dbview-mainPanel] ✓ Panel stored in map with key: "${key}"`);
-  console.log(`[dbview-mainPanel] ✓ Panels map now has ${panels.size} panel(s)`);
-  console.log(`[dbview-mainPanel] ✓ All panel keys:`, Array.from(panels.keys()));
-
   panel.onDidDispose(() => {
-    console.log(`[dbview-mainPanel] Panel disposed for connection: ${connectionTitle} (key: "${key}")`);
+    console.log(`[dbview-mainPanel] Panel disposed for: "${key}"`);
     panels.delete(key);
     panelConfigs.delete(key);
     panelClients.delete(key);
     panelReadyState.delete(key);
     panelMessageQueues.delete(key);
-    console.log(`[dbview-mainPanel] Panels map now has ${panels.size} panel(s)`);
   });
 
   panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri);
 
   // Handle messages from the webview
-  // Message handler is a closure that captures client and connectionConfig for this specific panel
   panel.webview.onDidReceiveMessage(async (message: any) => {
     try {
+      const requestId = message.requestId;
       const tabId = message.tabId;
 
       switch (message?.type) {
         case "WEBVIEW_READY": {
-          console.log(`[dbview-mainPanel] Webview ready for connection: ${key}`);
+          console.log(`[dbview-mainPanel] Webview ready for: ${key}`);
           panelReadyState.set(key, true);
 
-          // Flush any queued messages
           const queue = panelMessageQueues.get(key) || [];
           console.log(`[dbview-mainPanel] Flushing ${queue.length} queued message(s)`);
           for (const queuedMsg of queue) {
@@ -202,23 +227,17 @@ export async function getOrCreateMainPanel(
           break;
         }
 
-        case "LOAD_TABLE_ROWS": {
-          const schema = message.schema;
-          const table = message.table;
-          const limit = typeof message.limit === "number" ? message.limit : 100;
-          const offset = typeof message.offset === "number" ? message.offset : 0;
-          const filters = message.filters as FilterCondition[] | undefined;
-          const filterLogic = (message.filterLogic as 'AND' | 'OR') ?? 'AND';
+        // ============================================
+        // Table Data Operations (with requestId support)
+        // ============================================
 
-          console.log(`[dbview] Loading table rows for tab ${tabId}: ${schema}.${table} (limit: ${limit}, offset: ${offset}, filters: ${filters?.length ?? 0})`);
+        case "LOAD_TABLE_ROWS": {
+          const { schema, table, limit = 100, offset = 0, filters, filterLogic = 'AND' } = message;
+          console.log(`[dbview] Loading rows: ${schema}.${table} (limit: ${limit}, offset: ${offset})`);
 
           try {
             const result = await client.fetchTableRows(schema, table, { limit, offset, filters, filterLogic });
-            panel.webview.postMessage({
-              type: "LOAD_TABLE_ROWS",
-              tabId,
-              schema,
-              table,
+            sendResponse(panel, requestId, {
               columns: result.columns,
               rows: result.rows,
               limit,
@@ -226,591 +245,349 @@ export async function getOrCreateMainPanel(
             });
           } catch (error) {
             console.error(`[dbview] Error loading table rows:`, error);
-            vscode.window.showErrorMessage(`Failed to load table rows: ${error instanceof Error ? error.message : String(error)}`);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
 
         case "GET_ROW_COUNT": {
-          console.log(`[dbview] Getting row count for tab ${tabId}: ${message.schema}.${message.table}`);
+          const { schema, table, filters, filterLogic = 'AND' } = message;
+          console.log(`[dbview] Getting row count: ${schema}.${table}`);
+
           try {
-            const filters = message.filters as FilterCondition[] | undefined;
-            const filterLogic = (message.filterLogic as 'AND' | 'OR') ?? 'AND';
-            const totalRows = await client.getTableRowCount(message.schema, message.table, { filters, filterLogic });
-            panel.webview.postMessage({
-              type: "ROW_COUNT",
-              tabId,
-              totalRows
-            });
+            const totalRows = await client.getTableRowCount(schema, table, { filters, filterLogic });
+            sendResponse(panel, requestId, totalRows);
           } catch (error) {
             console.error(`[dbview] Error getting row count:`, error);
-            panel.webview.postMessage({
-              type: "ROW_COUNT_ERROR",
-              tabId,
-              error: error instanceof Error ? error.message : String(error)
-            });
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
 
         case "GET_TABLE_METADATA": {
-          console.log(`[dbview] Getting metadata for tab ${tabId}: ${message.schema}.${message.table}`);
+          const { schema, table } = message;
+          console.log(`[dbview] Getting metadata: ${schema}.${table}`);
+
           try {
-            const metadata = await client.getTableMetadata(message.schema, message.table);
-            panel.webview.postMessage({
-              type: "TABLE_METADATA",
-              tabId,
-              columns: metadata
-            });
+            const metadata = await client.getTableMetadata(schema, table);
+            sendResponse(panel, requestId, metadata);
           } catch (error) {
-            console.error(`[dbview] Error getting table metadata:`, error);
-            vscode.window.showErrorMessage(`Failed to get table metadata: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`[dbview] Error getting metadata:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
 
         case "GET_TABLE_INDEXES": {
-          console.log(`[dbview] Getting indexes for ${message.schema}.${message.table}`);
+          const { schema, table } = message;
+          console.log(`[dbview] Getting indexes: ${schema}.${table}`);
+
           try {
-            if (client.getIndexes) {
-              const indexes = await client.getIndexes(message.schema, message.table);
-              panel.webview.postMessage({
-                type: "TABLE_INDEXES",
-                indexes
-              });
-            } else {
-              panel.webview.postMessage({
-                type: "TABLE_INDEXES",
-                indexes: []
-              });
-            }
+            const indexes = client.getIndexes ? await client.getIndexes(schema, table) : [];
+            sendResponse(panel, requestId, indexes);
           } catch (error) {
-            console.error(`[dbview] Error getting table indexes:`, error);
-            panel.webview.postMessage({
-              type: "TABLE_INDEXES",
-              indexes: []
-            });
+            console.error(`[dbview] Error getting indexes:`, error);
+            sendResponse(panel, requestId, []);
           }
           break;
         }
 
         case "GET_TABLE_STATISTICS": {
-          console.log(`[dbview] Getting statistics for ${message.schema}.${message.table}`);
+          const { schema, table } = message;
+          console.log(`[dbview] Getting statistics: ${schema}.${table}`);
+
           try {
-            const statistics = await client.getTableStatistics(message.schema, message.table);
-            panel.webview.postMessage({
-              type: "TABLE_STATISTICS",
-              statistics
-            });
+            const statistics = await client.getTableStatistics(schema, table);
+            sendResponse(panel, requestId, statistics);
           } catch (error) {
-            console.error(`[dbview] Error getting table statistics:`, error);
-            panel.webview.postMessage({
-              type: "TABLE_STATISTICS",
-              statistics: undefined
-            });
+            console.error(`[dbview] Error getting statistics:`, error);
+            sendResponse(panel, requestId, undefined);
           }
           break;
         }
 
-        case "GET_ER_DIAGRAM": {
-          console.log(`[dbview] Getting ER diagram for schemas:`, message.schemas);
+        // ============================================
+        // Schema Operations
+        // ============================================
+
+        case "LIST_SCHEMAS": {
+          console.log(`[dbview] Listing schemas`);
           try {
-            if (client.getERDiagramData) {
-              const diagramData = await client.getERDiagramData(message.schemas);
-              panel.webview.postMessage({
-                type: "ER_DIAGRAM_DATA",
-                diagramData
-              });
-            } else {
-              panel.webview.postMessage({
-                type: "ER_DIAGRAM_DATA",
-                diagramData: { tables: [], relationships: [] }
-              });
-            }
+            const schemas = await client.listSchemas();
+            sendResponse(panel, requestId, schemas);
           } catch (error) {
-            console.error(`[dbview] Error getting ER diagram:`, error);
-            panel.webview.postMessage({
-              type: "ER_DIAGRAM_ERROR",
-              error: error instanceof Error ? error.message : String(error)
-            });
+            console.error(`[dbview] Error listing schemas:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
+
+        case "LIST_TABLES": {
+          const { schema } = message;
+          console.log(`[dbview] Listing tables for schema: ${schema}`);
+          try {
+            const tables = await client.listTables(schema);
+            sendResponse(panel, requestId, tables);
+          } catch (error) {
+            console.error(`[dbview] Error listing tables:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        case "LIST_COLUMNS": {
+          const { schema, table } = message;
+          console.log(`[dbview] Listing columns for: ${schema}.${table}`);
+          try {
+            const columns = await client.getTableMetadata(schema, table);
+            sendResponse(panel, requestId, columns);
+          } catch (error) {
+            console.error(`[dbview] Error listing columns:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        // ============================================
+        // Write Operations
+        // ============================================
 
         case "UPDATE_CELL": {
-          console.log(`[dbview] Updating cell for tab ${tabId}: ${message.schema}.${message.table}`);
+          const { schema, table, primaryKey, column, value, rowIndex } = message;
+          console.log(`[dbview] Updating cell: ${schema}.${table}.${column}`);
 
-          // Check for read-only mode
           if (isReadOnlyMode(connectionConfig)) {
-            console.log(`[dbview] UPDATE blocked - connection is in read-only mode`);
-            panel.webview.postMessage({
-              type: "UPDATE_ERROR",
-              tabId,
-              error: "🔒 Connection is in read-only mode. Write operations are blocked.",
-              rowIndex: message.rowIndex,
-              column: message.column
-            });
+            sendResponse(panel, requestId, undefined, "🔒 Connection is in read-only mode. Write operations are blocked.");
             break;
           }
 
           try {
-            await client.updateCell(
-              message.schema,
-              message.table,
-              message.primaryKey,
-              message.column,
-              message.value
-            );
-            panel.webview.postMessage({
-              type: "UPDATE_SUCCESS",
-              tabId,
-              rowIndex: message.rowIndex
-            });
-
-            // Refresh the row to get the updated value
-            // We'll need to implement this if needed
+            await client.updateCell(schema, table, primaryKey, column, value);
+            sendResponse(panel, requestId, { success: true, rowIndex });
           } catch (error) {
             console.error(`[dbview] Error updating cell:`, error);
-            panel.webview.postMessage({
-              type: "UPDATE_ERROR",
-              tabId,
-              error: error instanceof Error ? error.message : String(error),
-              rowIndex: message.rowIndex,
-              column: message.column
-            });
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
 
         case "INSERT_ROW": {
-          console.log(`[dbview] ========== INSERT ROW REQUEST ==========`);
-          console.log(`[dbview] Tab ID: ${tabId}`);
-          console.log(`[dbview] Schema: ${message.schema}`);
-          console.log(`[dbview] Table: ${message.table}`);
-          console.log(`[dbview] Values to insert:`, JSON.stringify(message.values, null, 2));
-          console.log(`[dbview] Number of columns: ${Object.keys(message.values).length}`);
+          const { schema, table, values } = message;
+          console.log(`[dbview] Inserting row: ${schema}.${table}`);
 
-          // Check for read-only mode
           if (isReadOnlyMode(connectionConfig)) {
-            console.log(`[dbview] INSERT blocked - connection is in read-only mode`);
-            panel.webview.postMessage({
-              type: "INSERT_ERROR",
-              tabId,
-              error: "🔒 Connection is in read-only mode. Write operations are blocked."
-            });
+            sendResponse(panel, requestId, undefined, "🔒 Connection is in read-only mode. Write operations are blocked.");
             break;
           }
 
           try {
-            console.log(`[dbview] Calling client.insertRow...`);
-            const newRow = await client.insertRow(message.schema, message.table, message.values);
-            console.log(`[dbview] ========== INSERT SUCCESSFUL ==========`);
-            console.log(`[dbview] Inserted row:`, newRow);
-
-            panel.webview.postMessage({
-              type: "INSERT_SUCCESS",
-              tabId,
-              newRow
-            });
-            console.log(`[dbview] INSERT_SUCCESS message sent to webview`);
+            const newRow = await client.insertRow(schema, table, values);
+            sendResponse(panel, requestId, newRow);
           } catch (error) {
-            console.error(`[dbview] ========== INSERT FAILED ==========`);
             console.error(`[dbview] Error inserting row:`, error);
-            console.error(`[dbview] Error stack:`, error instanceof Error ? error.stack : 'No stack trace');
-
-            panel.webview.postMessage({
-              type: "INSERT_ERROR",
-              tabId,
-              error: error instanceof Error ? error.message : String(error)
-            });
-            console.log(`[dbview] INSERT_ERROR message sent to webview`);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
 
         case "DELETE_ROWS": {
-          console.log(`[dbview] Deleting ${message.primaryKeys.length} row(s) for tab ${tabId}: ${message.schema}.${message.table}`);
+          const { schema, table, primaryKeys } = message;
+          console.log(`[dbview] Deleting ${primaryKeys.length} row(s): ${schema}.${table}`);
 
-          // Check for read-only mode
           if (isReadOnlyMode(connectionConfig)) {
-            console.log(`[dbview] DELETE blocked - connection is in read-only mode`);
-            panel.webview.postMessage({
-              type: "DELETE_ERROR",
-              tabId,
-              error: "🔒 Connection is in read-only mode. Write operations are blocked."
-            });
+            sendResponse(panel, requestId, undefined, "🔒 Connection is in read-only mode. Write operations are blocked.");
             break;
           }
 
           try {
-            const deletedCount = await client.deleteRows(message.schema, message.table, message.primaryKeys);
-            panel.webview.postMessage({
-              type: "DELETE_SUCCESS",
-              tabId,
-              deletedCount
-            });
+            const deletedCount = await client.deleteRows(schema, table, primaryKeys);
+            sendResponse(panel, requestId, { deletedCount });
           } catch (error) {
             console.error(`[dbview] Error deleting rows:`, error);
-            panel.webview.postMessage({
-              type: "DELETE_ERROR",
-              tabId,
-              error: error instanceof Error ? error.message : String(error)
-            });
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
 
+        // ============================================
+        // Query Operations
+        // ============================================
+
         case "RUN_QUERY": {
-          console.log(`[dbview] Running query for tab ${tabId}`);
+          const { sql } = message;
+          console.log(`[dbview] Running query`);
+
           try {
-            const result = await client.runQuery(message.sql);
-            panel.webview.postMessage({
-              type: "QUERY_RESULT",
-              tabId,
+            const result = await client.runQuery(sql);
+            sendResponse(panel, requestId, {
               columns: result.columns,
               rows: result.rows
             });
           } catch (error) {
             console.error(`[dbview] Error running query:`, error);
-            panel.webview.postMessage({
-              type: "QUERY_ERROR",
-              tabId,
-              message: error instanceof Error ? error.message : String(error)
-            });
-          }
-          break;
-        }
-
-        // Saved views operations
-        case "SAVE_VIEW": {
-          const { schema, table, view } = message;
-          const key = `dbview.views.${schema}.${table}`;
-
-          try {
-            const existingViews = context.workspaceState.get<SavedView[]>(key, []);
-
-            // Check if updating default view - unset other defaults
-            if (view.isDefault) {
-              existingViews.forEach(v => {
-                if (v.id !== view.id) {
-                  v.isDefault = false;
-                }
-              });
-            }
-
-            const updatedViews = [...existingViews, view];
-            await context.workspaceState.update(key, updatedViews);
-
-            panel.webview.postMessage({
-              type: "VIEWS_UPDATED",
-              tabId,
-              views: updatedViews
-            });
-          } catch (error) {
-            console.error(`[dbview] Error saving view:`, error);
-            vscode.window.showErrorMessage(`Failed to save view: ${error instanceof Error ? error.message : String(error)}`);
-          }
-          break;
-        }
-
-        case "GET_VIEWS": {
-          const { schema, table } = message;
-          const key = `dbview.views.${schema}.${table}`;
-          const views = context.workspaceState.get<SavedView[]>(key, []);
-          panel.webview.postMessage({
-            type: "VIEWS_LOADED",
-            tabId,
-            views
-          });
-          break;
-        }
-
-        case "DELETE_VIEW": {
-          const { schema, table, viewId } = message;
-          const key = `dbview.views.${schema}.${table}`;
-
-          try {
-            const existingViews = context.workspaceState.get<SavedView[]>(key, []);
-            const updatedViews = existingViews.filter(v => v.id !== viewId);
-            await context.workspaceState.update(key, updatedViews);
-
-            panel.webview.postMessage({
-              type: "VIEWS_UPDATED",
-              tabId,
-              views: updatedViews
-            });
-          } catch (error) {
-            console.error(`[dbview] Error deleting view:`, error);
-            vscode.window.showErrorMessage(`Failed to delete view: ${error instanceof Error ? error.message : String(error)}`);
-          }
-          break;
-        }
-
-        case "EXPORT_VIEW": {
-          const { view } = message;
-          const jsonString = JSON.stringify(view, null, 2);
-
-          const uri = await vscode.window.showSaveDialog({
-            defaultUri: vscode.Uri.file(`${view.name}.view.json`),
-            filters: {
-              'DBView Files': ['view.json'],
-              'JSON Files': ['json']
-            }
-          });
-
-          if (uri) {
-            await vscode.workspace.fs.writeFile(uri, Buffer.from(jsonString, 'utf8'));
-            vscode.window.showInformationMessage('View exported successfully');
-          }
-          break;
-        }
-
-        case "IMPORT_VIEW": {
-          const { schema, table } = message;
-
-          const uris = await vscode.window.showOpenDialog({
-            canSelectMany: false,
-            filters: {
-              'DBView Files': ['view.json'],
-              'JSON Files': ['json']
-            }
-          });
-
-          if (uris && uris.length > 0) {
-            try {
-              const content = await vscode.workspace.fs.readFile(uris[0]);
-              const view = JSON.parse(content.toString()) as SavedView;
-
-              // Update schema/table to match current table
-              view.schema = schema;
-              view.table = table;
-              view.id = `view-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-              view.createdAt = Date.now();
-              view.updatedAt = Date.now();
-
-              const key = `dbview.views.${schema}.${table}`;
-              const existingViews = context.workspaceState.get<SavedView[]>(key, []);
-              const updatedViews = [...existingViews, view];
-              await context.workspaceState.update(key, updatedViews);
-
-              panel.webview.postMessage({
-                type: "VIEWS_UPDATED",
-                tabId,
-                views: updatedViews
-              });
-
-              vscode.window.showInformationMessage('View imported successfully');
-            } catch (error) {
-              console.error(`[dbview] Error importing view:`, error);
-              vscode.window.showErrorMessage(`Failed to import view: ${error instanceof Error ? error.message : String(error)}`);
-            }
-          }
-          break;
-        }
-
-        case "GET_AUTOCOMPLETE_DATA": {
-          console.log(`[dbview] Getting autocomplete data`);
-          const startTime = Date.now();
-          try {
-            // Get configurable limits from VS Code settings
-            const limits = getAutocompleteLimits();
-            console.log(`[dbview] Using limits: ${limits.MAX_TOTAL_TABLES} tables max, ${limits.MAX_TABLES_WITH_METADATA} with metadata`);
-
-            // Fetch all schemas using database-agnostic adapter method
-            const schemas = await client.listSchemas();
-            console.log(`[dbview] Fetched ${schemas.length} schemas in ${Date.now() - startTime}ms`);
-
-            // Fetch tables with row counts for each schema (with limits for performance)
-            const allTables: TableInfo[] = [];
-
-            for (const schema of schemas) {
-              if (allTables.length >= limits.MAX_TOTAL_TABLES) {
-                console.log(`[dbview] Reached max table limit (${limits.MAX_TOTAL_TABLES}), skipping remaining schemas`);
-                break;
-              }
-
-              try {
-                const schemaTables = await client.listTables(schema);
-                // Limit tables per schema
-                const limitedTables = schemaTables.slice(0, limits.MAX_TABLES_PER_SCHEMA);
-
-                if (schemaTables.length > limitedTables.length) {
-                  console.log(`[dbview] Schema '${schema}' has ${schemaTables.length} tables, limiting to ${limitedTables.length}`);
-                }
-
-                // Add schema to each table info
-                allTables.push(...limitedTables.map(t => ({
-                  ...t,
-                  schema: schema
-                })));
-              } catch (error) {
-                console.error(`[dbview] Error fetching tables for schema ${schema}:`, error);
-              }
-            }
-            console.log(`[dbview] Fetched ${allTables.length} tables in ${Date.now() - startTime}ms`);
-
-            // Fetch column metadata only for a limited subset of tables to prevent performance issues
-            // Full metadata fetching on large DBs can take minutes and freeze the UI
-            const columns: Record<string, ColumnMetadata[]> = {};
-            const tablesToFetchMetadata = allTables.slice(0, limits.MAX_TABLES_WITH_METADATA);
-
-            if (allTables.length > limits.MAX_TABLES_WITH_METADATA) {
-              console.log(`[dbview] Limiting column metadata fetch to ${limits.MAX_TABLES_WITH_METADATA} of ${allTables.length} tables`);
-            }
-
-            for (const table of tablesToFetchMetadata) {
-              const key = `${table.schema}.${table.name}`;
-              try {
-                columns[key] = await client.getTableMetadata(table.schema, table.name);
-              } catch (error) {
-                console.error(`[dbview] Error fetching metadata for ${key}:`, error);
-                columns[key] = [];
-              }
-            }
-
-            const totalTime = Date.now() - startTime;
-            console.log(`[dbview] Autocomplete data ready: ${schemas.length} schemas, ${allTables.length} tables, ${Object.keys(columns).length} tables with column metadata (${totalTime}ms)`);
-
-            panel.webview.postMessage({
-              type: "AUTOCOMPLETE_DATA",
-              schemas,
-              tables: allTables,
-              columns
-            });
-          } catch (error) {
-            console.error(`[dbview] Error getting autocomplete data:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
 
         case "FORMAT_SQL": {
-          console.log(`[dbview] Formatting SQL for tab ${tabId}`);
-          try {
-            // Determine SQL dialect based on database type
-            const sqlDialect = client.type === 'mysql' ? 'mysql' : 'postgresql';
+          const { sql } = message;
+          console.log(`[dbview] Formatting SQL`);
 
-            const formatted = formatSql(message.sql, {
+          try {
+            const sqlDialect = client.type === 'mysql' ? 'mysql' : 'postgresql';
+            const formatted = formatSql(sql, {
               language: sqlDialect,
               tabWidth: 2,
               keywordCase: 'upper',
               indentStyle: 'standard',
               linesBetweenQueries: 2,
             });
-
-            panel.webview.postMessage({
-              type: "SQL_FORMATTED",
-              tabId,
-              formattedSql: formatted
-            });
+            sendResponse(panel, requestId, formatted);
           } catch (error) {
             console.error(`[dbview] Error formatting SQL:`, error);
-            panel.webview.postMessage({
-              type: "SQL_FORMATTED",
-              tabId,
-              error: error instanceof Error ? error.message : String(error)
-            });
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
 
         case "EXPLAIN_QUERY": {
-          console.log(`[dbview] Explaining query for tab ${tabId}`);
+          const { sql } = message;
+          console.log(`[dbview] Explaining query`);
+
           try {
-            // Use database-specific EXPLAIN syntax
             let explainSQL: string;
             if (client.type === 'mysql') {
-              // MySQL uses simpler EXPLAIN syntax
-              explainSQL = `EXPLAIN FORMAT=JSON ${message.sql}`;
+              explainSQL = `EXPLAIN FORMAT=JSON ${sql}`;
             } else {
-              // PostgreSQL EXPLAIN with detailed options
-              explainSQL = `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${message.sql}`;
+              explainSQL = `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`;
             }
 
             const result = await client.runQuery(explainSQL);
 
-            // Extract the plan from the result (format varies by database)
             let plan;
             if (client.type === 'mysql') {
-              // MySQL returns JSON in 'EXPLAIN' column
               const explainOutput = result.rows[0]['EXPLAIN'];
               plan = typeof explainOutput === 'string' ? JSON.parse(explainOutput) : explainOutput;
             } else {
-              // PostgreSQL returns EXPLAIN output in 'QUERY PLAN' column
               const explainOutput = result.rows[0]['QUERY PLAN'];
               plan = Array.isArray(explainOutput) ? explainOutput[0] : explainOutput;
             }
 
-            panel.webview.postMessage({
-              type: "EXPLAIN_RESULT",
-              tabId,
-              plan
-            });
+            sendResponse(panel, requestId, plan);
           } catch (error) {
             console.error(`[dbview] Error explaining query:`, error);
-            panel.webview.postMessage({
-              type: "EXPLAIN_RESULT",
-              tabId,
-              plan: null,
-              error: error instanceof Error ? error.message : String(error)
-            });
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
 
-        case "EXPORT_DATA": {
-          console.log(`[dbview] Exporting data to ${message.extension} format`);
+        // ============================================
+        // ER Diagram
+        // ============================================
+
+        case "GET_ER_DIAGRAM": {
+          const { schemas } = message;
+          console.log(`[dbview] Getting ER diagram for schemas:`, schemas);
+
           try {
-            const { schema, table, content, extension } = message;
+            if (client.getERDiagramData) {
+              const diagramData = await client.getERDiagramData(schemas);
+              sendResponse(panel, requestId, diagramData);
+            } else {
+              sendResponse(panel, requestId, { tables: [], relationships: [] });
+            }
+          } catch (error) {
+            console.error(`[dbview] Error getting ER diagram:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        // ============================================
+        // Autocomplete
+        // ============================================
+
+        case "GET_AUTOCOMPLETE_DATA": {
+          console.log(`[dbview] Getting autocomplete data`);
+          const startTime = Date.now();
+
+          try {
+            const limits = getAutocompleteLimits();
+            const schemas = await client.listSchemas();
+
+            const allTables: TableInfo[] = [];
+            for (const schema of schemas) {
+              if (allTables.length >= limits.MAX_TOTAL_TABLES) break;
+
+              try {
+                const schemaTables = await client.listTables(schema);
+                const limitedTables = schemaTables.slice(0, limits.MAX_TABLES_PER_SCHEMA);
+                allTables.push(...limitedTables.map(t => ({ ...t, schema })));
+              } catch (error) {
+                console.error(`[dbview] Error fetching tables for ${schema}:`, error);
+              }
+            }
+
+            const columns: Record<string, ColumnMetadata[]> = {};
+            const tablesToFetch = allTables.slice(0, limits.MAX_TABLES_WITH_METADATA);
+
+            for (const table of tablesToFetch) {
+              const key = `${table.schema}.${table.name}`;
+              try {
+                columns[key] = await client.getTableMetadata(table.schema, table.name);
+              } catch (error) {
+                columns[key] = [];
+              }
+            }
+
+            console.log(`[dbview] Autocomplete ready in ${Date.now() - startTime}ms`);
+            sendResponse(panel, requestId, { schemas, tables: allTables, columns });
+          } catch (error) {
+            console.error(`[dbview] Error getting autocomplete data:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        // ============================================
+        // Export/Import
+        // ============================================
+
+        case "EXPORT_DATA": {
+          const { schema, table, content, extension } = message;
+          console.log(`[dbview] Exporting data to ${extension}`);
+
+          try {
             const uri = await vscode.window.showSaveDialog({
               defaultUri: vscode.Uri.file(`${schema}_${table}.${extension}`),
-              filters: {
-                [extension.toUpperCase()]: [extension]
-              }
+              filters: { [extension.toUpperCase()]: [extension] }
             });
 
             if (uri) {
               await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf-8'));
-              console.log(`[dbview] Export successful: ${uri.fsPath}`);
               vscode.window.showInformationMessage(`Data exported to ${uri.fsPath}`);
-              panel.webview.postMessage({
-                type: "EXPORT_DATA_SUCCESS",
-                tabId,
-                filePath: uri.fsPath
-              });
+              sendResponse(panel, requestId, { filePath: uri.fsPath });
             } else {
-              console.log(`[dbview] Export cancelled by user`);
-              panel.webview.postMessage({
-                type: "EXPORT_DATA_CANCELLED",
-                tabId
-              });
+              sendResponse(panel, requestId, { cancelled: true });
             }
           } catch (error) {
             console.error(`[dbview] Error exporting data:`, error);
-            panel.webview.postMessage({
-              type: "EXPORT_DATA_ERROR",
-              tabId,
-              error: error instanceof Error ? error.message : String(error)
-            });
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
 
         case "IMPORT_DATA": {
-          console.log(`[dbview] Importing data to ${message.schema}.${message.table}`);
+          const { schema, table, rows } = message;
+          console.log(`[dbview] Importing ${rows.length} rows to ${schema}.${table}`);
 
-          // Check for read-only mode
           if (isReadOnlyMode(connectionConfig)) {
-            console.log(`[dbview] IMPORT blocked - connection is in read-only mode`);
-            panel.webview.postMessage({
-              type: "IMPORT_DATA_ERROR",
-              tabId,
-              error: "🔒 Connection is in read-only mode. Write operations are blocked."
-            });
+            sendResponse(panel, requestId, undefined, "🔒 Connection is in read-only mode. Write operations are blocked.");
             break;
           }
 
           try {
-            const { schema, table, rows } = message;
             let successCount = 0;
             const errors: string[] = [];
 
@@ -824,49 +601,279 @@ export async function getOrCreateMainPanel(
             }
 
             if (successCount > 0) {
-              panel.webview.postMessage({
-                type: "IMPORT_DATA_SUCCESS",
-                tabId,
-                insertedCount: successCount,
-                errors: errors.length > 0 ? errors : undefined
-              });
-              vscode.window.showInformationMessage(`Imported ${successCount} row(s)${errors.length > 0 ? ` with ${errors.length} error(s)` : ''}`);
-            } else {
-              panel.webview.postMessage({
-                type: "IMPORT_DATA_ERROR",
-                tabId,
-                error: "No rows were imported",
-                errors
-              });
+              vscode.window.showInformationMessage(`Imported ${successCount} row(s)`);
             }
+            sendResponse(panel, requestId, { insertedCount: successCount, errors: errors.length > 0 ? errors : undefined });
           } catch (error) {
             console.error(`[dbview] Error importing data:`, error);
-            panel.webview.postMessage({
-              type: "IMPORT_DATA_ERROR",
-              tabId,
-              error: error instanceof Error ? error.message : String(error)
-            });
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
           break;
         }
 
+        // ============================================
+        // Clipboard
+        // ============================================
+
         case "COPY_TO_CLIPBOARD": {
+          const { text } = message;
           console.log(`[dbview] Copying to clipboard`);
+
           try {
-            await vscode.env.clipboard.writeText(message.content);
-            vscode.window.showInformationMessage('Copied to clipboard');
-            panel.webview.postMessage({
-              type: "COPY_TO_CLIPBOARD_SUCCESS",
-              tabId
-            });
+            await vscode.env.clipboard.writeText(text);
+            sendResponse(panel, requestId, { success: true });
           } catch (error) {
             console.error(`[dbview] Error copying to clipboard:`, error);
-            panel.webview.postMessage({
-              type: "COPY_TO_CLIPBOARD_ERROR",
-              tabId,
-              error: error instanceof Error ? error.message : String(error)
-            });
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
           }
+          break;
+        }
+
+        // ============================================
+        // Saved Views
+        // ============================================
+
+        case "GET_VIEWS": {
+          const { schema, table } = message;
+          const key = `dbview.views.${schema}.${table}`;
+          const views = context.workspaceState.get<SavedView[]>(key, []);
+          sendResponse(panel, requestId, views);
+          break;
+        }
+
+        case "SAVE_VIEW": {
+          const { schema, table, view } = message;
+          const key = `dbview.views.${schema}.${table}`;
+
+          try {
+            const existingViews = context.workspaceState.get<SavedView[]>(key, []);
+            if (view.isDefault) {
+              existingViews.forEach(v => { if (v.id !== view.id) v.isDefault = false; });
+            }
+            const updatedViews = [...existingViews, view];
+            await context.workspaceState.update(key, updatedViews);
+            sendResponse(panel, requestId, updatedViews);
+          } catch (error) {
+            console.error(`[dbview] Error saving view:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        case "DELETE_VIEW": {
+          const { schema, table, viewId } = message;
+          const key = `dbview.views.${schema}.${table}`;
+
+          try {
+            const existingViews = context.workspaceState.get<SavedView[]>(key, []);
+            const updatedViews = existingViews.filter(v => v.id !== viewId);
+            await context.workspaceState.update(key, updatedViews);
+            sendResponse(panel, requestId, updatedViews);
+          } catch (error) {
+            console.error(`[dbview] Error deleting view:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        // ============================================
+        // Filter Presets
+        // ============================================
+
+        case "GET_FILTER_PRESETS": {
+          const { schema, table } = message;
+          const key = `dbview.filterPresets.${schema}.${table}`;
+          const presets = context.workspaceState.get<FilterPreset[]>(key, []);
+          sendResponse(panel, requestId, presets);
+          break;
+        }
+
+        case "SAVE_FILTER_PRESET": {
+          const { schema, table, preset } = message;
+          const key = `dbview.filterPresets.${schema}.${table}`;
+
+          try {
+            const existingPresets = context.workspaceState.get<FilterPreset[]>(key, []);
+            const existingIndex = existingPresets.findIndex(p => p.id === preset.id);
+            let updatedPresets: FilterPreset[];
+            if (existingIndex >= 0) {
+              updatedPresets = [...existingPresets];
+              updatedPresets[existingIndex] = preset;
+            } else {
+              updatedPresets = [...existingPresets, preset];
+            }
+            await context.workspaceState.update(key, updatedPresets);
+            sendResponse(panel, requestId, undefined);
+          } catch (error) {
+            console.error(`[dbview] Error saving filter preset:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        case "DELETE_FILTER_PRESET": {
+          const { schema, table, presetId } = message;
+          const key = `dbview.filterPresets.${schema}.${table}`;
+
+          try {
+            const existingPresets = context.workspaceState.get<FilterPreset[]>(key, []);
+            const updatedPresets = existingPresets.filter(p => p.id !== presetId);
+            await context.workspaceState.update(key, updatedPresets);
+            sendResponse(panel, requestId, undefined);
+          } catch (error) {
+            console.error(`[dbview] Error deleting filter preset:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        // ============================================
+        // Query History
+        // ============================================
+
+        case "GET_QUERY_HISTORY": {
+          const { connectionKey: connKey } = message;
+          const historyKey = `dbview.queryHistory.${connKey || key}`;
+          const history = context.globalState.get<QueryHistoryEntry[]>(historyKey, []);
+          sendResponse(panel, requestId, history);
+          break;
+        }
+
+        case "ADD_QUERY_HISTORY": {
+          const { connectionKey: connKey, entry } = message;
+          const historyKey = `dbview.queryHistory.${connKey || key}`;
+
+          try {
+            const existingHistory = context.globalState.get<QueryHistoryEntry[]>(historyKey, []);
+            const updatedHistory = [entry, ...existingHistory].slice(0, 100);
+            await context.globalState.update(historyKey, updatedHistory);
+            sendResponse(panel, requestId, undefined);
+          } catch (error) {
+            console.error(`[dbview] Error adding query history:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        case "CLEAR_QUERY_HISTORY": {
+          const { connectionKey: connKey } = message;
+          const historyKey = `dbview.queryHistory.${connKey || key}`;
+
+          try {
+            await context.globalState.update(historyKey, []);
+            sendResponse(panel, requestId, undefined);
+          } catch (error) {
+            console.error(`[dbview] Error clearing query history:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        case "DELETE_QUERY_HISTORY_ENTRY": {
+          const { connectionKey: connKey, entryId } = message;
+          const historyKey = `dbview.queryHistory.${connKey || key}`;
+
+          try {
+            const existingHistory = context.globalState.get<QueryHistoryEntry[]>(historyKey, []);
+            const updatedHistory = existingHistory.filter(e => e.id !== entryId);
+            await context.globalState.update(historyKey, updatedHistory);
+            sendResponse(panel, requestId, undefined);
+          } catch (error) {
+            console.error(`[dbview] Error deleting query history entry:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        case "TOGGLE_QUERY_STAR": {
+          const { connectionKey: connKey, entryId, starred } = message;
+          const historyKey = `dbview.queryHistory.${connKey || key}`;
+
+          try {
+            const existingHistory = context.globalState.get<QueryHistoryEntry[]>(historyKey, []);
+            const updatedHistory = existingHistory.map(e =>
+              e.id === entryId ? { ...e, starred } : e
+            );
+            await context.globalState.update(historyKey, updatedHistory);
+            sendResponse(panel, requestId, undefined);
+          } catch (error) {
+            console.error(`[dbview] Error toggling query star:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        // ============================================
+        // Saved Queries
+        // ============================================
+
+        case "GET_SAVED_QUERIES": {
+          const { connectionKey: connKey } = message;
+          const queriesKey = `dbview.savedQueries.${connKey || key}`;
+          const queries = context.globalState.get<SavedQuery[]>(queriesKey, []);
+          sendResponse(panel, requestId, queries);
+          break;
+        }
+
+        case "ADD_SAVED_QUERY": {
+          const { connectionKey: connKey, query } = message;
+          const queriesKey = `dbview.savedQueries.${connKey || key}`;
+
+          try {
+            const existingQueries = context.globalState.get<SavedQuery[]>(queriesKey, []);
+            const updatedQueries = [...existingQueries, query];
+            await context.globalState.update(queriesKey, updatedQueries);
+            sendResponse(panel, requestId, undefined);
+          } catch (error) {
+            console.error(`[dbview] Error adding saved query:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        case "UPDATE_SAVED_QUERY": {
+          const { connectionKey: connKey, queryId, updates } = message;
+          const queriesKey = `dbview.savedQueries.${connKey || key}`;
+
+          try {
+            const existingQueries = context.globalState.get<SavedQuery[]>(queriesKey, []);
+            const updatedQueries = existingQueries.map(q =>
+              q.id === queryId ? { ...q, ...updates, updatedAt: Date.now() } : q
+            );
+            await context.globalState.update(queriesKey, updatedQueries);
+            sendResponse(panel, requestId, undefined);
+          } catch (error) {
+            console.error(`[dbview] Error updating saved query:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        case "DELETE_SAVED_QUERY": {
+          const { connectionKey: connKey, queryId } = message;
+          const queriesKey = `dbview.savedQueries.${connKey || key}`;
+
+          try {
+            const existingQueries = context.globalState.get<SavedQuery[]>(queriesKey, []);
+            const updatedQueries = existingQueries.filter(q => q.id !== queryId);
+            await context.globalState.update(queriesKey, updatedQueries);
+            sendResponse(panel, requestId, undefined);
+          } catch (error) {
+            console.error(`[dbview] Error deleting saved query:`, error);
+            sendResponse(panel, requestId, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        // ============================================
+        // Theme
+        // ============================================
+
+        case "GET_THEME": {
+          const theme = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Light ||
+                        vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.HighContrastLight
+                        ? "light" : "dark";
+          sendResponse(panel, requestId, theme);
           break;
         }
 
@@ -876,7 +883,9 @@ export async function getOrCreateMainPanel(
       }
     } catch (error) {
       console.error(`[dbview] Error handling message:`, error);
-      vscode.window.showErrorMessage(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      if (message?.requestId !== undefined) {
+        sendResponse(panel, message.requestId, undefined, error instanceof Error ? error.message : String(error));
+      }
     }
   });
 
@@ -893,12 +902,11 @@ export async function openTableInPanel(
   const connectionName = connectionConfig.name || ('database' in connectionConfig ? connectionConfig.database : 'unknown');
   const key = getConnectionKey(connectionConfig);
 
-  // Send message to open the table in a new tab (queues if webview not ready)
   sendMessageToPanel(key, {
     type: "OPEN_TABLE",
     schema: target.schema,
     table: target.table,
-    limit: 100,
+    connectionKey: key,
     connectionName
   });
 }
@@ -912,9 +920,9 @@ export async function openQueryInPanel(
   const connectionName = connectionConfig.name || ('database' in connectionConfig ? connectionConfig.database : 'unknown');
   const key = getConnectionKey(connectionConfig);
 
-  // Send message to open a new query tab (queues if webview not ready)
   sendMessageToPanel(key, {
     type: "OPEN_QUERY_TAB",
+    connectionKey: key,
     connectionName
   });
 }
@@ -928,15 +936,12 @@ export async function openERDiagramInPanel(
   await getOrCreateMainPanel(context, client, connectionConfig);
   const key = getConnectionKey(connectionConfig);
 
-  // If no schemas provided, get all available schemas using database-agnostic method
   let schemasToVisualize = schemas;
   if (!schemasToVisualize) {
     try {
       schemasToVisualize = await client.listSchemas();
-      console.log(`[dbview] Fetched ${schemasToVisualize.length} schemas for ER diagram`);
     } catch (error) {
       console.error('[dbview] Error fetching schemas:', error);
-      // Fallback based on database type
       const dbType = connectionConfig.dbType || 'postgres';
       switch (dbType) {
         case 'postgres':
@@ -956,9 +961,9 @@ export async function openERDiagramInPanel(
     }
   }
 
-  // Send message to open ER diagram (queues if webview not ready)
   sendMessageToPanel(key, {
     type: "OPEN_ER_DIAGRAM",
+    connectionKey: key,
     schemas: schemasToVisualize
   });
 }

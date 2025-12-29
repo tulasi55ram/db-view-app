@@ -12,7 +12,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogTrigger,
 } from "@/primitives/Dialog";
 
 interface KeyboardShortcutsDialogProps {

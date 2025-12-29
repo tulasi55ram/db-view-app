@@ -1,7 +1,7 @@
 {
   "name": "@dbview/vscode-extension",
   "displayName": "dbview.app",
-  "description": "Browse Postgres schemas and tables inside VS Code.",
+  "description": "Browse databases inside VS Code. Supports PostgreSQL, MySQL, MariaDB, SQL Server, SQLite, MongoDB, Redis, Elasticsearch, and Cassandra.",
   "version": "0.0.1",
   "publisher": "dbview",
   "private": true,
@@ -15,7 +15,7 @@
   "activationEvents": [
     "onStartupFinished"
   ],
-  "main": "./dist/apps/vscode-extension/src/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
@@ -190,7 +190,7 @@
     "viewsWelcome": [
       {
         "view": "dbview.dbExplorer",
-        "contents": "Welcome to DB View!\n\nConnect to a PostgreSQL database to browse schemas, tables, views, and more.\n\n[$(database) Add Connection](command:dbview.configureConnection)\n\n[$(book) View Documentation](command:dbview.openDocs)"
+        "contents": "Welcome to DB View!\n\nConnect to your database to browse schemas, tables, and more.\n\n**Supported databases:**\nPostgreSQL, MySQL, MariaDB, SQL Server, SQLite, MongoDB, Redis, Elasticsearch, Cassandra\n\n[$(database) Add Connection](command:dbview.configureConnection)\n\n[$(book) View Documentation](command:dbview.openDocs)"
       }
     ],
     "menus": {
@@ -391,7 +391,10 @@
   "dependencies": {
     "@dbview/types": "workspace:*",
     "@dbview/adapters": "workspace:*",
+    "@elastic/elasticsearch": "^8.17.0",
     "better-sqlite3": "12.5.0",
+    "cassandra-driver": "^4.7.2",
+    "ioredis": "^5.8.2",
     "mongodb": "6.12.0",
     "mssql": "^12.2.0",
     "mysql2": "^3.16.0",
