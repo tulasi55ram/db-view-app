@@ -8,6 +8,7 @@ import { ERDiagramPanel } from "./components/ERDiagramPanel";
 import { TabBar } from "./components/TabBar";
 import { useTabs } from "./hooks/useTabs";
 import { useQueryHistory } from "./hooks/useQueryHistory";
+import { useSavedQueries } from "./hooks/useSavedQueries";
 import { getVsCodeApi } from "./vscode";
 
 type ThemeKind = 'light' | 'dark' | 'high-contrast' | 'high-contrast-light';
@@ -41,6 +42,7 @@ type IncomingMessage =
 function App() {
   const tabManager = useTabs();
   const queryHistory = useQueryHistory();
+  const savedQueries = useSavedQueries();
   const queryStartTimes = useRef<Map<string, number>>(new Map());
 
   // Theme state - detect initial theme from document
@@ -285,7 +287,8 @@ function App() {
             loading: false,
             error: undefined,
             columns: message.columns,
-            rows: message.rows
+            rows: message.rows,
+            duration
           });
           break;
         }
@@ -492,6 +495,7 @@ function App() {
           error={activeTab.error}
           columns={activeTab.columns.map(toColumn)}
           rows={activeTab.rows}
+          duration={activeTab.duration}
           connectionName={activeTab.connectionName}
           schemas={autocompleteData.schemas}
           tables={autocompleteData.tables}
@@ -512,6 +516,10 @@ function App() {
           onClearHistory={queryHistory.clearHistory}
           onClearNonFavorites={queryHistory.clearNonFavorites}
           onToggleShowFavorites={() => queryHistory.setShowFavoritesOnly(!queryHistory.showFavoritesOnly)}
+          savedQueries={savedQueries.queries}
+          onSaveQuery={(name, description) => savedQueries.addQuery(name, activeTab.sql, description)}
+          onDeleteSavedQuery={savedQueries.deleteQuery}
+          onUpdateSavedQuery={savedQueries.updateQuery}
         />
       );
     }

@@ -473,6 +473,7 @@ export interface QueryTab extends BaseTab {
   rows: Record<string, unknown>[];
   loading: boolean;
   error?: string;
+  duration?: number;
   explainPlan?: ExplainPlan | null;
   explainLoading?: boolean;
   explainError?: string;

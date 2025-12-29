@@ -51,7 +51,7 @@ type NodeData =
   | WelcomeNode;
 
 export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTreeItem> {
-  private readonly emitter = new vscode.EventEmitter<void>();
+  private readonly emitter = new vscode.EventEmitter<SchemaTreeItem | undefined | null | void>();
   readonly onDidChangeTreeData = this.emitter.event;
   private connectionError: string | null = null;
   private connectionStatus: ConnectionStatus = 'disconnected';
@@ -135,9 +135,15 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       const existingClient = this.clients.get(key)!;
       const currentStatus = this.clientStatuses.get(key);
 
-      // If client exists but status is disconnected or error, we need to reconnect it
-      // This handles both explicit disconnects and transient failures
-      if (currentStatus === 'disconnected' || currentStatus === 'error' || !currentStatus) {
+      // If client is in error state, don't auto-reconnect - let user manually reconnect
+      // This prevents popup spam from repeated automatic reconnection attempts
+      if (currentStatus === 'error') {
+        console.log(`[dbview] Cached client for ${key} is in error state, not auto-reconnecting`);
+        return existingClient;
+      }
+
+      // If client is disconnected (explicit disconnect) or unknown status, try to reconnect
+      if (currentStatus === 'disconnected' || !currentStatus) {
         console.log(`[dbview] Cached client for ${key} is ${currentStatus || 'unknown'}, attempting reconnect...`);
         this.clientStatuses.set(key, 'connecting');
 
@@ -181,7 +187,7 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
 
       this.clientStatuses.set(key, event.status);
       // Delayed refresh to avoid being ignored during getChildren()
-      setTimeout(() => this.emitter.fire(), 100);
+      setTimeout(() => this.emitter.fire(undefined), 100);
 
       // Clear error notification tracking when connection recovers
       if (event.status === 'connected') {
@@ -244,7 +250,7 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
 
     // Create fresh client
     await this.getOrCreateClient(conn);
-    this.emitter.fire();
+    this.emitter.fire(undefined);
   }
 
   getClientForConnection(conn: ConnectionConfig | DatabaseConnectionConfig): DatabaseAdapter | undefined {
@@ -268,7 +274,7 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       await existingClient.disconnect();
       this.clientStatuses.set(key, 'disconnected');
       console.log(`[dbview] Connection ${key} disconnected, status set to 'disconnected'`);
-      this.emitter.fire();
+      this.emitter.fire(undefined);
     }
   }
 
@@ -291,7 +297,7 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
 
     // Reconnect
     this.clientStatuses.set(key, 'connecting');
-    this.emitter.fire();
+    this.emitter.fire(undefined);
 
     try {
       // Create new adapter using factory
@@ -300,7 +306,7 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       // Set up status listener
       const listener = (event: ConnectionStatusEvent) => {
         this.clientStatuses.set(key, event.status);
-        setTimeout(() => this.emitter.fire(), 100);
+        setTimeout(() => this.emitter.fire(undefined), 100);
       };
       newClient.on('statusChange', listener);
 
@@ -312,12 +318,12 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
 
       // Start health check to monitor connection
       newClient.startHealthCheck();
-      this.emitter.fire();
+      this.emitter.fire(undefined);
       return true;
     } catch (error) {
       console.error(`[dbview] Failed to reconnect ${key}:`, error);
       this.clientStatuses.set(key, 'error');
-      this.emitter.fire();
+      this.emitter.fire(undefined);
       return false;
     }
   }
@@ -335,15 +341,23 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
     // Set up new status change listener
     const listener = (event: ConnectionStatusEvent) => {
       this.connectionStatus = event.status;
-      this.emitter.fire();
+      this.emitter.fire(undefined);
 
-      // Show notification for connection errors
-      if (event.status === 'error' && event.error) {
+      // Get connection key for error tracking
+      const connKey = this.connection ? this.getConnectionKey(this.connection) : 'default';
+      const errorKey = `${connKey}:statusError`;
+
+      // Show notification for connection errors (only once until recovered)
+      if (event.status === 'error' && event.error && !this.errorNotificationShown.has(errorKey)) {
+        this.errorNotificationShown.add(errorKey);
         this.showConnectionErrorNotification(event.error.message);
-      } else if (event.status === 'connected' && this.connectionError) {
-        // Connection restored
-        this.connectionError = null;
-        vscode.window.showInformationMessage('dbview: Connection restored');
+      } else if (event.status === 'connected') {
+        // Connection restored - clear error tracking
+        this.errorNotificationShown.delete(errorKey);
+        if (this.connectionError) {
+          this.connectionError = null;
+          vscode.window.showInformationMessage('dbview: Connection restored');
+        }
       }
     };
 
@@ -420,8 +434,10 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
   }
 
   refresh(): void {
+    console.log("[dbview] Refresh triggered - refreshing entire tree");
     this.connectionError = null;
-    this.emitter.fire();
+    // Pass undefined to refresh the entire tree
+    this.emitter.fire(undefined);
   }
 
   getTreeItem(element: SchemaTreeItem): vscode.TreeItem | Thenable<vscode.TreeItem> {
@@ -476,19 +492,39 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       try {
         // Lazy-connect: get or create client for this specific connection
         const client = await this.getOrCreateClient(conn);
-        const schemas = await client.listSchemas();
         this.connectionError = null;
 
-        // Clear error notification tracking on successful connection
+        // Clear all error notification tracking for this connection on success
         const key = this.getConnectionKey(conn);
-        this.errorNotificationShown.delete(key);
-
-        if (schemas.length === 0) {
-          vscode.window.showWarningMessage("dbview: No schemas found in database");
+        // Clear all error keys that start with this connection key
+        for (const errorKey of this.errorNotificationShown) {
+          if (errorKey === key || errorKey.startsWith(`${key}:`)) {
+            this.errorNotificationShown.delete(errorKey);
+          }
         }
 
+        // Check if this database supports schemas (PostgreSQL, SQL Server) or not (MongoDB, SQLite)
+        if (client.capabilities?.supportsSchemas === false) {
+          // For databases without schemas (MongoDB, SQLite), show collections/tables directly
+          const tables = await client.listTables('');
+
+          // Schedule refresh to update connection status icon after tree expansion completes
+          setTimeout(() => this.emitter.fire(undefined), 500);
+
+          // Return a "Collections" or "Tables" container based on database type
+          return [new SchemaTreeItem({
+            type: "objectTypeContainer",
+            schema: '',
+            objectType: "tables",
+            count: tables.length
+          }, conn)];
+        }
+
+        // For schema-based databases (PostgreSQL, MySQL, etc.)
+        const schemas = await client.listSchemas();
+
         // Schedule refresh to update connection status icon after tree expansion completes
-        setTimeout(() => this.emitter.fire(), 500);
+        setTimeout(() => this.emitter.fire(undefined), 500);
 
         return [new SchemaTreeItem({ type: "schemasContainer", count: schemas.length }, conn)];
       } catch (error) {
@@ -537,7 +573,11 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
         return schemas.map((schema) => new SchemaTreeItem({ type: "schema", schema }, conn));
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(`dbview: Failed to list schemas - ${errorMessage}`);
+        const errorKey = `${this.getConnectionKey(conn)}:listSchemas`;
+        if (!this.errorNotificationShown.has(errorKey)) {
+          this.errorNotificationShown.add(errorKey);
+          vscode.window.showErrorMessage(`dbview: Failed to list schemas - ${errorMessage}`);
+        }
         console.error("[dbview] Error listing schemas:", error);
         return [];
       }
@@ -565,7 +605,11 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
         return containers;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(`dbview: Failed to list objects in "${schemaName}" - ${errorMessage}`);
+        const errorKey = `${this.getConnectionKey(conn)}:listObjects:${schemaName}`;
+        if (!this.errorNotificationShown.has(errorKey)) {
+          this.errorNotificationShown.add(errorKey);
+          vscode.window.showErrorMessage(`dbview: Failed to list objects in "${schemaName}" - ${errorMessage}`);
+        }
         console.error(`[dbview] Error listing objects in ${schemaName}:`, error);
         return [];
       }
@@ -617,7 +661,11 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(`dbview: Failed to list ${objectType} in "${schema}" - ${errorMessage}`);
+        const errorKey = `${this.getConnectionKey(conn)}:list:${objectType}:${schema}`;
+        if (!this.errorNotificationShown.has(errorKey)) {
+          this.errorNotificationShown.add(errorKey);
+          vscode.window.showErrorMessage(`dbview: Failed to list ${objectType} in "${schema}" - ${errorMessage}`);
+        }
         console.error(`[dbview] Error listing ${objectType} in ${schema}:`, error);
         return [];
       }
@@ -651,7 +699,11 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
         );
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(`dbview: Failed to list columns for "${schema}.${table}" - ${errorMessage}`);
+        const errorKey = `${this.getConnectionKey(conn)}:listColumns:${schema}.${table}`;
+        if (!this.errorNotificationShown.has(errorKey)) {
+          this.errorNotificationShown.add(errorKey);
+          vscode.window.showErrorMessage(`dbview: Failed to list columns for "${schema}.${table}" - ${errorMessage}`);
+        }
         console.error(`[dbview] Error listing columns for ${schema}.${table}:`, error);
         return [];
       }
@@ -688,16 +740,24 @@ export class SchemaTreeItem extends vscode.TreeItem {
       this.description = descParts.join(" · ");
 
       this.tooltip = new vscode.MarkdownString();
-      this.tooltip.appendMarkdown(`**${node.schema}.${node.table}**\n\n`);
-      this.tooltip.appendMarkdown(`📁 Schema: \`${node.schema}\`\n\n`);
+      // For databases without schemas (MongoDB), don't show schema prefix
+      const isMongoDB = connectionInfo?.dbType === 'mongodb';
+      const hasSchema = node.schema && node.schema.length > 0;
+      const displayName = hasSchema ? `${node.schema}.${node.table}` : node.table;
+      this.tooltip.appendMarkdown(`**${displayName}**\n\n`);
+      if (hasSchema) {
+        this.tooltip.appendMarkdown(`📁 Schema: \`${node.schema}\`\n\n`);
+      }
       if (rowLabel) {
-        this.tooltip.appendMarkdown(`📊 Rows: ~${node.rowCount?.toLocaleString()}\n\n`);
+        const rowLabel2 = isMongoDB ? 'Documents' : 'Rows';
+        this.tooltip.appendMarkdown(`📊 ${rowLabel2}: ~${node.rowCount?.toLocaleString()}\n\n`);
       }
       if (sizeLabel) {
         this.tooltip.appendMarkdown(`💾 Size: ${sizeLabel}\n\n`);
       }
-      this.tooltip.appendMarkdown(`_Click the icon or right-click → Open Table to view data_\n\n`);
-      this.tooltip.appendMarkdown(`_Expand (▶) to see columns_`);
+      const objectLabel = isMongoDB ? 'collection' : 'table';
+      this.tooltip.appendMarkdown(`_Click the icon or right-click → Open ${isMongoDB ? 'Collection' : 'Table'} to view data_\n\n`);
+      this.tooltip.appendMarkdown(`_Expand (▶) to see ${isMongoDB ? 'fields' : 'columns'}_`);
       // Don't set command property to avoid double-click issues
       // Users can: 1) Click inline icon, 2) Right-click → Open Table, 3) Expand to see columns
     }
@@ -776,16 +836,25 @@ export class SchemaTreeItem extends vscode.TreeItem {
     }
 
     if (isObjectTypeContainerNode(node)) {
+      const isMongoDB = connectionInfo?.dbType === 'mongodb';
       const typeDescriptions: Record<typeof node.objectType, string> = {
-        tables: "Store your data in structured rows and columns",
-        views: "Virtual tables based on SQL queries",
+        tables: isMongoDB ? "Store your documents as flexible JSON-like structures" : "Store your data in structured rows and columns",
+        views: isMongoDB ? "Read-only views created from aggregation pipelines" : "Virtual tables based on SQL queries",
         materializedViews: "Cached query results for faster access",
         functions: "Reusable SQL functions",
         procedures: "Stored procedures for complex operations",
         types: "Custom data types"
       };
+      const typeLabels: Record<typeof node.objectType, string> = {
+        tables: isMongoDB ? "collections" : "tables",
+        views: "views",
+        materializedViews: "materialized views",
+        functions: "functions",
+        procedures: "procedures",
+        types: "types"
+      };
       this.tooltip = new vscode.MarkdownString();
-      this.tooltip.appendMarkdown(`**${node.count} ${node.objectType}**\n\n`);
+      this.tooltip.appendMarkdown(`**${node.count} ${typeLabels[node.objectType]}**\n\n`);
       this.tooltip.appendMarkdown(`_${typeDescriptions[node.objectType]}_`);
     }
 
@@ -903,8 +972,10 @@ function getLabel(node: NodeData, connectionInfo?: DatabaseConnectionConfig | nu
     return node.schema;
   }
   if (isObjectTypeContainerNode(node)) {
+    // For MongoDB, show "Collections" instead of "Tables"
+    const isMongoDB = connectionInfo?.dbType === 'mongodb';
     const labels: Record<typeof node.objectType, string> = {
-      tables: "Tables",
+      tables: isMongoDB ? "Collections" : "Tables",
       views: "Views",
       materializedViews: "Materialized Views",
       functions: "Functions",

@@ -669,58 +669,9 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Query Execution ====================
 
-  /**
-   * Check if SQL query has a LIMIT clause
-   */
-  private hasLimitClause(sql: string): boolean {
-    // Remove comments and normalize whitespace
-    const normalized = sql
-      .replace(/--[^\n]*\n/g, ' ') // Remove single-line comments
-      .replace(/\/\*[\s\S]*?\*\//g, ' ') // Remove multi-line comments
-      .replace(/\s+/g, ' ') // Normalize whitespace
-      .trim()
-      .toLowerCase();
-
-    // Check for LIMIT clause (should be near the end)
-    return /\blimit\s+\d+/.test(normalized);
-  }
-
-  private isSelectQuery(sql: string): boolean {
-    // Remove comments and normalize whitespace
-    const normalized = sql
-      .replace(/--[^\n]*\n/g, ' ') // Remove single-line comments
-      .replace(/\/\*[\s\S]*?\*\//g, ' ') // Remove multi-line comments
-      .replace(/\s+/g, ' ') // Normalize whitespace
-      .trim()
-      .toLowerCase();
-
-    // Check if query starts with SELECT (or WITH...SELECT for CTEs)
-    return /^(select|with)\b/.test(normalized);
-  }
-
   async runQuery(sql: string): Promise<QueryResultSet> {
-    const DEFAULT_LIMIT = 1000;
-    let executedSql = sql;
-    let limitApplied = false;
-
-    // Only apply LIMIT to SELECT queries
-    if (this.isSelectQuery(sql) && !this.hasLimitClause(sql)) {
-      // Auto-append LIMIT for safety
-      executedSql = `${sql.trim()}\nLIMIT ${DEFAULT_LIMIT}`;
-      limitApplied = true;
-    }
-
-    const result = await this.query(executedSql);
-    const resultSet = createResultSet(result);
-
-    // Add metadata about limiting
-    if (limitApplied) {
-      resultSet.limitApplied = true;
-      resultSet.limit = DEFAULT_LIMIT;
-      resultSet.hasMore = result.rows.length === DEFAULT_LIMIT;
-    }
-
-    return resultSet;
+    const result = await this.query(sql);
+    return createResultSet(result);
   }
 
   async explainQuery(sql: string): Promise<ExplainPlan> {
