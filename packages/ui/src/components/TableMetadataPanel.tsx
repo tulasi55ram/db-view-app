@@ -1,5 +1,5 @@
 import { type FC } from "react";
-import type { ColumnMetadata, TableIndex, TableStatistics } from "@dbview/core";
+import type { ColumnMetadata, TableIndex, TableStatistics } from "@dbview/types";
 import {
   X,
   Database,

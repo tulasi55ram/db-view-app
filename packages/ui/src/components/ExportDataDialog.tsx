@@ -1,6 +1,6 @@
 import { type FC, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import type { ExportFormat, ExportOptions } from "@dbview/core";
+import type { ExportFormat, ExportOptions } from "@dbview/types";
 import { Download, X, FileText, Database, Code } from "lucide-react";
 
 export interface ExportDataDialogProps {

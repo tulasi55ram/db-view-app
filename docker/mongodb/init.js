@@ -1,12 +1,12 @@
 // MongoDB Initialization Script
 
 // Connect to dbview database
-db = db.getSiblingDB('dbview');
+db = db.getSiblingDB('dbview_dev');
 
 // Create users collection
 db.createCollection('users');
 
-// Insert sample users
+// Insert sample named users
 db.users.insertMany([
   {
     email: 'alice@example.com',
@@ -54,6 +54,52 @@ db.users.insertMany([
     updatedAt: new Date()
   }
 ]);
+
+// Generate 10000 additional users
+print('Generating 10000 additional users...');
+
+var firstNames = ['James', 'Mary', 'John', 'Patricia', 'Robert', 'Jennifer', 'Michael', 'Linda', 'William', 'Barbara',
+  'David', 'Elizabeth', 'Richard', 'Susan', 'Joseph', 'Jessica', 'Thomas', 'Sarah', 'Charles', 'Karen',
+  'Christopher', 'Nancy', 'Daniel', 'Lisa', 'Matthew', 'Betty', 'Anthony', 'Margaret', 'Mark', 'Sandra',
+  'Donald', 'Ashley', 'Steven', 'Kimberly', 'Paul', 'Emily', 'Andrew', 'Donna', 'Joshua', 'Michelle',
+  'Kenneth', 'Dorothy', 'Kevin', 'Carol', 'Brian', 'Amanda', 'George', 'Melissa', 'Timothy', 'Deborah'];
+
+var lastNames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez',
+  'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson', 'Thomas', 'Taylor', 'Moore', 'Jackson', 'Martin',
+  'Lee', 'Perez', 'Thompson', 'White', 'Harris', 'Sanchez', 'Clark', 'Ramirez', 'Lewis', 'Robinson',
+  'Walker', 'Young', 'Allen', 'King', 'Wright', 'Scott', 'Torres', 'Nguyen', 'Hill', 'Flores',
+  'Green', 'Adams', 'Nelson', 'Baker', 'Hall', 'Rivera', 'Campbell', 'Mitchell', 'Carter', 'Roberts'];
+
+var departments = ['Engineering', 'Sales', 'Marketing', 'Support', 'HR', 'Finance', 'Operations', 'Design', 'Product', 'QA'];
+var roles = ['user', 'user', 'user', 'user', 'moderator', 'admin'];
+
+var batchSize = 1000;
+var totalUsers = 10000;
+
+for (var batch = 0; batch < totalUsers / batchSize; batch++) {
+  var users = [];
+  for (var j = 0; j < batchSize; j++) {
+    var i = batch * batchSize + j + 1;
+    var firstName = firstNames[i % 50];
+    var lastName = lastNames[i % 50];
+    var role = roles[i % 6];
+    var dept = departments[i % 10];
+    var level = 1 + (i % 5);
+    var isActive = (i % 10) !== 0;
+
+    users.push({
+      email: 'user' + i + '@example.com',
+      name: firstName + ' ' + lastName,
+      role: role,
+      isActive: isActive,
+      metadata: { department: dept, level: level },
+      createdAt: new Date(2020, 0, 1 + (i % 1000)),
+      updatedAt: new Date()
+    });
+  }
+  db.users.insertMany(users);
+  print('Inserted batch ' + (batch + 1) + ' of ' + (totalUsers / batchSize));
+}
 
 // Create products collection
 db.createCollection('products');
@@ -225,5 +271,5 @@ db.createView('user_order_summary', 'users', [
 ]);
 
 print('MongoDB database initialized successfully!');
-print('Collections created: users (' + db.users.countDocuments() + ' docs), products (' + db.products.countDocuments() + ' docs), orders (' + db.orders.countDocuments() + ' docs)');
+print('Collections created: users (' + db.users.countDocuments() + ' docs - including 10000 generated), products (' + db.products.countDocuments() + ' docs), orders (' + db.orders.countDocuments() + ' docs)');
 print('View created: user_order_summary');

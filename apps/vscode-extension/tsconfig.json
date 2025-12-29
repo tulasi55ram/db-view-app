@@ -10,9 +10,7 @@
     "declaration": true,
     "declarationMap": true,
     "baseUrl": ".",
-    "paths": {
-      "@dbview/core": ["../../packages/core/src"]
-    }
+    "paths": {}
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "../../packages", "src/**/*.test.ts", "src/**/__tests__"]

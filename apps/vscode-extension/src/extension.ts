@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import type { DatabaseConnectionConfig } from "@dbview/core";
-import type { DatabaseAdapter } from "./adapters/DatabaseAdapter";
-import { DatabaseAdapterFactory } from "./adapters/DatabaseAdapterFactory";
+import type { DatabaseConnectionConfig } from "@dbview/types";
+import type { DatabaseAdapter } from "@dbview/adapters";
+import { DatabaseAdapterFactory } from "@dbview/adapters";
 import { SchemaExplorerProvider, SchemaTreeItem, type TableIdentifier } from "./schemaExplorer";
 import { openTableInPanel, openQueryInPanel, openERDiagramInPanel, updateWebviewTheme } from "./mainPanel";
 import {
@@ -791,8 +791,8 @@ ${info.version.split(',')[0]}
         vscode.window.showWarningMessage("No connection available");
         return;
       }
-      if ('database' in conn) {
-        await vscode.env.clipboard.writeText(conn.database);
+      if ('database' in conn && conn.database !== undefined) {
+        await vscode.env.clipboard.writeText(String(conn.database));
         vscode.window.showInformationMessage(`Copied: ${conn.database}`);
       } else {
         vscode.window.showWarningMessage("Database name not available for this connection type");

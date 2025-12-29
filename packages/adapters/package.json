@@ -1,0 +1,65 @@
+{
+  "name": "@dbview/adapters",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p ./tsconfig.json",
+    "watch": "tsc -w -p ./tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run __tests__",
+    "test:db:up": "docker-compose -f docker-compose.test.yml up -d",
+    "test:db:down": "docker-compose -f docker-compose.test.yml down -v",
+    "test:db:logs": "docker-compose -f docker-compose.test.yml logs"
+  },
+  "dependencies": {
+    "@dbview/types": "workspace:^"
+  },
+  "peerDependencies": {
+    "pg": "^8.11.5",
+    "mysql2": "^3.16.0",
+    "mssql": "^12.2.0",
+    "better-sqlite3": "12.5.0",
+    "mongodb": "6.12.0",
+    "ioredis": "^5.8.2",
+    "@elastic/elasticsearch": "^8.17.0",
+    "cassandra-driver": "^4.7.2"
+  },
+  "peerDependenciesMeta": {
+    "pg": { "optional": true },
+    "mysql2": { "optional": true },
+    "mssql": { "optional": true },
+    "better-sqlite3": { "optional": true },
+    "mongodb": { "optional": true },
+    "ioredis": { "optional": true },
+    "@elastic/elasticsearch": { "optional": true },
+    "cassandra-driver": { "optional": true }
+  },
+  "devDependencies": {
+    "pg": "^8.11.5",
+    "mysql2": "^3.16.0",
+    "mssql": "^12.2.0",
+    "better-sqlite3": "12.5.0",
+    "mongodb": "6.12.0",
+    "ioredis": "^5.8.2",
+    "@elastic/elasticsearch": "^8.17.0",
+    "cassandra-driver": "^4.7.2",
+    "@types/pg": "^8.10.9",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/mssql": "^9.1.8",
+    "@types/node": "^20.11.17",
+    "typescript": "^5.4.2",
+    "vitest": "latest",
+    "@vitest/ui": "latest"
+  }
+}

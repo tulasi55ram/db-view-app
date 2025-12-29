@@ -2,17 +2,38 @@
   "name": "@dbview/desktop",
   "version": "0.0.1",
   "private": true,
-  "main": "dist/main.js",
+  "main": "dist/main/main.js",
   "scripts": {
-    "dev": "ts-node ./src/main.ts",
-    "build": "tsc -p ./tsconfig.json"
+    "dev": "tsc -p ./tsconfig.main.json && wait-on http://localhost:5174 && electron .",
+    "build": "tsc -p ./tsconfig.main.json",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
-    "electron": "^28.2.1"
+    "@dbview/types": "workspace:^",
+    "@dbview/adapters": "workspace:^",
+    "@elastic/elasticsearch": "^8.17.0",
+    "better-sqlite3": "12.5.0",
+    "cassandra-driver": "^4.7.2",
+    "electron": "^28.2.1",
+    "electron-log": "^5.1.1",
+    "electron-store": "8",
+    "electron-updater": "^6.1.8",
+    "ioredis": "^5.8.2",
+    "keytar": "^7.9.0",
+    "mongodb": "6.12.0",
+    "mssql": "^12.2.0",
+    "mysql2": "^3.16.0",
+    "pg": "^8.11.5",
+    "sql-formatter": "^15.6.12"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/mssql": "^9.1.8",
     "@types/node": "^20.11.17",
+    "@types/pg": "^8.10.9",
     "ts-node": "^10.9.1",
-    "typescript": "^5.4.2"
+    "typescript": "^5.4.2",
+    "wait-on": "^9.0.3"
   }
 }

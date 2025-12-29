@@ -1,5 +1,5 @@
 import { FC } from 'react';
-import type { FilterCondition as FilterConditionType, ColumnMetadata } from '@dbview/core';
+import type { FilterCondition as FilterConditionType, ColumnMetadata } from '@dbview/types';
 import { Search as SearchIcon, Loader2, CheckCircle2 } from 'lucide-react';
 import clsx from 'clsx';
 import { FilterCondition } from './FilterCondition';

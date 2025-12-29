@@ -1,5 +1,5 @@
 import { type FC, useState } from "react";
-import type { ExplainPlan, ExplainNode } from "@dbview/core";
+import type { ExplainPlan, ExplainNode } from "@dbview/types";
 import {
   X,
   ChevronRight,

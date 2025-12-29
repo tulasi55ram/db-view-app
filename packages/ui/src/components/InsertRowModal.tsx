@@ -1,6 +1,6 @@
 import { useState, useEffect, type FC } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import type { ColumnMetadata } from "@dbview/core";
+import type { ColumnMetadata } from "@dbview/types";
 import { X, Sparkles } from "lucide-react";
 import clsx from "clsx";
 

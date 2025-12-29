@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ColumnMetadata } from '@dbview/core';
+import type { ColumnMetadata } from '@dbview/types';
 import { BooleanToggle } from './editors/BooleanToggle';
 import { DateTimeInput } from './editors/DateTimeInput';
 import { JsonTextarea } from './editors/JsonTextarea';

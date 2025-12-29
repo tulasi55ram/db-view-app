@@ -10,8 +10,10 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@dbview/core": ["packages/core/src"],
-      "@dbview/ui": ["packages/ui/src"]
+      "@dbview/types": ["packages/types/src"],
+      "@dbview/utils": ["packages/utils/src"],
+      "@dbview/ui": ["packages/ui/src"],
+      "@dbview/adapters": ["packages/adapters/src"]
     }
   }
 }

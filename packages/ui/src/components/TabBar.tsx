@@ -1,5 +1,5 @@
 import { FC, useState, useRef, useEffect } from 'react';
-import type { Tab } from '@dbview/core';
+import type { Tab } from '@dbview/types';
 import { Table2, FileCode, X, Plus } from 'lucide-react';
 import clsx from 'clsx';
 

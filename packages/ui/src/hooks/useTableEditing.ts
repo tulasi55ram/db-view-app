@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import type { CellEdit, ColumnMetadata } from '@dbview/core';
+import type { CellEdit, ColumnMetadata } from '@dbview/types';
 import { toast } from 'sonner';
 
 export function useTableEditing(

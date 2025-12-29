@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import type { Tab, TableTab, QueryTab, ERDiagramTab } from '@dbview/core';
+import type { Tab, TableTab, QueryTab, ERDiagramTab } from '@dbview/types';
 
 export function useTabs() {
   const [tabs, setTabs] = useState<Tab[]>([]);

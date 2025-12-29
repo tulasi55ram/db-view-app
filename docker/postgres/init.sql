@@ -760,7 +760,7 @@ INSERT INTO public.users (email, username, password_hash, first_name, last_name,
 ('sam.robinson@example.com', 'sam', '$2a$10$zab...', 'Sam', 'Robinson', 'user', 'active', true, true, 29, 73000.00, '+1-555-0119', NULL, ARRAY['finance'], '1995-04-28', '{"theme": "light", "notifications": true}'),
 ('tina.clark@example.com', 'tina', '$2a$10$cde...', 'Tina', 'Clark', 'user', 'active', true, true, 37, 84000.00, '+1-555-0120', 'Content strategist', ARRAY['content', 'marketing'], '1987-09-14', '{"theme": "light", "notifications": false}');
 
--- Generate 1000 additional users using generate_series
+-- Generate 10000 additional users using generate_series
 INSERT INTO public.users (email, username, password_hash, first_name, last_name, role, status, is_active, is_verified, age, salary, phone_number, bio, tags, birth_date, preferences)
 SELECT
     'user' || i || '@example.com',
@@ -831,7 +831,7 @@ SELECT
         THEN '{"theme": "dark", "notifications": true}'::jsonb
         ELSE '{"theme": "light", "notifications": false}'::jsonb
     END
-FROM generate_series(1, 1000) AS i;
+FROM generate_series(1, 10000) AS i;
 
 -- Insert Categories
 INSERT INTO inventory.categories (name, slug, description, parent_id, is_active) VALUES

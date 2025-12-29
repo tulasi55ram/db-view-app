@@ -389,7 +389,8 @@
     "test:integration": "vitest run src/adapters/__tests__"
   },
   "dependencies": {
-    "@dbview/core": "workspace:*",
+    "@dbview/types": "workspace:*",
+    "@dbview/adapters": "workspace:*",
     "better-sqlite3": "12.5.0",
     "mongodb": "6.12.0",
     "mssql": "^12.2.0",

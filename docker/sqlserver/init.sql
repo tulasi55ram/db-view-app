@@ -145,7 +145,7 @@ INSERT INTO @roles VALUES
 (0, 'user'), (1, 'user'), (2, 'user'), (3, 'user'),
 (4, 'moderator'), (5, 'admin');
 
-WHILE @i <= 1000
+WHILE @i <= 10000
 BEGIN
     DECLARE @email NVARCHAR(255) = 'user' + CAST(@i AS NVARCHAR) + '@example.com';
     DECLARE @first_name NVARCHAR(50);

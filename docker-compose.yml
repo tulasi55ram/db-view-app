@@ -1,7 +1,5 @@
-version: "3.8"
-
 services:
-  # PostgreSQL - Primary database (currently supported)
+  # PostgreSQL
   postgres:
     image: postgres:16-alpine
     container_name: dbview-postgres
@@ -20,12 +18,12 @@ services:
       timeout: 5s
       retries: 5
 
-  # MySQL - Future support (Phase 7)
+  # MySQL
   mysql:
     image: mysql:8.0
     container_name: dbview-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_ROOT_PASSWORD: dbview123
       MYSQL_USER: dbview
       MYSQL_PASSWORD: dbview123
       MYSQL_DATABASE: dbview_dev
@@ -40,7 +38,27 @@ services:
       timeout: 5s
       retries: 5
 
-  # MongoDB - Future support (Phase 7)
+  # MariaDB
+  mariadb:
+    image: mariadb:11.2
+    container_name: dbview-mariadb
+    environment:
+      MARIADB_ROOT_PASSWORD: dbview123
+      MARIADB_USER: dbview
+      MARIADB_PASSWORD: dbview123
+      MARIADB_DATABASE: dbview_dev
+    ports:
+      - "3307:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./docker/mariadb/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB
   mongodb:
     image: mongo:7.0
     container_name: dbview-mongodb
@@ -59,28 +77,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # SQL Server - Future support (Phase 7)
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: dbview-sqlserver
-    environment:
-      ACCEPT_EULA: "Y"
-      SA_PASSWORD: "DbView123!"
-      MSSQL_PID: "Developer"
-    ports:
-      - "1433:1433"
-    volumes:
-      - sqlserver_data:/var/opt/mssql
-      - ./docker/sqlserver:/docker-entrypoint-initdb.d:ro
-    entrypoint: /bin/bash /docker-entrypoint-initdb.d/entrypoint.sh
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P DbView123! -C -Q 'SELECT 1' || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 60s
-
-  # SQLite - File-based database container
+  # SQLite (file-based, no credentials needed)
   sqlite:
     image: alpine:3.19
     container_name: dbview-sqlite
@@ -94,13 +91,135 @@ services:
         tail -f /dev/null
       "
     healthcheck:
-      test: ["CMD", "test", "-f", "/data/dbview.db"]
+      test: ["CMD", "test", "-f", "/data/dbview_dev.db"]
       interval: 5s
       timeout: 5s
       retries: 5
 
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: dbview-redis
+    command: redis-server --requirepass dbview123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "dbview123", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis initialization (seeds sample data)
+  redis-init:
+    image: redis:7-alpine
+    container_name: dbview-redis-init
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./docker/redis/init.sh:/init.sh:ro
+    entrypoint: ["sh", "/init.sh"]
+    restart: "no"
+
+  # SQL Server
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: dbview-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "Dbview123!"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+      - ./docker/sqlserver:/docker-entrypoint-initdb.d:ro
+    entrypoint: /bin/bash /docker-entrypoint-initdb.d/entrypoint.sh
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P Dbview123! -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # Elasticsearch
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: dbview-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - ELASTIC_PASSWORD=dbview123
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -u elastic:dbview123 http://localhost:9200/_cluster/health | grep -q 'green\\|yellow'"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # Elasticsearch initialization (seeds sample data)
+  elasticsearch-init:
+    image: curlimages/curl:8.5.0
+    container_name: dbview-elasticsearch-init
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - ./docker/elasticsearch/init.sh:/init.sh:ro
+    entrypoint: ["sh", "/init.sh"]
+    restart: "no"
+
+  # Cassandra
+  cassandra:
+    image: cassandra:4.1
+    container_name: dbview-cassandra
+    environment:
+      - CASSANDRA_CLUSTER_NAME=dbview_cluster
+      - CASSANDRA_DC=datacenter1
+      - CASSANDRA_RACK=rack1
+      - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
+      - MAX_HEAP_SIZE=512M
+      - HEAP_NEWSIZE=100M
+    ports:
+      - "9042:9042"
+      # Port 7000 is for inter-node communication (not needed for single-node dev setup)
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # Cassandra initialization (seeds sample data)
+  cassandra-init:
+    image: cassandra:4.1
+    container_name: dbview-cassandra-init
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    volumes:
+      - ./docker/cassandra/init.cql:/init.cql:ro
+      - ./docker/cassandra/init.sh:/init.sh:ro
+    entrypoint: ["sh", "/init.sh"]
+    restart: "no"
+
 volumes:
   postgres_data:
   mysql_data:
+  mariadb_data:
   mongodb_data:
+  redis_data:
   sqlserver_data:
+  elasticsearch_data:
+  cassandra_data:

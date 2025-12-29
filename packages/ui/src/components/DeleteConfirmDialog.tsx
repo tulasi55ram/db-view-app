@@ -1,6 +1,6 @@
 import type { FC } from "react";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
-import type { ColumnMetadata } from "@dbview/core";
+import type { ColumnMetadata } from "@dbview/types";
 import { AlertTriangle } from "lucide-react";
 
 export interface DeleteConfirmDialogProps {

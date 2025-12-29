@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { ConnectionConfig, DatabaseConnectionConfig, DatabaseType } from "@dbview/core";
+import type { ConnectionConfig, DatabaseConnectionConfig, DatabaseType } from "@dbview/types";
 
 const STATE_KEYS = {
   dbType: "dbview.connection.dbType",

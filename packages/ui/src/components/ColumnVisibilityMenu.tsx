@@ -1,6 +1,6 @@
 import { type FC, useState, useMemo } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import type { ColumnMetadata } from "@dbview/core";
+import type { ColumnMetadata } from "@dbview/types";
 import { Columns3, Eye, EyeOff, Search, Key, Link } from "lucide-react";
 
 export interface ColumnVisibilityMenuProps {

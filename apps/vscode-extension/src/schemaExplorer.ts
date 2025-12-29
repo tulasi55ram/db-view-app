@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import type { ConnectionConfig, DatabaseConnectionConfig } from "@dbview/core";
-import type { DatabaseAdapter, ConnectionStatus, ConnectionStatusEvent } from "./adapters/DatabaseAdapter";
-import { DatabaseAdapterFactory } from "./adapters/DatabaseAdapterFactory";
+import type { ConnectionConfig, DatabaseConnectionConfig } from "@dbview/types";
+import type { DatabaseAdapter, ConnectionStatus, ConnectionStatusEvent } from "@dbview/adapters";
+import { DatabaseAdapterFactory } from "@dbview/adapters";
 import { getAllSavedConnections, getActiveConnectionName } from "./connectionSettings";
 
 export interface TableIdentifier {
@@ -117,8 +117,8 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
     }
 
     // For all other types that have a database property
-    if ('database' in conn) {
-      return conn.database;
+    if ('database' in conn && conn.database !== undefined) {
+      return String(conn.database);
     }
 
     return 'Unknown';
@@ -797,8 +797,8 @@ export class SchemaTreeItem extends vscode.TreeItem {
       let connName = 'Database';
       if (connectionInfo.name) {
         connName = connectionInfo.name;
-      } else if ('database' in connectionInfo) {
-        connName = connectionInfo.database;
+      } else if ('database' in connectionInfo && connectionInfo.database !== undefined) {
+        connName = String(connectionInfo.database);
       } else if ('filePath' in connectionInfo) {
         connName = connectionInfo.filePath;
       }
@@ -853,8 +853,8 @@ function getLabel(node: NodeData, connectionInfo?: DatabaseConnectionConfig | nu
     if (connectionInfo) {
       if (connectionInfo.name) {
         baseName = connectionInfo.name;
-      } else if ('database' in connectionInfo) {
-        baseName = connectionInfo.database;
+      } else if ('database' in connectionInfo && connectionInfo.database !== undefined) {
+        baseName = String(connectionInfo.database);
       } else if ('filePath' in connectionInfo) {
         baseName = connectionInfo.filePath;
       }

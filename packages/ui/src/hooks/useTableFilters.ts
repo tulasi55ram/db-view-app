@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import type { FilterCondition } from '@dbview/core';
+import type { FilterCondition } from '@dbview/types';
 import { createFilterFn } from '../utils/filterOperators';
 
 export function useTableFilters() {

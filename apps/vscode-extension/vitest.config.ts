@@ -30,7 +30,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@dbview/core': path.resolve(__dirname, '../../packages/core/src'),
+      '@dbview/types': path.resolve(__dirname, '../../packages/types/src'),
       '@': path.resolve(__dirname, './src')
     }
   }

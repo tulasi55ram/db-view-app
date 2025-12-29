@@ -1,0 +1,9 @@
+node_modules
+dist
+build
+coverage
+.next
+*.log
+pnpm-lock.yaml
+package-lock.json
+*.d.ts
