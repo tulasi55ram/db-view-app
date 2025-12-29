@@ -204,6 +204,27 @@ export interface ImportProgress {
   percentage: number;
 }
 
+// Auto-updater types
+export interface UpdateInfo {
+  version: string;
+  releaseDate?: string;
+  releaseNotes?: string | null;
+}
+
+export interface UpdateProgress {
+  bytesPerSecond: number;
+  percent: number;
+  transferred: number;
+  total: number;
+}
+
+export interface UpdateStatus {
+  status: "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error";
+  info?: UpdateInfo;
+  progress?: UpdateProgress;
+  error?: string;
+}
+
 // Autocomplete data
 export interface AutocompleteData {
   schemas: string[];
@@ -452,6 +473,13 @@ export interface ElectronAPI {
   onMenuFormatSql(callback: () => void): () => void;
   onMenuExplainQuery(callback: () => void): () => void;
   onImportProgress(callback: (progress: ImportProgress) => void): () => void;
+
+  // Auto-updater
+  checkForUpdates(): Promise<void>;
+  downloadUpdate(): Promise<boolean>;
+  installUpdate(): Promise<boolean>;
+  getAppVersion(): Promise<string>;
+  onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
 }
 
 // Declare the global window interface

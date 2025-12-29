@@ -1,4 +1,5 @@
 import { app, Menu, BrowserWindow, dialog, MenuItemConstructorOptions } from "electron";
+import { getAutoUpdater } from "./services/AutoUpdater";
 
 export function createApplicationMenu(mainWindow: BrowserWindow | null): Menu {
   const isMac = process.platform === "darwin";
@@ -154,6 +155,14 @@ export function createApplicationMenu(mainWindow: BrowserWindow | null): Menu {
       role: "help" as const,
       submenu: [
         {
+          label: "Check for Updates...",
+          click: () => {
+            const autoUpdater = getAutoUpdater();
+            autoUpdater.checkForUpdates(false);
+          },
+        },
+        { type: "separator" as const },
+        {
           label: "Documentation",
           click: async () => {
             const { shell } = require("electron");
@@ -167,7 +176,7 @@ export function createApplicationMenu(mainWindow: BrowserWindow | null): Menu {
             await shell.openExternal("https://github.com/dbview/dbview/issues");
           },
         },
-        { type: "separator" },
+        { type: "separator" as const },
         {
           label: "About DBView",
           click: () => {

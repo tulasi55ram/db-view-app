@@ -50,11 +50,21 @@ import type { DatabaseConnectionConfig } from "@dbview/types";
 /**
  * Broadcast connection status change to all renderer windows
  */
-function broadcastConnectionStatus(connectionKey: string, status: ConnectionWithStatus["status"], error?: string): void {
+function broadcastConnectionStatus(
+  connectionKey: string,
+  status: ConnectionWithStatus["status"],
+  error?: string,
+  connectionName?: string
+): void {
   const windows = BrowserWindow.getAllWindows();
   for (const window of windows) {
     if (!window.isDestroyed()) {
-      window.webContents.send("connection:statusChange", { connectionKey, status, error });
+      window.webContents.send("connection:statusChange", {
+        connectionKey,
+        status,
+        error,
+        connectionName,
+      });
     }
   }
 }
@@ -102,6 +112,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     if (!config) {
       throw new Error(`Connection not found: ${connectionKey}`);
     }
+    const connectionName = config.name;
     const adapter = await connectionManager.getOrCreateAdapter(config);
 
     // Only attach status listener once per connection to prevent duplicates
@@ -109,19 +120,24 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
       connectionStatusListeners.add(connectionKey);
       adapter.on("statusChange", (event) => {
         const status = event.status === "connected" ? "connected" : "disconnected";
-        broadcastConnectionStatus(connectionKey, status);
+        broadcastConnectionStatus(connectionKey, status, undefined, connectionName);
       });
     }
 
     // Broadcast initial connected status
-    broadcastConnectionStatus(connectionKey, "connected");
+    broadcastConnectionStatus(connectionKey, "connected", undefined, connectionName);
   });
 
   ipcMain.handle("connections:disconnect", async (_event, connectionKey: string) => {
+    // Get connection name before disconnecting for toast message
+    const connections = getAllConnections();
+    const config = connections.find((c) => connectionManager.getConnectionKey(c as any) === connectionKey);
+    const connectionName = config?.name;
+
     // Clean up listener tracking
     connectionStatusListeners.delete(connectionKey);
     await connectionManager.disconnect(connectionKey);
-    broadcastConnectionStatus(connectionKey, "disconnected");
+    broadcastConnectionStatus(connectionKey, "disconnected", undefined, connectionName);
   });
 
   // ==================== Schema Operations ====================

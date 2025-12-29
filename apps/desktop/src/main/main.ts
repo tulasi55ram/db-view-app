@@ -5,6 +5,7 @@ import { registerAllHandlers } from "./ipc";
 import { ConnectionManager } from "./services/ConnectionManager";
 import { createApplicationMenu } from "./menu";
 import { getTrayManager } from "./services/TrayManager";
+import { getAutoUpdater } from "./services/AutoUpdater";
 
 // Keep a global reference of the window object
 let mainWindow: BrowserWindow | null = null;
@@ -117,6 +118,12 @@ app.whenReady().then(() => {
   if (mainWindow && connectionManager) {
     const trayManager = getTrayManager();
     trayManager.init(mainWindow, connectionManager);
+  }
+
+  // Initialize auto-updater
+  if (mainWindow) {
+    const autoUpdater = getAutoUpdater();
+    autoUpdater.init(mainWindow);
   }
 
   app.on("activate", () => {

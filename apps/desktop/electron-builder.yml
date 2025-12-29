@@ -64,4 +64,10 @@ linux:
   category: Development
   icon: resources/icon.png
 
-publish: null
+# Auto-update configuration
+# Set GH_TOKEN environment variable for publishing
+publish:
+  provider: github
+  owner: dbview
+  repo: dbview
+  releaseType: release

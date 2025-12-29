@@ -16,6 +16,27 @@ import type {
   ColumnInfo,
 } from "@dbview/types";
 
+// Auto-updater types
+export interface UpdateInfo {
+  version: string;
+  releaseDate?: string;
+  releaseNotes?: string | null;
+}
+
+export interface UpdateProgress {
+  bytesPerSecond: number;
+  percent: number;
+  transferred: number;
+  total: number;
+}
+
+export interface UpdateStatus {
+  status: "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error";
+  info?: UpdateInfo;
+  progress?: UpdateProgress;
+  error?: string;
+}
+
 // Declare the Electron API interface
 export interface ElectronAPI {
   // Connection management
@@ -116,6 +137,13 @@ export interface ElectronAPI {
   onMenuRunQuery(callback: () => void): () => void;
   onMenuFormatSql(callback: () => void): () => void;
   onMenuExplainQuery(callback: () => void): () => void;
+
+  // Auto-updater
+  checkForUpdates(): Promise<void>;
+  downloadUpdate(): Promise<boolean>;
+  installUpdate(): Promise<boolean>;
+  getAppVersion(): Promise<string>;
+  onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
 }
 
 // Parameter types

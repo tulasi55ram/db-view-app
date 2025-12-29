@@ -169,6 +169,20 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.removeListener("import:progress", listener);
     };
   },
+
+  // Auto-updater
+  checkForUpdates: () => ipcRenderer.invoke("updater:check"),
+  downloadUpdate: () => ipcRenderer.invoke("updater:download"),
+  installUpdate: () => ipcRenderer.invoke("updater:install"),
+  getAppVersion: () => ipcRenderer.invoke("updater:getVersion"),
+
+  onUpdateStatus: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: any) => callback(status);
+    ipcRenderer.on("updater:status", listener);
+    return () => {
+      ipcRenderer.removeListener("updater:status", listener);
+    };
+  },
 };
 
 // Expose in the main world
