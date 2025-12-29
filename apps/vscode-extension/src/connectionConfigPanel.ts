@@ -15,16 +15,23 @@ export function showConnectionConfigPanel(
     let resolved = false;
     const panel = vscode.window.createWebviewPanel(
       "dbviewConnectionConfig",
-      "Configure Database Connection",
+      defaults?.name ? `Edit Connection: ${defaults.name}` : "Add New Connection",
       vscode.ViewColumn.One,
       {
         enableScripts: true,
-        retainContextWhenHidden: true
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')]
       }
     );
 
     console.log("[dbview] Webview panel created, setting HTML content");
-    panel.webview.html = getWebviewContent(defaults);
+
+    // Get URI for media folder
+    const mediaUri = panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(context.extensionUri, 'media', 'db-icons')
+    );
+
+    panel.webview.html = getWebviewContent(defaults, mediaUri.toString());
     console.log("[dbview] Webview HTML set");
 
     panel.webview.onDidReceiveMessage(
@@ -61,7 +68,6 @@ export function showConnectionConfigPanel(
             let connection: DatabaseConnectionConfig;
 
             if (dbType === 'sqlserver') {
-              // SQL Server-specific configuration
               connection = {
                 dbType: 'sqlserver',
                 name: message.name || undefined,
@@ -70,13 +76,12 @@ export function showConnectionConfigPanel(
                 database: message.database,
                 user: message.user,
                 password,
-                authenticationType: 'sql', // Default to SQL Server authentication
+                authenticationType: 'sql',
                 encrypt: true,
-                trustServerCertificate: true, // For local development
+                trustServerCertificate: true,
                 readOnly: message.readOnly || false
               };
             } else if (dbType === 'sqlite') {
-              // SQLite-specific configuration
               connection = {
                 dbType: 'sqlite',
                 name: message.name || undefined,
@@ -85,7 +90,6 @@ export function showConnectionConfigPanel(
                 readOnly: message.readOnly || false
               };
             } else if (dbType === 'mongodb') {
-              // MongoDB-specific configuration
               connection = {
                 dbType: 'mongodb',
                 name: message.name || undefined,
@@ -98,7 +102,6 @@ export function showConnectionConfigPanel(
                 readOnly: message.readOnly || false
               };
             } else {
-              // PostgreSQL, MySQL, and other databases
               connection = {
                 dbType,
                 name: message.name || undefined,
@@ -149,24 +152,17 @@ export function showConnectionConfigPanel(
           case "testConnection":
             console.log("[dbview] Testing connection...");
             try {
-              // If editing an existing connection and password is empty, retrieve from secrets
               let testPassword = message.password || undefined;
               if (!testPassword) {
-                // Try named connection key first
                 if (defaults?.name) {
-                  console.log("[dbview] No password provided for test, checking secrets for existing connection:", defaults.name);
                   const storedPassword = await context.secrets.get(`dbview.connection.${defaults.name}.password`);
                   if (storedPassword) {
-                    console.log("[dbview] Found stored password for connection test");
                     testPassword = storedPassword;
                   }
                 }
-                // Fall back to legacy key if still no password
                 if (!testPassword) {
-                  console.log("[dbview] Checking legacy password key for test");
                   const legacyPassword = await context.secrets.get("dbview.connection.password");
                   if (legacyPassword) {
-                    console.log("[dbview] Found password from legacy key for test");
                     testPassword = legacyPassword;
                   }
                 }
@@ -176,7 +172,6 @@ export function showConnectionConfigPanel(
               let testConfig: DatabaseConnectionConfig;
 
               if (dbType === 'sqlserver') {
-                // SQL Server-specific configuration
                 testConfig = {
                   dbType: 'sqlserver',
                   name: message.name || undefined,
@@ -191,7 +186,6 @@ export function showConnectionConfigPanel(
                   readOnly: message.readOnly || false
                 };
               } else if (dbType === 'mongodb') {
-                // MongoDB-specific configuration
                 testConfig = {
                   dbType: 'mongodb',
                   name: message.name || undefined,
@@ -204,7 +198,6 @@ export function showConnectionConfigPanel(
                   readOnly: message.readOnly || false
                 };
               } else if (dbType === 'sqlite') {
-                // SQLite-specific configuration
                 testConfig = {
                   dbType: 'sqlite',
                   name: message.name || undefined,
@@ -213,7 +206,6 @@ export function showConnectionConfigPanel(
                   readOnly: message.readOnly || false
                 };
               } else {
-                // PostgreSQL, MySQL, and other databases
                 testConfig = {
                   dbType,
                   name: message.name || undefined,
@@ -226,7 +218,6 @@ export function showConnectionConfigPanel(
                 } as DatabaseConnectionConfig;
               }
 
-              // Create adapter and test connection
               const adapter = DatabaseAdapterFactory.create(testConfig);
               await adapter.connect();
               await adapter.disconnect();
@@ -255,8 +246,6 @@ export function showConnectionConfigPanel(
       if (!resolved) {
         console.log("[dbview] Panel disposed without explicit resolution, resolving with null");
         resolve(null);
-      } else {
-        console.log("[dbview] Panel disposed after explicit resolution, ignoring");
       }
     });
   });
@@ -289,7 +278,6 @@ async function saveConnection(
     Promise.resolve(context.globalState.update(STATE_KEYS.dbType, connection.dbType))
   ];
 
-  // Only save host/port/user/database if they exist (not for SQLite)
   if ('host' in connection && connection.host) {
     updates.push(Promise.resolve(context.globalState.update(STATE_KEYS.host, connection.host)));
   }
@@ -303,7 +291,6 @@ async function saveConnection(
     updates.push(Promise.resolve(context.globalState.update(STATE_KEYS.database, connection.database)));
   }
 
-  // Save password if it exists
   if ('password' in connection && connection.password) {
     updates.push(Promise.resolve(context.secrets.store(PASSWORD_KEY, connection.password)));
   } else {
@@ -313,32 +300,26 @@ async function saveConnection(
   await Promise.all(updates);
 }
 
-function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnectionConfig>): string {
-  // Determine the database type
+function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnectionConfig>, mediaUri?: string): string {
+  const iconBaseUri = mediaUri || '';
   const dbType = (defaults && 'dbType' in defaults) ? defaults.dbType : 'postgres';
-
   const defaultName = escapeHtml(defaults?.name ?? "");
   const defaultHost = escapeHtml((defaults && 'host' in defaults ? defaults.host : undefined) ?? "localhost");
   const defaultPort = (defaults && 'port' in defaults ? defaults.port : undefined) ??
-    (dbType === 'mysql' ? 3306 : dbType === 'sqlserver' ? 1433 : 5432);
-  const defaultDatabase = escapeHtml(String((defaults && 'database' in defaults ? defaults.database : undefined) ??
-    (dbType === 'mysql' ? 'mysql' : dbType === 'sqlserver' ? 'dbview_dev' : 'postgres')));
-  const defaultUser = escapeHtml((defaults && 'user' in defaults ? defaults.user : undefined) ??
-    (dbType === 'mysql' ? 'root' : dbType === 'sqlserver' ? 'sa' : 'postgres'));
+    (dbType === 'mysql' ? 3306 : dbType === 'sqlserver' ? 1433 : dbType === 'mongodb' ? 27017 : 5432);
+  const defaultDatabase = escapeHtml(String((defaults && 'database' in defaults ? defaults.database : undefined) ?? ""));
+  const defaultUser = escapeHtml((defaults && 'user' in defaults ? defaults.user : undefined) ?? "");
   const defaultFilePath = escapeHtml((defaults && 'filePath' in defaults ? defaults.filePath : undefined) ?? "");
-  const defaultMode = (defaults && 'mode' in defaults ? defaults.mode : undefined) ?? 'readwrite';
   const defaultAuthDatabase = escapeHtml((defaults && 'authDatabase' in defaults ? defaults.authDatabase : undefined) ?? "admin");
   const defaultReadOnly = defaults?.readOnly ?? false;
   const isEditing = Boolean(defaults?.name);
-
-  console.log("[dbview] Webview defaults:", { dbType, defaultName, defaultHost, defaultPort, defaultDatabase, defaultUser, defaultReadOnly, isEditing });
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Configure Database Connection</title>
+    <title>${isEditing ? 'Edit Connection' : 'Add New Connection'}</title>
     <style>
         * {
             box-sizing: border-box;
@@ -350,38 +331,185 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
             font-family: var(--vscode-font-family);
             color: var(--vscode-foreground);
             background-color: var(--vscode-editor-background);
-            padding: 20px;
-            line-height: 1.6;
+            line-height: 1.5;
+            min-height: 100vh;
         }
 
         .container {
-            max-width: 600px;
-            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            min-height: 100vh;
         }
 
-        h1 {
-            font-size: 24px;
+        /* Left Panel - Database Type Selector */
+        .left-panel {
+            background-color: var(--vscode-sideBar-background);
+            border-right: 1px solid var(--vscode-panel-border);
+            padding: 24px 16px;
+        }
+
+        .left-panel h2 {
+            font-size: 11px;
             font-weight: 600;
-            margin-bottom: 8px;
-            color: var(--vscode-foreground);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 16px;
         }
 
-        .subtitle {
+        .db-type-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .db-type-btn {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 14px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-align: left;
+            color: var(--vscode-foreground);
+            font-family: var(--vscode-font-family);
+            font-size: 13px;
+        }
+
+        .db-type-btn:hover {
+            background-color: var(--vscode-list-hoverBackground);
+        }
+
+        .db-type-btn.selected {
+            background-color: var(--vscode-list-activeSelectionBackground);
+            color: var(--vscode-list-activeSelectionForeground);
+            border-color: var(--vscode-focusBorder);
+        }
+
+        .db-type-btn.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .db-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .db-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .db-type-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .db-type-name {
+            font-weight: 500;
+        }
+
+        .db-type-desc {
+            font-size: 11px;
             color: var(--vscode-descriptionForeground);
+        }
+
+        .db-type-btn.selected .db-type-desc {
+            color: var(--vscode-list-activeSelectionForeground);
+            opacity: 0.8;
+        }
+
+        /* Right Panel - Form */
+        .right-panel {
+            padding: 32px 40px;
+            overflow-y: auto;
+            max-height: 100vh;
+        }
+
+        .form-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
             margin-bottom: 32px;
-            font-size: 14px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        .form-header-icon {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .form-header-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .form-header-text h1 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .form-header-text p {
+            color: var(--vscode-descriptionForeground);
+            font-size: 13px;
+        }
+
+        .form-section {
+            margin-bottom: 28px;
+        }
+
+        .form-section-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 16px;
         }
 
         .form-group {
             margin-bottom: 20px;
         }
 
+        .form-row {
+            display: grid;
+            grid-template-columns: 3fr 1fr;
+            gap: 16px;
+        }
+
         label {
-            display: block;
-            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
             font-weight: 500;
             font-size: 13px;
             color: var(--vscode-foreground);
+        }
+
+        .label-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            border-radius: 3px;
+            font-weight: normal;
         }
 
         input[type="text"],
@@ -389,58 +517,160 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
         input[type="password"],
         select {
             width: 100%;
-            padding: 8px 10px;
+            padding: 10px 12px;
             background-color: var(--vscode-input-background);
             color: var(--vscode-input-foreground);
             border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
             font-family: var(--vscode-font-family);
             font-size: 13px;
             outline: none;
-        }
-
-        select {
-            cursor: pointer;
-        }
-
-        select option:disabled {
-            color: var(--vscode-disabledForeground);
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
         }
 
         input:focus,
         select:focus {
             border-color: var(--vscode-focusBorder);
+            box-shadow: 0 0 0 1px var(--vscode-focusBorder);
         }
 
+        input::placeholder {
+            color: var(--vscode-input-placeholderForeground);
+        }
+
+        .help-text {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 6px;
+        }
+
+        /* Checkbox */
         .checkbox-group {
-            margin: 24px 0;
             display: flex;
             align-items: center;
+            gap: 10px;
+            padding: 12px 14px;
+            background: var(--vscode-input-background);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: border-color 0.15s ease;
+        }
+
+        .checkbox-group:hover {
+            border-color: var(--vscode-focusBorder);
         }
 
         .checkbox-group input[type="checkbox"] {
-            margin-right: 8px;
+            width: 16px;
+            height: 16px;
             cursor: pointer;
+            accent-color: var(--vscode-focusBorder);
         }
 
         .checkbox-group label {
             margin: 0;
             cursor: pointer;
             font-weight: normal;
+            flex: 1;
         }
 
+        .checkbox-icon {
+            font-size: 16px;
+        }
+
+        /* Warnings */
+        .warning-box {
+            display: none;
+            padding: 14px 16px;
+            background: var(--vscode-inputValidation-warningBackground);
+            border: 1px solid var(--vscode-inputValidation-warningBorder);
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .warning-box.show {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .warning-box .warning-icon {
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .warning-box .warning-content h4 {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: var(--vscode-inputValidation-warningForeground);
+        }
+
+        .warning-box .warning-content p {
+            font-size: 12px;
+            color: var(--vscode-inputValidation-warningForeground);
+            opacity: 0.9;
+        }
+
+        /* Status Messages */
+        .status-message {
+            display: none;
+            padding: 12px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-bottom: 20px;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-message.show {
+            display: flex;
+        }
+
+        .status-message.success {
+            background: rgba(34, 197, 94, 0.15);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            color: #22c55e;
+        }
+
+        .status-message.error {
+            background: var(--vscode-inputValidation-errorBackground);
+            border: 1px solid var(--vscode-inputValidation-errorBorder);
+            color: var(--vscode-inputValidation-errorForeground);
+        }
+
+        .status-message.testing {
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+        }
+
+        .status-icon {
+            font-size: 16px;
+        }
+
+        /* Buttons */
         .button-group {
             display: flex;
             gap: 12px;
             margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid var(--vscode-panel-border);
         }
 
         button {
-            padding: 8px 16px;
+            padding: 10px 20px;
             font-size: 13px;
             font-family: var(--vscode-font-family);
+            font-weight: 500;
             border: none;
+            border-radius: 4px;
             cursor: pointer;
             outline: none;
+            transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .btn-primary {
@@ -461,476 +691,343 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
             background-color: var(--vscode-button-secondaryHoverBackground);
         }
 
-        .help-text {
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-            margin-top: 4px;
-        }
-
-        .row {
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 12px;
-        }
-
-        .error {
-            color: var(--vscode-errorForeground);
-            font-size: 12px;
-            margin-top: 4px;
-            display: none;
-        }
-
-        .error.show {
-            display: block;
-        }
-
-        .success {
-            color: var(--vscode-testing-iconPassed);
-            font-size: 12px;
-            margin-top: 4px;
-            display: none;
-        }
-
-        .success.show {
-            display: block;
-        }
-
-        .status-message {
-            padding: 8px 12px;
-            margin: 16px 0;
-            border-radius: 4px;
-            font-size: 13px;
-            display: none;
-        }
-
-        .status-message.show {
-            display: block;
-        }
-
-        .status-message.success {
-            background-color: var(--vscode-testing-iconPassed);
-            color: var(--vscode-editor-background);
-        }
-
-        .status-message.error {
-            background-color: var(--vscode-inputValidation-errorBackground);
-            color: var(--vscode-inputValidation-errorForeground);
-            border: 1px solid var(--vscode-inputValidation-errorBorder);
-        }
-
-        .status-message.testing {
-            background-color: var(--vscode-badge-background);
-            color: var(--vscode-badge-foreground);
-        }
-
-        .status-message.warning {
-            background-color: var(--vscode-inputValidation-warningBackground);
-            color: var(--vscode-inputValidation-warningForeground);
-            border: 1px solid var(--vscode-inputValidation-warningBorder);
-        }
-
         .btn-test {
             background-color: transparent;
-            color: var(--vscode-button-foreground);
-            border: 1px solid var(--vscode-button-border);
+            border: 1px solid var(--vscode-button-border, var(--vscode-input-border));
+            color: var(--vscode-foreground);
         }
 
         .btn-test:hover {
-            background-color: var(--vscode-button-hoverBackground);
+            background-color: var(--vscode-list-hoverBackground);
         }
 
         .btn-test:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
+
+        .spacer {
+            flex: 1;
+        }
+
+        /* Hidden fields */
+        .hidden {
+            display: none !important;
+        }
+
+        /* Spinner */
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.75s linear infinite;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Configure Database Connection</h1>
-        <p class="subtitle" id="subtitle">Enter your database connection details</p>
+        <!-- Left Panel: Database Type Selector -->
+        <div class="left-panel">
+            <h2>Database Type</h2>
+            <div class="db-type-list">
+                <button type="button" class="db-type-btn ${dbType === 'postgres' ? 'selected' : ''} ${isEditing ? 'disabled' : ''}" data-type="postgres" ${isEditing ? 'disabled' : ''}>
+                    <div class="db-icon postgres">
+                        <img src="${iconBaseUri}/postgres.svg" alt="PostgreSQL" />
+                    </div>
+                    <div class="db-type-info">
+                        <span class="db-type-name">PostgreSQL</span>
+                        <span class="db-type-desc">Advanced open source</span>
+                    </div>
+                </button>
+                <button type="button" class="db-type-btn ${dbType === 'mysql' ? 'selected' : ''} ${isEditing ? 'disabled' : ''}" data-type="mysql" ${isEditing ? 'disabled' : ''}>
+                    <div class="db-icon mysql">
+                        <img src="${iconBaseUri}/mysql.svg" alt="MySQL" />
+                    </div>
+                    <div class="db-type-info">
+                        <span class="db-type-name">MySQL</span>
+                        <span class="db-type-desc">Popular open source</span>
+                    </div>
+                </button>
+                <button type="button" class="db-type-btn ${dbType === 'sqlserver' ? 'selected' : ''} ${isEditing ? 'disabled' : ''}" data-type="sqlserver" ${isEditing ? 'disabled' : ''}>
+                    <div class="db-icon sqlserver">
+                        <img src="${iconBaseUri}/sqlserver.svg" alt="SQL Server" />
+                    </div>
+                    <div class="db-type-info">
+                        <span class="db-type-name">SQL Server</span>
+                        <span class="db-type-desc">Microsoft database</span>
+                    </div>
+                </button>
+                <button type="button" class="db-type-btn ${dbType === 'sqlite' ? 'selected' : ''} ${isEditing ? 'disabled' : ''}" data-type="sqlite" ${isEditing ? 'disabled' : ''}>
+                    <div class="db-icon sqlite">
+                        <img src="${iconBaseUri}/sqlite.svg" alt="SQLite" />
+                    </div>
+                    <div class="db-type-info">
+                        <span class="db-type-name">SQLite</span>
+                        <span class="db-type-desc">File-based database</span>
+                    </div>
+                </button>
+                <button type="button" class="db-type-btn ${dbType === 'mongodb' ? 'selected' : ''} ${isEditing ? 'disabled' : ''}" data-type="mongodb" ${isEditing ? 'disabled' : ''}>
+                    <div class="db-icon mongodb">
+                        <img src="${iconBaseUri}/mongodb.svg" alt="MongoDB" />
+                    </div>
+                    <div class="db-type-info">
+                        <span class="db-type-name">MongoDB</span>
+                        <span class="db-type-desc">Document database</span>
+                    </div>
+                </button>
+            </div>
+        </div>
 
-        <form id="connectionForm">
-            <div class="form-group">
-                <label for="dbType">Database Type</label>
-                <select id="dbType" name="dbType">
-                    <option value="postgres" ${dbType === 'postgres' ? 'selected' : ''}>🐘 PostgreSQL</option>
-                    <option value="mysql" ${dbType === 'mysql' ? 'selected' : ''}>🐬 MySQL</option>
-                    <option value="sqlserver" ${dbType === 'sqlserver' ? 'selected' : ''}>🗄️ SQL Server</option>
-                    <option value="sqlite" disabled>🪶 SQLite (Coming Soon)</option>
-                    <option value="mongodb" ${dbType === 'mongodb' ? 'selected' : ''}>🍃 MongoDB</option>
-                </select>
-                <div class="help-text">Select the type of database you want to connect to</div>
+        <!-- Right Panel: Connection Form -->
+        <div class="right-panel">
+            <div class="form-header">
+                <div class="form-header-icon" id="headerIcon"></div>
+                <div class="form-header-text">
+                    <h1 id="formTitle">${isEditing ? 'Edit Connection' : 'New Connection'}</h1>
+                    <p id="formSubtitle">Configure your database connection details</p>
+                </div>
             </div>
 
-            <div class="form-group">
-                <label for="name">Connection Name (optional)</label>
-                <input type="text" id="name" name="name" value="${defaultName}" placeholder="e.g., Production, Development">
-                <div class="help-text">Give this connection a name to save and switch between multiple connections</div>
-            </div>
+            <form id="connectionForm">
+                <input type="hidden" id="dbType" name="dbType" value="${dbType}">
 
-            <!-- SQLite-specific fields -->
-            <div class="form-group sqlite-fields" style="display: none;">
-                <label for="filePath">Database File Path</label>
-                <input type="text" id="filePath" name="filePath" value="${defaultFilePath}" placeholder="/path/to/database.db">
-                <div class="help-text">Full path to the SQLite database file</div>
-            </div>
+                <!-- Connection Identity Section -->
+                <div class="form-section">
+                    <div class="form-section-title">Connection Identity</div>
 
-            <div class="form-group sqlite-fields" style="display: none;">
-                <label for="mode">Mode</label>
-                <select id="mode" name="mode">
-                    <option value="readwrite" ${defaultMode === 'readwrite' ? 'selected' : ''}>Read-Write</option>
-                    <option value="readonly" ${defaultMode === 'readonly' ? 'selected' : ''}>Read-Only</option>
-                    <option value="create" ${defaultMode === 'create' ? 'selected' : ''}>Create if not exists</option>
-                </select>
-                <div class="help-text">How to open the database file</div>
-            </div>
-
-            <!-- MongoDB-specific fields -->
-            <div class="form-group mongodb-fields" style="display: none;">
-                <label for="authDatabase">Authentication Database (optional)</label>
-                <input type="text" id="authDatabase" name="authDatabase" value="${defaultAuthDatabase || 'admin'}" placeholder="admin">
-                <div class="help-text">Database to authenticate against (default: admin)</div>
-            </div>
-
-            <!-- Server-based database fields -->
-            <div class="row server-fields">
-                <div class="form-group">
-                    <label for="host">Host</label>
-                    <input type="text" id="host" name="host" value="${defaultHost}">
-                    <div class="help-text">Database server hostname or IP address</div>
+                    <div class="form-group">
+                        <label for="name">Connection Name <span class="label-badge">Optional</span></label>
+                        <input type="text" id="name" name="name" value="${defaultName}" placeholder="e.g., Production DB, Local Dev">
+                        <div class="help-text">A friendly name to identify this connection</div>
+                    </div>
                 </div>
 
-                <div class="form-group">
-                    <label for="port">Port</label>
-                    <input type="number" id="port" name="port" value="${defaultPort}">
+                <!-- Server Connection Section (for server-based DBs) -->
+                <div class="form-section server-fields">
+                    <div class="form-section-title">Server Connection</div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="host">Host</label>
+                            <input type="text" id="host" name="host" value="${defaultHost}" placeholder="localhost">
+                        </div>
+                        <div class="form-group">
+                            <label for="port">Port</label>
+                            <input type="number" id="port" name="port" value="${defaultPort}">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="database">Database Name</label>
+                        <input type="text" id="database" name="database" value="${defaultDatabase}" placeholder="Enter database name">
+                    </div>
                 </div>
-            </div>
 
-            <div class="form-group server-fields">
-                <label for="database">Database Name</label>
-                <input type="text" id="database" name="database" value="${defaultDatabase}">
-                <div class="help-text">Name of the database to connect to</div>
-            </div>
+                <!-- SQLite Section -->
+                <div class="form-section sqlite-fields hidden">
+                    <div class="form-section-title">Database File</div>
 
-            <div class="form-group server-fields">
-                <label for="user">Username</label>
-                <input type="text" id="user" name="user" value="${defaultUser}">
-            </div>
+                    <div class="form-group">
+                        <label for="filePath">File Path</label>
+                        <input type="text" id="filePath" name="filePath" value="${defaultFilePath}" placeholder="/path/to/database.db">
+                        <div class="help-text">Full path to your SQLite database file</div>
+                    </div>
+                </div>
 
-            <div class="form-group server-fields">
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" autocomplete="off" placeholder="${isEditing ? "Leave empty to keep existing password" : ""}">
-                <div class="help-text">${isEditing ? "Leave empty to keep the existing password, or enter a new one to change it" : "Leave empty if no password is required"}</div>
-            </div>
+                <!-- Authentication Section -->
+                <div class="form-section auth-fields">
+                    <div class="form-section-title">Authentication</div>
 
-            <div class="checkbox-group">
-                <input type="checkbox" id="saveConnection" name="saveConnection" checked>
-                <label for="saveConnection">Save connection for future sessions</label>
-            </div>
+                    <div class="form-group">
+                        <label for="user">Username</label>
+                        <input type="text" id="user" name="user" value="${defaultUser}" placeholder="Enter username">
+                    </div>
 
-            <div class="checkbox-group">
-                <input type="checkbox" id="readOnly" name="readOnly" ${defaultReadOnly ? "checked" : ""}>
-                <label for="readOnly">🔒 Read-only mode (block INSERT, UPDATE, DELETE)</label>
-            </div>
-            <div class="help-text" style="margin-top: -12px; margin-bottom: 16px; margin-left: 24px;">Enable for production databases to prevent accidental data changes</div>
+                    <div class="form-group">
+                        <label for="password">Password ${isEditing ? '<span class="label-badge">Leave empty to keep existing</span>' : ''}</label>
+                        <input type="password" id="password" name="password" placeholder="${isEditing ? '••••••••' : 'Enter password'}">
+                    </div>
 
-            <div id="productionWarning" class="status-message warning" style="display: none;">
-                ⚠️ This looks like a production database. Consider enabling read-only mode.
-            </div>
+                    <!-- MongoDB specific -->
+                    <div class="form-group mongodb-fields hidden">
+                        <label for="authDatabase">Auth Database <span class="label-badge">Optional</span></label>
+                        <input type="text" id="authDatabase" name="authDatabase" value="${defaultAuthDatabase}" placeholder="admin">
+                        <div class="help-text">Database to authenticate against (default: admin)</div>
+                    </div>
+                </div>
 
-            <div id="statusMessage" class="status-message"></div>
+                <!-- Options Section -->
+                <div class="form-section">
+                    <div class="form-section-title">Options</div>
 
-            <div class="button-group">
-                <button type="button" id="testBtn" class="btn-test">Test Connection</button>
-                <button type="submit" class="btn-primary">Connect</button>
-                <button type="button" id="saveBtn" class="btn-primary">Save Connection</button>
-                <button type="button" id="cancelBtn" class="btn-secondary">Cancel</button>
-            </div>
-        </form>
+                    <div class="checkbox-group" onclick="document.getElementById('readOnly').click()">
+                        <input type="checkbox" id="readOnly" name="readOnly" ${defaultReadOnly ? 'checked' : ''} onclick="event.stopPropagation()">
+                        <label for="readOnly" onclick="event.stopPropagation()">
+                            <strong>Read-only mode</strong>
+                            <div class="help-text" style="margin-top: 2px;">Blocks INSERT, UPDATE, DELETE operations</div>
+                        </label>
+                        <span class="checkbox-icon">🔒</span>
+                    </div>
+                </div>
+
+                <!-- Production Warning -->
+                <div class="warning-box" id="productionWarning">
+                    <span class="warning-icon">⚠️</span>
+                    <div class="warning-content">
+                        <h4>Production Database Detected</h4>
+                        <p>This appears to be a production database. Consider enabling read-only mode to prevent accidental data changes.</p>
+                    </div>
+                </div>
+
+                <!-- Status Message -->
+                <div class="status-message" id="statusMessage">
+                    <span class="status-icon" id="statusIcon"></span>
+                    <span id="statusText"></span>
+                </div>
+
+                <!-- Buttons -->
+                <div class="button-group">
+                    <button type="button" id="testBtn" class="btn-test">
+                        <span id="testBtnText">Test Connection</span>
+                    </button>
+                    <div class="spacer"></div>
+                    <button type="button" id="cancelBtn" class="btn-secondary">Cancel</button>
+                    <button type="submit" class="btn-primary">${isEditing ? 'Update Connection' : 'Save Connection'}</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <script>
         const vscode = acquireVsCodeApi();
 
+        // Media URI for database icons
+        const mediaUri = '${iconBaseUri}';
+
+        // Icon paths for each database type (SVG for better quality)
+        const dbIcons = {
+            postgres: mediaUri + '/postgres.svg',
+            mysql: mediaUri + '/mysql.svg',
+            sqlserver: mediaUri + '/sqlserver.svg',
+            sqlite: mediaUri + '/sqlite.svg',
+            mongodb: mediaUri + '/mongodb.svg'
+        };
+
+        // Database type configurations
+        const dbTypeConfig = {
+            postgres: { name: 'PostgreSQL', color: '#336791', defaultPort: 5432, subtitle: 'Configure your PostgreSQL connection' },
+            mysql: { name: 'MySQL', color: '#00618a', defaultPort: 3306, subtitle: 'Configure your MySQL connection' },
+            sqlserver: { name: 'SQL Server', color: '#cc2927', defaultPort: 1433, subtitle: 'Configure your SQL Server connection' },
+            sqlite: { name: 'SQLite', color: '#003b57', defaultPort: 0, subtitle: 'Select your SQLite database file' },
+            mongodb: { name: 'MongoDB', color: '#13aa52', defaultPort: 27017, subtitle: 'Configure your MongoDB connection' }
+        };
+
+        // DOM Elements
         const form = document.getElementById('connectionForm');
-        const cancelBtn = document.getElementById('cancelBtn');
-        const testBtn = document.getElementById('testBtn');
-        const saveBtn = document.getElementById('saveBtn');
-        const statusMessage = document.getElementById('statusMessage');
-        const productionWarning = document.getElementById('productionWarning');
+        const dbTypeInput = document.getElementById('dbType');
+        const headerIcon = document.getElementById('headerIcon');
+        const formSubtitle = document.getElementById('formSubtitle');
         const nameInput = document.getElementById('name');
         const hostInput = document.getElementById('host');
         const portInput = document.getElementById('port');
         const databaseInput = document.getElementById('database');
-        const userInput = document.getElementById('user');
         const readOnlyCheckbox = document.getElementById('readOnly');
-        const dbTypeSelect = document.getElementById('dbType');
-        const subtitleElement = document.getElementById('subtitle');
+        const productionWarning = document.getElementById('productionWarning');
+        const statusMessage = document.getElementById('statusMessage');
+        const statusIcon = document.getElementById('statusIcon');
+        const statusText = document.getElementById('statusText');
+        const testBtn = document.getElementById('testBtn');
+        const testBtnText = document.getElementById('testBtnText');
+        const cancelBtn = document.getElementById('cancelBtn');
 
-        // Database type configuration
-        const dbTypeConfig = {
-            postgres: {
-                name: 'PostgreSQL',
-                defaultPort: 5432,
-                defaultDatabase: 'postgres',
-                defaultUser: 'postgres',
-                subtitle: 'Enter your PostgreSQL database connection details'
-            },
-            mysql: {
-                name: 'MySQL',
-                defaultPort: 3306,
-                defaultDatabase: 'mysql',
-                defaultUser: 'root',
-                subtitle: 'Enter your MySQL database connection details'
-            },
-            sqlserver: {
-                name: 'SQL Server',
-                defaultPort: 1433,
-                defaultDatabase: 'dbview_dev',
-                defaultUser: 'sa',
-                subtitle: 'Enter your SQL Server database connection details'
-            },
-            sqlite: {
-                name: 'SQLite',
-                defaultPort: 0,
-                defaultDatabase: '',
-                defaultUser: '',
-                subtitle: 'Select your SQLite database file'
-            },
-            mongodb: {
-                name: 'MongoDB',
-                defaultPort: 27017,
-                defaultDatabase: 'admin',
-                defaultUser: '',
-                subtitle: 'Enter your MongoDB connection details'
-            }
-        };
+        // Handle database type selection
+        document.querySelectorAll('.db-type-btn:not(.disabled)').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const type = btn.dataset.type;
+                if (!type) return;
 
-        // Handle database type change
-        function handleDatabaseTypeChange() {
-            const selectedType = dbTypeSelect.value;
-            const config = dbTypeConfig[selectedType];
+                // Update selection UI
+                document.querySelectorAll('.db-type-btn').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
 
+                // Update hidden input
+                dbTypeInput.value = type;
+
+                // Update form
+                updateFormForDbType(type);
+            });
+        });
+
+        function updateFormForDbType(type) {
+            const config = dbTypeConfig[type];
             if (!config) return;
 
-            // Show/hide fields based on database type
-            const isSQLite = selectedType === 'sqlite';
-            const isMongoDB = selectedType === 'mongodb';
-            const serverFields = document.querySelectorAll('.server-fields');
-            const sqliteFields = document.querySelectorAll('.sqlite-fields');
-            const mongodbFields = document.querySelectorAll('.mongodb-fields');
+            // Update header with PNG icon
+            headerIcon.innerHTML = '<img src="' + dbIcons[type] + '" alt="' + config.name + '" />';
+            headerIcon.className = 'form-header-icon';
+            formSubtitle.textContent = config.subtitle;
 
-            serverFields.forEach(field => {
-                field.style.display = isSQLite ? 'none' : '';
-                // Update required attribute for inputs
-                const inputs = field.querySelectorAll('input, select');
-                inputs.forEach(input => {
-                    if (isSQLite) {
-                        input.removeAttribute('required');
-                    }
-                });
+            // Show/hide field sections
+            const isSQLite = type === 'sqlite';
+            const isMongoDB = type === 'mongodb';
+
+            document.querySelectorAll('.server-fields').forEach(el => {
+                el.classList.toggle('hidden', isSQLite);
+            });
+            document.querySelectorAll('.sqlite-fields').forEach(el => {
+                el.classList.toggle('hidden', !isSQLite);
+            });
+            document.querySelectorAll('.auth-fields').forEach(el => {
+                el.classList.toggle('hidden', isSQLite);
+            });
+            document.querySelectorAll('.mongodb-fields').forEach(el => {
+                el.classList.toggle('hidden', !isMongoDB);
             });
 
-            sqliteFields.forEach(field => {
-                field.style.display = isSQLite ? '' : 'none';
-                // Update required attribute for SQLite file path
-                const filePathInput = field.querySelector('#filePath');
-                if (filePathInput) {
-                    if (isSQLite) {
-                        filePathInput.setAttribute('required', 'required');
-                    } else {
-                        filePathInput.removeAttribute('required');
-                    }
-                }
-            });
-
-            mongodbFields.forEach(field => {
-                field.style.display = isMongoDB ? '' : 'none';
-            });
-
-            // Update subtitle
-            if (subtitleElement) {
-                subtitleElement.textContent = config.subtitle;
+            // Update default port when switching database types
+            if (!isSQLite && config.defaultPort) {
+                portInput.value = config.defaultPort;
             }
-
-            // Only update server-based fields if not SQLite
-            if (!isSQLite) {
-                // Update default port if current port matches another database's default
-                const currentPort = parseInt(portInput.value, 10);
-                const isDefaultPort = Object.values(dbTypeConfig).some(c => c.defaultPort === currentPort);
-
-                if (!currentPort || isDefaultPort) {
-                    portInput.value = config.defaultPort;
-                }
-
-                // Update database and user placeholders if they are empty or contain defaults
-                const currentDatabase = databaseInput.value.toLowerCase();
-                const isDefaultDatabase = Object.values(dbTypeConfig).some(c =>
-                    c.defaultDatabase && currentDatabase === c.defaultDatabase.toLowerCase()
-                );
-
-                if (!currentDatabase || isDefaultDatabase) {
-                    databaseInput.value = config.defaultDatabase;
-                }
-
-                const currentUser = userInput.value.toLowerCase();
-                const isDefaultUser = Object.values(dbTypeConfig).some(c =>
-                    c.defaultUser && currentUser === c.defaultUser.toLowerCase()
-                );
-
-                if (!currentUser || isDefaultUser) {
-                    userInput.value = config.defaultUser;
-                }
-            }
-
-            console.log('[dbview-webview] Database type changed to:', selectedType);
         }
 
-        // Listen for database type changes
-        dbTypeSelect.addEventListener('change', handleDatabaseTypeChange);
-
-        // Initialize fields based on current database type
-        handleDatabaseTypeChange();
-
-        // Production database detection
-        const productionKeywords = ['prod', 'production', 'live', 'main', 'master'];
-
+        // Production detection
         function checkProductionWarning() {
             const name = nameInput.value.toLowerCase();
             const host = hostInput.value.toLowerCase();
             const database = databaseInput.value.toLowerCase();
             const isReadOnly = readOnlyCheckbox.checked;
 
-            const isPossiblyProduction = productionKeywords.some(keyword =>
-                name.includes(keyword) || host.includes(keyword) || database.includes(keyword)
+            const keywords = ['prod', 'production', 'live', 'main', 'master'];
+            const isPossiblyProduction = keywords.some(k =>
+                name.includes(k) || host.includes(k) || database.includes(k)
             );
 
-            if (isPossiblyProduction && !isReadOnly) {
-                productionWarning.style.display = 'block';
-            } else {
-                productionWarning.style.display = 'none';
-            }
+            productionWarning.classList.toggle('show', isPossiblyProduction && !isReadOnly);
         }
 
-        // Check on input changes
-        nameInput.addEventListener('input', checkProductionWarning);
-        hostInput.addEventListener('input', checkProductionWarning);
-        databaseInput.addEventListener('input', checkProductionWarning);
-        readOnlyCheckbox.addEventListener('change', checkProductionWarning);
-
-        // Initial check
-        checkProductionWarning();
-
-        function submitForm({ forceSave = false } = {}) {
-            console.log('[dbview-webview] submitForm called, forceSave:', forceSave);
-            const formData = new FormData(form);
-            const dbType = formData.get('dbType') || 'postgres';
-            const name = formData.get('name');
-            const host = formData.get('host');
-            const port = formData.get('port');
-            const database = formData.get('database');
-            const user = formData.get('user');
-            const password = formData.get('password');
-            const saveConnectionCheckbox = formData.get('saveConnection') === 'on';
-            const saveConnection = forceSave ? true : saveConnectionCheckbox;
-            const readOnly = formData.get('readOnly') === 'on';
-
-            console.log('[dbview-webview] Form data:', { dbType, name, host, port, database, user, saveConnection });
-
-            // Basic validation
-            if (!host || !port || !database || !user) {
-                console.log('[dbview-webview] Validation failed: missing required fields');
-                showStatus('Please fill in all required fields', 'error');
-                return;
-            }
-
-            if (forceSave && !name?.trim()) {
-                console.log('[dbview-webview] Validation failed: name required for save');
-                showStatus('Enter a connection name to save it', 'error');
-                return;
-            }
-
-            const portNum = parseInt(port, 10);
-            if (isNaN(portNum) || portNum <= 0 || portNum > 65535) {
-                console.log('[dbview-webview] Validation failed: invalid port');
-                showStatus('Please enter a valid port number (1-65535)', 'error');
-                return;
-            }
-
-            console.log('[dbview-webview] Validation passed, posting message to extension');
-            vscode.postMessage({
-                command: 'submit',
-                dbType,
-                name,
-                host,
-                port,
-                database,
-                user,
-                password,
-                saveConnection,
-                readOnly
-            });
-            console.log('[dbview-webview] Message posted');
-        }
-
-        form.addEventListener('submit', (e) => {
-            e.preventDefault();
-            submitForm();
-        });
-
-        if (saveBtn) {
-            saveBtn.addEventListener('click', () => {
-                submitForm({ forceSave: true });
-            });
-        }
-
-        testBtn.addEventListener('click', () => {
-            const formData = new FormData(form);
-            const dbType = formData.get('dbType') || 'postgres';
-            const name = formData.get('name');
-            const host = formData.get('host');
-            const port = formData.get('port');
-            const database = formData.get('database');
-            const user = formData.get('user');
-            const password = formData.get('password');
-            const readOnly = formData.get('readOnly') === 'on';
-
-            // Basic validation
-            if (!host || !port || !database || !user) {
-                showStatus('Please fill in all required fields', 'error');
-                return;
-            }
-
-            const portNum = parseInt(port, 10);
-            if (isNaN(portNum) || portNum <= 0 || portNum > 65535) {
-                showStatus('Please enter a valid port number (1-65535)', 'error');
-                return;
-            }
-
-            showStatus('Testing connection...', 'testing');
-            testBtn.disabled = true;
-
-            vscode.postMessage({
-                command: 'testConnection',
-                dbType,
-                name,
-                host,
-                port,
-                database,
-                user,
-                password,
-                readOnly
-            });
-        });
-
-        cancelBtn.addEventListener('click', () => {
-            vscode.postMessage({ command: 'cancel' });
-        });
-
+        // Status messages
         function showStatus(message, type) {
-            statusMessage.textContent = message;
+            const icons = {
+                success: '✓',
+                error: '✗',
+                testing: ''
+            };
+
             statusMessage.className = 'status-message show ' + type;
+            statusIcon.textContent = icons[type] || '';
+
+            if (type === 'testing') {
+                statusIcon.innerHTML = '<span class="spinner"></span>';
+            }
+
+            statusText.textContent = message;
 
             if (type === 'success' || type === 'error') {
                 setTimeout(() => {
@@ -939,20 +1036,137 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
             }
         }
 
-        // Handle messages from the extension
+        // Form submission
+        function submitForm() {
+            const formData = new FormData(form);
+            const dbType = formData.get('dbType') || 'postgres';
+
+            // Validation for server-based DBs
+            if (dbType !== 'sqlite') {
+                const host = formData.get('host');
+                const port = formData.get('port');
+                const database = formData.get('database');
+
+                if (!host || !port || !database) {
+                    showStatus('Please fill in all required fields', 'error');
+                    return;
+                }
+
+                const portNum = parseInt(port, 10);
+                if (isNaN(portNum) || portNum <= 0 || portNum > 65535) {
+                    showStatus('Please enter a valid port number (1-65535)', 'error');
+                    return;
+                }
+            } else {
+                const filePath = formData.get('filePath');
+                if (!filePath) {
+                    showStatus('Please enter the database file path', 'error');
+                    return;
+                }
+            }
+
+            vscode.postMessage({
+                command: 'submit',
+                dbType: formData.get('dbType'),
+                name: formData.get('name'),
+                host: formData.get('host'),
+                port: formData.get('port'),
+                database: formData.get('database'),
+                user: formData.get('user'),
+                password: formData.get('password'),
+                filePath: formData.get('filePath'),
+                authDatabase: formData.get('authDatabase'),
+                readOnly: formData.get('readOnly') === 'on',
+                saveConnection: true
+            });
+        }
+
+        // Test connection
+        function testConnection() {
+            const formData = new FormData(form);
+            const dbType = formData.get('dbType') || 'postgres';
+
+            // Validation
+            if (dbType !== 'sqlite') {
+                const host = formData.get('host');
+                const port = formData.get('port');
+
+                if (!host || !port) {
+                    showStatus('Please fill in host and port', 'error');
+                    return;
+                }
+            } else {
+                const filePath = formData.get('filePath');
+                if (!filePath) {
+                    showStatus('Please enter the database file path', 'error');
+                    return;
+                }
+            }
+
+            showStatus('Testing connection...', 'testing');
+            testBtn.disabled = true;
+
+            vscode.postMessage({
+                command: 'testConnection',
+                dbType: formData.get('dbType'),
+                name: formData.get('name'),
+                host: formData.get('host'),
+                port: formData.get('port'),
+                database: formData.get('database'),
+                user: formData.get('user'),
+                password: formData.get('password'),
+                filePath: formData.get('filePath'),
+                authDatabase: formData.get('authDatabase'),
+                readOnly: formData.get('readOnly') === 'on'
+            });
+        }
+
+        // Event listeners
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            submitForm();
+        });
+
+        testBtn.addEventListener('click', testConnection);
+        cancelBtn.addEventListener('click', () => vscode.postMessage({ command: 'cancel' }));
+
+        nameInput.addEventListener('input', checkProductionWarning);
+        hostInput.addEventListener('input', checkProductionWarning);
+        databaseInput.addEventListener('input', checkProductionWarning);
+        readOnlyCheckbox.addEventListener('change', checkProductionWarning);
+
+        // Handle messages from extension
         window.addEventListener('message', event => {
             const message = event.data;
             switch (message.command) {
                 case 'testResult':
                     testBtn.disabled = false;
                     if (message.success) {
-                        showStatus('✓ ' + message.message, 'success');
+                        showStatus(message.message, 'success');
                     } else {
-                        showStatus('✗ ' + message.message, 'error');
+                        showStatus(message.message, 'error');
                     }
                     break;
             }
         });
+
+        // Initialize - ensure first option (or saved type) is selected
+        const initialDbType = '${dbType}' || 'postgres';
+
+        // Ensure the correct button is visually selected
+        document.querySelectorAll('.db-type-btn').forEach(btn => {
+            btn.classList.remove('selected');
+            if (btn.dataset.type === initialDbType) {
+                btn.classList.add('selected');
+            }
+        });
+
+        // Set the hidden input value
+        dbTypeInput.value = initialDbType;
+
+        // Update form UI for the selected database type
+        updateFormForDbType(initialDbType);
+        checkProductionWarning();
     </script>
 </body>
 </html>`;

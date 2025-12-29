@@ -6,16 +6,15 @@
   "publisher": "dbview",
   "private": true,
   "license": "MIT",
+  "icon": "./media/icon.png",
   "engines": {
     "vscode": "^1.84.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [
-    "onStartupFinished"
-  ],
-  "main": "./dist/apps/vscode-extension/src/extension.js",
+  "activationEvents": [],
+  "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {

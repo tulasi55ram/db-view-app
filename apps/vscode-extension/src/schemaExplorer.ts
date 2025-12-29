@@ -60,6 +60,8 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
   // Client cache for multiple connections (lazy-connect)
   private clients: Map<string, DatabaseAdapter> = new Map();
   private clientStatuses: Map<string, ConnectionStatus> = new Map();
+  // Track connections that have already shown error notifications (to avoid continuous popups)
+  private errorNotificationShown: Set<string> = new Set();
 
   constructor(
     private client: DatabaseAdapter | undefined,
@@ -170,12 +172,25 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
 
     // Set up status listener for this client
     const listener = (event: ConnectionStatusEvent) => {
+      const previousStatus = this.clientStatuses.get(key);
+
+      // Only process if status actually changed
+      if (previousStatus === event.status) {
+        return;
+      }
+
       this.clientStatuses.set(key, event.status);
       // Delayed refresh to avoid being ignored during getChildren()
       setTimeout(() => this.emitter.fire(), 100);
 
-      // Show notification for connection errors
-      if (event.status === 'error' && event.error) {
+      // Clear error notification tracking when connection recovers
+      if (event.status === 'connected') {
+        this.errorNotificationShown.delete(key);
+      }
+
+      // Show notification for connection errors (only once per connection until it recovers)
+      if (event.status === 'error' && event.error && !this.errorNotificationShown.has(key)) {
+        this.errorNotificationShown.add(key);
         vscode.window.showWarningMessage(
           `dbview: ${this.getConnectionDisplayName(conn)} - ${event.error.message}`,
           'Reconnect'
@@ -224,6 +239,9 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       this.clientStatuses.delete(key);
     }
 
+    // Clear error notification tracking so new errors can be shown
+    this.errorNotificationShown.delete(key);
+
     // Create fresh client
     await this.getOrCreateClient(conn);
     this.emitter.fire();
@@ -267,6 +285,9 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       this.clients.delete(key);
       this.clientStatuses.delete(key);
     }
+
+    // Clear error notification tracking so new errors can be shown
+    this.errorNotificationShown.delete(key);
 
     // Reconnect
     this.clientStatuses.set(key, 'connecting');
@@ -458,6 +479,10 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
         const schemas = await client.listSchemas();
         this.connectionError = null;
 
+        // Clear error notification tracking on successful connection
+        const key = this.getConnectionKey(conn);
+        this.errorNotificationShown.delete(key);
+
         if (schemas.length === 0) {
           vscode.window.showWarningMessage("dbview: No schemas found in database");
         }
@@ -469,19 +494,25 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.connectionError = errorMessage;
+        const key = this.getConnectionKey(conn);
 
-        // Provide helpful message for authentication errors
-        if (errorMessage.includes("SASL") || errorMessage.includes("password")) {
-          vscode.window.showErrorMessage(
-            "dbview: Authentication failed. Please reconfigure your connection with the correct password.",
-            "Configure Connection"
-          ).then(selection => {
-            if (selection === "Configure Connection") {
-              vscode.commands.executeCommand("dbview.configureConnection");
-            }
-          });
-        } else {
-          vscode.window.showErrorMessage(`dbview: Failed to connect - ${errorMessage}`);
+        // Only show error notification once per connection until it recovers
+        if (!this.errorNotificationShown.has(key)) {
+          this.errorNotificationShown.add(key);
+
+          // Provide helpful message for authentication errors
+          if (errorMessage.includes("SASL") || errorMessage.includes("password")) {
+            vscode.window.showErrorMessage(
+              "dbview: Authentication failed. Please reconfigure your connection with the correct password.",
+              "Configure Connection"
+            ).then(selection => {
+              if (selection === "Configure Connection") {
+                vscode.commands.executeCommand("dbview.configureConnection");
+              }
+            });
+          } else {
+            vscode.window.showErrorMessage(`dbview: Failed to connect - ${errorMessage}`);
+          }
         }
         console.error("[dbview] Connection error:", error);
         return [];

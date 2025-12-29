@@ -136,7 +136,8 @@ export async function getOrCreateMainPanel(
   const existingPanel = panels.get(key);
   if (existingPanel) {
     console.log(`[dbview-mainPanel] ✓ REUSING existing panel for connection key: "${key}"`);
-    vscode.window.showInformationMessage(`[DEBUG] Reusing panel: ${key}`);
+    // Update the client in case it was reconnected
+    panelClients.set(key, client);
     existingPanel.reveal(vscode.ViewColumn.Active);
     return existingPanel;
   }
@@ -144,7 +145,6 @@ export async function getOrCreateMainPanel(
   // Create new panel for this connection
   const connectionTitle = connectionConfig.name || ('database' in connectionConfig ? connectionConfig.database : connectionConfig.dbType);
   console.log(`[dbview-mainPanel] ✓ CREATING NEW panel for connection: ${connectionTitle} (key: "${key}")`);
-  vscode.window.showInformationMessage(`[DEBUG] Creating NEW panel: ${connectionTitle}`);
 
   const panel = vscode.window.createWebviewPanel(
     "dbview.mainView",
@@ -182,10 +182,16 @@ export async function getOrCreateMainPanel(
   panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri);
 
   // Handle messages from the webview
-  // Message handler is a closure that captures client and connectionConfig for this specific panel
+  // Message handler uses panelClients.get(key) to get the current client (may be updated after reconnects)
   panel.webview.onDidReceiveMessage(async (message: any) => {
     try {
       const tabId = message.tabId;
+      // Always get the current client from the map (may have been updated after reconnection)
+      const currentClient = panelClients.get(key);
+      if (!currentClient) {
+        console.error(`[dbview-mainPanel] No client found for connection key: ${key}`);
+        return;
+      }
 
       switch (message?.type) {
         case "WEBVIEW_READY": {
@@ -213,7 +219,7 @@ export async function getOrCreateMainPanel(
           console.log(`[dbview] Loading table rows for tab ${tabId}: ${schema}.${table} (limit: ${limit}, offset: ${offset}, filters: ${filters?.length ?? 0})`);
 
           try {
-            const result = await client.fetchTableRows(schema, table, { limit, offset, filters, filterLogic });
+            const result = await currentClient.fetchTableRows(schema, table, { limit, offset, filters, filterLogic });
             panel.webview.postMessage({
               type: "LOAD_TABLE_ROWS",
               tabId,
@@ -236,7 +242,7 @@ export async function getOrCreateMainPanel(
           try {
             const filters = message.filters as FilterCondition[] | undefined;
             const filterLogic = (message.filterLogic as 'AND' | 'OR') ?? 'AND';
-            const totalRows = await client.getTableRowCount(message.schema, message.table, { filters, filterLogic });
+            const totalRows = await currentClient.getTableRowCount(message.schema, message.table, { filters, filterLogic });
             panel.webview.postMessage({
               type: "ROW_COUNT",
               tabId,
@@ -256,7 +262,7 @@ export async function getOrCreateMainPanel(
         case "GET_TABLE_METADATA": {
           console.log(`[dbview] Getting metadata for tab ${tabId}: ${message.schema}.${message.table}`);
           try {
-            const metadata = await client.getTableMetadata(message.schema, message.table);
+            const metadata = await currentClient.getTableMetadata(message.schema, message.table);
             panel.webview.postMessage({
               type: "TABLE_METADATA",
               tabId,
@@ -272,8 +278,8 @@ export async function getOrCreateMainPanel(
         case "GET_TABLE_INDEXES": {
           console.log(`[dbview] Getting indexes for ${message.schema}.${message.table}`);
           try {
-            if (client.getIndexes) {
-              const indexes = await client.getIndexes(message.schema, message.table);
+            if (currentClient.getIndexes) {
+              const indexes = await currentClient.getIndexes(message.schema, message.table);
               panel.webview.postMessage({
                 type: "TABLE_INDEXES",
                 indexes
@@ -297,7 +303,7 @@ export async function getOrCreateMainPanel(
         case "GET_TABLE_STATISTICS": {
           console.log(`[dbview] Getting statistics for ${message.schema}.${message.table}`);
           try {
-            const statistics = await client.getTableStatistics(message.schema, message.table);
+            const statistics = await currentClient.getTableStatistics(message.schema, message.table);
             panel.webview.postMessage({
               type: "TABLE_STATISTICS",
               statistics
@@ -315,8 +321,8 @@ export async function getOrCreateMainPanel(
         case "GET_ER_DIAGRAM": {
           console.log(`[dbview] Getting ER diagram for schemas:`, message.schemas);
           try {
-            if (client.getERDiagramData) {
-              const diagramData = await client.getERDiagramData(message.schemas);
+            if (currentClient.getERDiagramData) {
+              const diagramData = await currentClient.getERDiagramData(message.schemas);
               panel.webview.postMessage({
                 type: "ER_DIAGRAM_DATA",
                 diagramData
@@ -354,7 +360,7 @@ export async function getOrCreateMainPanel(
           }
 
           try {
-            await client.updateCell(
+            await currentClient.updateCell(
               message.schema,
               message.table,
               message.primaryKey,
@@ -402,8 +408,8 @@ export async function getOrCreateMainPanel(
           }
 
           try {
-            console.log(`[dbview] Calling client.insertRow...`);
-            const newRow = await client.insertRow(message.schema, message.table, message.values);
+            console.log(`[dbview] Calling currentClient.insertRow...`);
+            const newRow = await currentClient.insertRow(message.schema, message.table, message.values);
             console.log(`[dbview] ========== INSERT SUCCESSFUL ==========`);
             console.log(`[dbview] Inserted row:`, newRow);
 
@@ -443,7 +449,7 @@ export async function getOrCreateMainPanel(
           }
 
           try {
-            const deletedCount = await client.deleteRows(message.schema, message.table, message.primaryKeys);
+            const deletedCount = await currentClient.deleteRows(message.schema, message.table, message.primaryKeys);
             panel.webview.postMessage({
               type: "DELETE_SUCCESS",
               tabId,
@@ -463,7 +469,7 @@ export async function getOrCreateMainPanel(
         case "RUN_QUERY": {
           console.log(`[dbview] Running query for tab ${tabId}`);
           try {
-            const result = await client.runQuery(message.sql);
+            const result = await currentClient.runQuery(message.sql);
             panel.webview.postMessage({
               type: "QUERY_RESULT",
               tabId,
@@ -617,7 +623,7 @@ export async function getOrCreateMainPanel(
             console.log(`[dbview] Using limits: ${limits.MAX_TOTAL_TABLES} tables max, ${limits.MAX_TABLES_WITH_METADATA} with metadata`);
 
             // Fetch all schemas using database-agnostic adapter method
-            const schemas = await client.listSchemas();
+            const schemas = await currentClient.listSchemas();
             console.log(`[dbview] Fetched ${schemas.length} schemas in ${Date.now() - startTime}ms`);
 
             // Fetch tables with row counts for each schema (with limits for performance)
@@ -630,7 +636,7 @@ export async function getOrCreateMainPanel(
               }
 
               try {
-                const schemaTables = await client.listTables(schema);
+                const schemaTables = await currentClient.listTables(schema);
                 // Limit tables per schema
                 const limitedTables = schemaTables.slice(0, limits.MAX_TABLES_PER_SCHEMA);
 
@@ -661,7 +667,7 @@ export async function getOrCreateMainPanel(
             for (const table of tablesToFetchMetadata) {
               const key = `${table.schema}.${table.name}`;
               try {
-                columns[key] = await client.getTableMetadata(table.schema, table.name);
+                columns[key] = await currentClient.getTableMetadata(table.schema, table.name);
               } catch (error) {
                 console.error(`[dbview] Error fetching metadata for ${key}:`, error);
                 columns[key] = [];
@@ -687,7 +693,7 @@ export async function getOrCreateMainPanel(
           console.log(`[dbview] Formatting SQL for tab ${tabId}`);
           try {
             // Determine SQL dialect based on database type
-            const sqlDialect = client.type === 'mysql' ? 'mysql' : 'postgresql';
+            const sqlDialect = currentClient.type === 'mysql' ? 'mysql' : 'postgresql';
 
             const formatted = formatSql(message.sql, {
               language: sqlDialect,
@@ -718,7 +724,7 @@ export async function getOrCreateMainPanel(
           try {
             // Use database-specific EXPLAIN syntax
             let explainSQL: string;
-            if (client.type === 'mysql') {
+            if (currentClient.type === 'mysql') {
               // MySQL uses simpler EXPLAIN syntax
               explainSQL = `EXPLAIN FORMAT=JSON ${message.sql}`;
             } else {
@@ -726,11 +732,11 @@ export async function getOrCreateMainPanel(
               explainSQL = `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${message.sql}`;
             }
 
-            const result = await client.runQuery(explainSQL);
+            const result = await currentClient.runQuery(explainSQL);
 
             // Extract the plan from the result (format varies by database)
             let plan;
-            if (client.type === 'mysql') {
+            if (currentClient.type === 'mysql') {
               // MySQL returns JSON in 'EXPLAIN' column
               const explainOutput = result.rows[0]['EXPLAIN'];
               plan = typeof explainOutput === 'string' ? JSON.parse(explainOutput) : explainOutput;
@@ -816,7 +822,7 @@ export async function getOrCreateMainPanel(
 
             for (let i = 0; i < rows.length; i++) {
               try {
-                await client.insertRow(schema, table, rows[i]);
+                await currentClient.insertRow(schema, table, rows[i]);
                 successCount++;
               } catch (error) {
                 errors.push(`Row ${i + 1}: ${error instanceof Error ? error.message : String(error)}`);
@@ -933,7 +939,7 @@ export async function openERDiagramInPanel(
   if (!schemasToVisualize) {
     try {
       schemasToVisualize = await client.listSchemas();
-      console.log(`[dbview] Fetched ${schemasToVisualize.length} schemas for ER diagram`);
+      console.log(`[dbview] Fetched ${schemasToVisualize!.length} schemas for ER diagram`);
     } catch (error) {
       console.error('[dbview] Error fetching schemas:', error);
       // Fallback based on database type
