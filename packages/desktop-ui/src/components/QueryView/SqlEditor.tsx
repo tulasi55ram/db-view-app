@@ -14,6 +14,7 @@ import {
 import { search, searchKeymap } from "@codemirror/search";
 import type { ColumnMetadata, TableInfo } from "@dbview/types";
 import { SQL_SNIPPETS } from "@/utils/sqlSnippets";
+import { useTheme } from "@/design-system";
 
 export interface SqlEditorProps {
   value: string;
@@ -44,6 +45,10 @@ export const SqlEditor: FC<SqlEditorProps> = ({
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const readOnlyCompartment = useRef(new Compartment());
+  const themeCompartment = useRef(new Compartment());
+
+  // Get current theme
+  const { resolvedTheme } = useTheme();
 
   // Store autocomplete data in a ref so it can be updated without recreating the editor
   const autocompleteDataRef = useRef({ schemas, tables, columns });
@@ -225,12 +230,12 @@ export const SqlEditor: FC<SqlEditorProps> = ({
       };
     };
 
-    // Dark theme adapted for desktop-ui
-    const darkTheme = EditorView.theme(
+    // Create theme based on current mode
+    const createEditorTheme = (isDark: boolean) => EditorView.theme(
       {
         "&": {
-          backgroundColor: "#171717",
-          color: "#fafafa",
+          backgroundColor: isDark ? "#171717" : "#ffffff",
+          color: isDark ? "#fafafa" : "#171717",
           height: height,
           fontSize: "13px",
           lineHeight: "1.5",
@@ -249,14 +254,14 @@ export const SqlEditor: FC<SqlEditorProps> = ({
           height: "1.2em !important",
         },
         ".cm-activeLine": {
-          backgroundColor: "#262626",
+          backgroundColor: isDark ? "#262626" : "#f5f5f5",
         },
         ".cm-activeLineGutter": {
-          backgroundColor: "#262626",
+          backgroundColor: isDark ? "#262626" : "#f5f5f5",
         },
         ".cm-gutters": {
-          backgroundColor: "#171717",
-          color: "#737373",
+          backgroundColor: isDark ? "#171717" : "#fafafa",
+          color: isDark ? "#737373" : "#a3a3a3",
           border: "none",
           minWidth: "40px",
         },
@@ -268,20 +273,20 @@ export const SqlEditor: FC<SqlEditorProps> = ({
           color: "#ffffff",
         },
         ".cm-selectionBackground": {
-          backgroundColor: "#262626",
+          backgroundColor: isDark ? "#262626" : "#e5e5e5",
         },
         ".cm-tooltip": {
-          backgroundColor: "#262626",
-          border: "1px solid #404040",
-          color: "#fafafa",
+          backgroundColor: isDark ? "#262626" : "#ffffff",
+          border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
+          color: isDark ? "#fafafa" : "#171717",
         },
         ".cm-tooltip-autocomplete": {
-          backgroundColor: "#262626",
-          border: "1px solid #404040",
+          backgroundColor: isDark ? "#262626" : "#ffffff",
+          border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
         },
         ".cm-tooltip-autocomplete ul li[aria-selected]": {
-          backgroundColor: "#404040",
-          color: "#fafafa",
+          backgroundColor: isDark ? "#404040" : "#e5e5e5",
+          color: isDark ? "#fafafa" : "#171717",
         },
         ".cm-completionIcon": {
           width: "1em",
@@ -289,21 +294,23 @@ export const SqlEditor: FC<SqlEditorProps> = ({
           lineHeight: "1",
           marginRight: "0.5em",
           textAlign: "center",
-          color: "#a3a3a3",
+          color: isDark ? "#a3a3a3" : "#737373",
         },
-        ".cm-completionIcon-keyword": { color: "#569cd6" },
-        ".cm-completionIcon-function": { color: "#dcdcaa" },
-        ".cm-completionIcon-class": { color: "#4ec9b0" },
-        ".cm-completionIcon-property": { color: "#9cdcfe" },
-        ".cm-completionIcon-namespace": { color: "#c586c0" },
-        ".cm-completionIcon-snippet": { color: "#c586c0", fontWeight: "500" },
+        ".cm-completionIcon-keyword": { color: isDark ? "#569cd6" : "#0000ff" },
+        ".cm-completionIcon-function": { color: isDark ? "#dcdcaa" : "#795e26" },
+        ".cm-completionIcon-class": { color: isDark ? "#4ec9b0" : "#267f99" },
+        ".cm-completionIcon-property": { color: isDark ? "#9cdcfe" : "#001080" },
+        ".cm-completionIcon-namespace": { color: isDark ? "#c586c0" : "#af00db" },
+        ".cm-completionIcon-snippet": { color: isDark ? "#c586c0" : "#af00db", fontWeight: "500" },
         ".cm-placeholder": {
           color: "#737373",
           lineHeight: "1.5",
         },
       },
-      { dark: true }
+      { dark: isDark }
     );
+
+    const editorTheme = createEditorTheme(resolvedTheme === "dark");
 
     // Custom syntax highlighting for SQL
     const sqlHighlighting = syntaxHighlighting(defaultHighlightStyle);
@@ -342,7 +349,7 @@ export const SqlEditor: FC<SqlEditorProps> = ({
           maxRenderedOptions: 12,
         }),
         customKeybindings,
-        darkTheme,
+        themeCompartment.current.of(editorTheme),
         readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly || loading)),
         placeholderExt("Write your SQL query here..."),
         EditorView.updateListener.of((update) => {
@@ -377,6 +384,51 @@ export const SqlEditor: FC<SqlEditorProps> = ({
       });
     }
   }, [readOnly, loading]);
+
+  // Update theme when resolvedTheme changes
+  useEffect(() => {
+    if (viewRef.current) {
+      const isDark = resolvedTheme === "dark";
+      const newTheme = EditorView.theme(
+        {
+          "&": {
+            backgroundColor: isDark ? "#171717" : "#ffffff",
+            color: isDark ? "#fafafa" : "#171717",
+          },
+          ".cm-activeLine": {
+            backgroundColor: isDark ? "#262626" : "#f5f5f5",
+          },
+          ".cm-activeLineGutter": {
+            backgroundColor: isDark ? "#262626" : "#f5f5f5",
+          },
+          ".cm-gutters": {
+            backgroundColor: isDark ? "#171717" : "#fafafa",
+            color: isDark ? "#737373" : "#a3a3a3",
+          },
+          ".cm-selectionBackground": {
+            backgroundColor: isDark ? "#262626" : "#e5e5e5",
+          },
+          ".cm-tooltip": {
+            backgroundColor: isDark ? "#262626" : "#ffffff",
+            border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
+            color: isDark ? "#fafafa" : "#171717",
+          },
+          ".cm-tooltip-autocomplete": {
+            backgroundColor: isDark ? "#262626" : "#ffffff",
+            border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
+          },
+          ".cm-tooltip-autocomplete ul li[aria-selected]": {
+            backgroundColor: isDark ? "#404040" : "#e5e5e5",
+            color: isDark ? "#fafafa" : "#171717",
+          },
+        },
+        { dark: isDark }
+      );
+      viewRef.current.dispatch({
+        effects: themeCompartment.current.reconfigure(newTheme),
+      });
+    }
+  }, [resolvedTheme]);
 
   // Update editor content when value changes externally
   useEffect(() => {

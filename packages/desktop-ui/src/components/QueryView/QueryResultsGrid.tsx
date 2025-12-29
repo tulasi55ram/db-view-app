@@ -1,16 +1,24 @@
 import { type FC, useState, useRef, useEffect } from "react";
-import { Download, Copy, Check, ChevronDown } from "lucide-react";
-import { cn } from "@/utils/cn";
+import { Download, Copy, Check, ChevronDown, Clock } from "lucide-react";
 import { exportToCSV, exportToJSON, copyToClipboardAsTSV } from "@/utils/exportData";
 import { toast } from "sonner";
+import { CellValue } from "@/components/JsonCellViewer";
 
 export interface QueryResultsGridProps {
   columns: string[];
   rows: Record<string, unknown>[];
   loading?: boolean;
+  executionTime?: number; // in milliseconds
 }
 
-export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loading = false }) => {
+// Format execution time for display
+function formatExecutionTime(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+  return `${Math.floor(ms / 60000)}m ${((ms % 60000) / 1000).toFixed(0)}s`;
+}
+
+export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loading = false, executionTime }) => {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [copied, setCopied] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -75,9 +83,17 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
     <div className="h-full flex flex-col overflow-hidden bg-bg-primary">
       {/* Status bar at top */}
       <div className="h-8 px-4 flex items-center justify-between border-b border-border bg-bg-secondary text-xs text-text-secondary">
-        <span className="font-medium">
-          {rows.length.toLocaleString()} {rows.length === 1 ? "row" : "rows"} returned
-        </span>
+        <div className="flex items-center gap-4">
+          <span className="font-medium">
+            {rows.length.toLocaleString()} {rows.length === 1 ? "row" : "rows"} returned
+          </span>
+          {executionTime !== undefined && (
+            <span className="flex items-center gap-1 text-text-tertiary">
+              <Clock className="w-3 h-3" />
+              {formatExecutionTime(executionTime)}
+            </span>
+          )}
+        </div>
 
         {/* Export dropdown */}
         <div className="relative" ref={menuRef}>
@@ -148,9 +164,9 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
                 {columns.map((column) => (
                   <td
                     key={column}
-                    className={cn("px-3 py-2 whitespace-nowrap", getValueClassName(row[column]))}
+                    className="px-3 py-2 whitespace-nowrap"
                   >
-                    {formatCellValue(row[column])}
+                    <CellValue value={row[column]} />
                   </td>
                 ))}
               </tr>
@@ -161,38 +177,3 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
     </div>
   );
 };
-
-function formatCellValue(value: unknown): string {
-  if (value === null) {
-    return "NULL";
-  }
-  if (value === undefined) {
-    return "";
-  }
-  if (typeof value === "boolean") {
-    return value ? "true" : "false";
-  }
-  if (typeof value === "object") {
-    return JSON.stringify(value);
-  }
-  if (typeof value === "string" && value.length > 100) {
-    return value.substring(0, 100) + "...";
-  }
-  return String(value);
-}
-
-function getValueClassName(value: unknown): string {
-  if (value === null) {
-    return "text-text-tertiary italic";
-  }
-  if (typeof value === "number") {
-    return "text-info font-mono";
-  }
-  if (typeof value === "boolean") {
-    return "text-warning";
-  }
-  if (typeof value === "string") {
-    return "text-text-primary";
-  }
-  return "text-text-secondary";
-}

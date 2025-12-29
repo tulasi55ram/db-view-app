@@ -52,11 +52,11 @@ interface JsonViewProps {
   className?: string;
 }
 
-// Dark theme for CodeMirror
-const darkTheme = EditorView.theme(
+// Theme for CodeMirror using CSS variables for automatic light/dark support
+const editorTheme = EditorView.theme(
   {
     '&': {
-      color: '#e0e0e0',
+      color: 'var(--text-primary)',
       backgroundColor: 'var(--bg-primary)',
       fontSize: '13px',
       fontFamily: "'JetBrains Mono', monospace",
@@ -73,7 +73,7 @@ const darkTheme = EditorView.theme(
         backgroundColor: 'rgba(59, 130, 246, 0.3)',
       },
     '.cm-activeLine': {
-      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+      backgroundColor: 'var(--bg-hover)',
     },
     '.cm-gutters': {
       backgroundColor: 'var(--bg-secondary)',
@@ -82,18 +82,18 @@ const darkTheme = EditorView.theme(
       borderRight: '1px solid var(--border)',
     },
     '.cm-activeLineGutter': {
-      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+      backgroundColor: 'var(--bg-hover)',
     },
     '.cm-foldPlaceholder': {
       backgroundColor: 'transparent',
       border: 'none',
-      color: '#ddd',
+      color: 'var(--text-tertiary)',
     },
     '.cm-lintRange-error': {
       backgroundImage: `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='m0 3 l2 -2 l1 0 l2 2 l1 0' stroke='%23ef4444' fill='none' stroke-width='1.2'/></svg>")`,
     },
   },
-  { dark: true }
+  { dark: false }
 );
 
 // Syntax highlighting for JSON
@@ -190,7 +190,7 @@ export function JsonView({
       linter(jsonParseLinter()),
       lintGutter(),
       keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap]),
-      darkTheme,
+      editorTheme,
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           const content = update.state.doc.toString();

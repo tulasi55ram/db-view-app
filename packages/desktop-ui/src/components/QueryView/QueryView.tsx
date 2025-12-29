@@ -393,6 +393,7 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
         limitApplied: result.limitApplied,
         limit: result.limit,
         hasMore: result.hasMore,
+        duration,
       });
 
       toast.success(`Query executed successfully (${result.rows.length} rows, ${duration}ms)`);
@@ -776,6 +777,7 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
                       columns={tab.columns || []}
                       rows={tab.rows || []}
                       loading={tab.loading || false}
+                      executionTime={tab.duration}
                     />
                   </Panel>
 

@@ -10,6 +10,7 @@ import { ERDiagramPanel } from "@/components/ERDiagramPanel";
 import { AddConnectionView } from "@/components/AddConnectionView";
 import { HomeView } from "@/components/HomeView";
 import { SplitPane, type SplitDirection } from "@/components/SplitPane";
+import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcuts";
 import { getElectronAPI } from "@/electron";
 
 // Tab types
@@ -33,6 +34,7 @@ interface Tab {
   limitApplied?: boolean; // Whether an automatic LIMIT was applied
   limit?: number; // The limit value that was applied
   hasMore?: boolean; // Whether there are potentially more rows
+  duration?: number; // Query execution time in milliseconds
 
   // ER Diagram fields
   schemas?: string[]; // Schemas to show in ER diagram
@@ -50,6 +52,9 @@ function AppContent() {
   // Split view state
   const [splitMode, setSplitMode] = useState<SplitDirection | null>(null);
   const [secondActiveTabId, setSecondActiveTabId] = useState<string | null>(null);
+
+  // Keyboard shortcuts dialog
+  const [showShortcutsDialog, setShowShortcutsDialog] = useState(false);
 
   const api = getElectronAPI();
 
@@ -128,9 +133,22 @@ function AppContent() {
     setSecondActiveTabId(null);
   }, []);
 
-  // Keyboard shortcuts for split view
+  // Keyboard shortcuts for split view and shortcuts dialog
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Check if user is typing in an input
+      const target = e.target as HTMLElement;
+      const isTyping =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable;
+
+      // "?" to show keyboard shortcuts (when not typing)
+      if (e.key === "?" && !isTyping) {
+        e.preventDefault();
+        setShowShortcutsDialog(true);
+      }
+
       // Ctrl+\ or Cmd+\ to toggle split
       if ((e.ctrlKey || e.metaKey) && e.key === "\\") {
         e.preventDefault();
@@ -433,6 +451,12 @@ function AppContent() {
             color: "var(--text-primary)",
           },
         }}
+      />
+
+      {/* Keyboard Shortcuts Dialog */}
+      <KeyboardShortcutsDialog
+        open={showShortcutsDialog}
+        onOpenChange={setShowShortcutsDialog}
       />
 
       <AppShell

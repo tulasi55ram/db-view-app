@@ -27,14 +27,14 @@ export function Tooltip({
             sideOffset={sideOffset}
             className={cn(
               "z-50 px-2 py-1 text-xs rounded",
-              "bg-neutral-800 text-text-primary border border-border",
+              "bg-bg-tertiary text-text-primary border border-border",
               "shadow-lg",
               "animate-fade-in",
               "select-none"
             )}
           >
             {content}
-            <TooltipPrimitive.Arrow className="fill-neutral-800" />
+            <TooltipPrimitive.Arrow className="fill-[var(--bg-tertiary)]" />
           </TooltipPrimitive.Content>
         </TooltipPrimitive.Portal>
       </TooltipPrimitive.Root>

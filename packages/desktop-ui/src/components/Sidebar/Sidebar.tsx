@@ -24,10 +24,14 @@ import {
   WifiOff,
   Wifi,
   GripVertical,
+  Copy,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { IconButton, Button } from "@/primitives";
 import { Tooltip } from "@/primitives/Tooltip";
+import { useTheme } from "@/design-system";
 import { motion, AnimatePresence } from "framer-motion";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { toast } from "sonner";
@@ -197,6 +201,9 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
   const [loadingNodes, setLoadingNodes] = useState<Set<string>>(new Set());
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Theme toggle
+  const { resolvedTheme, toggleTheme } = useTheme();
+
   // Track previous status for notifications
   const previousStatusRef = useRef<Map<string, ConnectionInfo["status"]>>(new Map());
 
@@ -264,37 +271,50 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
   }, [refreshTrigger]);
 
   // Build tree when connections change, respecting saved order
+  // IMPORTANT: Preserve existing children (schemas, tables, etc.) when rebuilding
   useEffect(() => {
-    const nodes: TreeNode[] = connections.map((conn) => {
-      const name = conn.config.name || getConnectionDisplayName(conn.config);
-      return {
-        id: getConnectionKey(conn.config),
-        type: "connection" as const,
-        name,
-        connectionKey: getConnectionKey(conn.config),
-        connectionName: name,
-        status: conn.status,
-        dbType: conn.config.dbType,
-        color: conn.config.color,
-        readOnly: conn.config.readOnly,
-        children: [],
-      };
-    });
-
-    // Sort nodes based on saved order
-    if (connectionOrder.length > 0) {
-      nodes.sort((a, b) => {
-        const indexA = connectionOrder.indexOf(a.id);
-        const indexB = connectionOrder.indexOf(b.id);
-        // If not in order array, put at the end
-        if (indexA === -1 && indexB === -1) return 0;
-        if (indexA === -1) return 1;
-        if (indexB === -1) return -1;
-        return indexA - indexB;
+    setTreeData((prevTreeData) => {
+      // Create a map of existing nodes to preserve their children
+      const existingNodesMap = new Map<string, TreeNode>();
+      prevTreeData.forEach((node) => {
+        existingNodesMap.set(node.id, node);
       });
-    }
 
-    setTreeData(nodes);
+      const nodes: TreeNode[] = connections.map((conn) => {
+        const name = conn.config.name || getConnectionDisplayName(conn.config);
+        const nodeId = getConnectionKey(conn.config);
+        const existingNode = existingNodesMap.get(nodeId);
+
+        return {
+          id: nodeId,
+          type: "connection" as const,
+          name,
+          connectionKey: nodeId,
+          connectionName: name,
+          status: conn.status,
+          dbType: conn.config.dbType,
+          color: conn.config.color,
+          readOnly: conn.config.readOnly,
+          // Preserve existing children if they exist
+          children: existingNode?.children || [],
+        };
+      });
+
+      // Sort nodes based on saved order
+      if (connectionOrder.length > 0) {
+        nodes.sort((a, b) => {
+          const indexA = connectionOrder.indexOf(a.id);
+          const indexB = connectionOrder.indexOf(b.id);
+          // If not in order array, put at the end
+          if (indexA === -1 && indexB === -1) return 0;
+          if (indexA === -1) return 1;
+          if (indexB === -1) return -1;
+          return indexA - indexB;
+        });
+      }
+
+      return nodes;
+    });
   }, [connections, connectionOrder]);
 
   const loadConnections = async () => {
@@ -709,6 +729,48 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
     loadConnections();
   };
 
+  // Generate unique name for duplicated connection
+  const generateUniqueName = (baseName: string, existingNames: string[]): string => {
+    let newName = `${baseName} (Copy)`;
+    let counter = 2;
+    while (existingNames.includes(newName)) {
+      newName = `${baseName} (Copy ${counter})`;
+      counter++;
+    }
+    return newName;
+  };
+
+  // Duplicate a connection
+  const handleDuplicateConnection = async (connectionKey: string, originalName: string) => {
+    if (!api) return;
+
+    try {
+      const allConnections = await api.getConnections();
+      const original = allConnections.find(
+        (c: ConnectionInfo) => getConnectionKey(c.config) === connectionKey
+      );
+
+      if (!original) {
+        toast.error("Connection not found");
+        return;
+      }
+
+      const existingNames = allConnections.map((c: ConnectionInfo) => c.config.name || "");
+      const newName = generateUniqueName(originalName, existingNames);
+
+      const newConfig = {
+        ...original.config,
+        name: newName,
+      };
+
+      await api.saveConnection(newConfig);
+      loadConnections();
+      toast.success(`Duplicated as "${newName}"`);
+    } catch (error) {
+      toast.error(`Failed to duplicate: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+  };
+
   // Get icon for node type
   const getNodeIcon = (node: TreeNode) => {
     switch (node.type) {
@@ -812,10 +874,8 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
       case "objectTypeContainer":
         return `(${node.count})`;
       case "table":
-        const parts: string[] = [];
-        if (node.rowCount !== undefined) parts.push(formatRowCount(node.rowCount, node.dbType));
-        if (node.sizeBytes !== undefined) parts.push(formatBytes(node.sizeBytes));
-        return parts.length > 0 ? parts.join(" · ") : null;
+        // Table metadata is now shown as badges, not text description
+        return null;
       case "column":
         const constraints: string[] = [];
         if (node.isPrimaryKey) constraints.push("PK");
@@ -938,6 +998,22 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
               {/* Node Name */}
               <span className="truncate flex-1 text-text-primary">{node.name}</span>
 
+              {/* Table Badges - Row count and size */}
+              {node.type === "table" && (
+                <div className="flex items-center gap-1 ml-auto shrink-0">
+                  {node.rowCount !== undefined && node.rowCount > 0 && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-blue-500/15 text-blue-400">
+                      {formatRowCount(node.rowCount, node.dbType)}
+                    </span>
+                  )}
+                  {node.sizeBytes !== undefined && node.sizeBytes > 0 && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-purple-500/15 text-purple-400">
+                      {formatBytes(node.sizeBytes)}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Description */}
               {description && (
                 <span className="text-2xs text-text-tertiary truncate max-w-[120px]">
@@ -994,6 +1070,14 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
                 >
                   <Edit className="w-3.5 h-3.5" />
                   Edit Connection
+                </ContextMenu.Item>
+
+                <ContextMenu.Item
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                  onSelect={() => node.connectionKey && handleDuplicateConnection(node.connectionKey, node.name)}
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  Duplicate
                 </ContextMenu.Item>
 
                 {node.status === "connected" && (
@@ -1133,6 +1217,14 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
           Connections
         </span>
         <div className="flex items-center gap-0.5">
+          <Tooltip content={resolvedTheme === "dark" ? "Light mode" : "Dark mode"}>
+            <IconButton
+              icon={resolvedTheme === "dark" ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+              size="sm"
+              aria-label="Toggle theme"
+              onClick={toggleTheme}
+            />
+          </Tooltip>
           <Tooltip content="Refresh">
             <IconButton
               icon={<RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")} />}

@@ -22,108 +22,105 @@ interface JSONEditorProps {
   columnType: string;
 }
 
-// Custom dark theme for CodeMirror
-const darkTheme = EditorView.theme(
-  {
-    "&": {
-      color: "#e0e0e0",
-      backgroundColor: "var(--bg-primary)",
-      fontSize: "13px",
-      fontFamily: "'JetBrains Mono', monospace",
-    },
-    ".cm-content": {
-      caretColor: "var(--accent)",
-      padding: "8px 0",
-    },
-    ".cm-cursor, .cm-dropCursor": {
-      borderLeftColor: "var(--accent)",
-    },
-    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-      backgroundColor: "rgba(59, 130, 246, 0.3)",
-    },
-    ".cm-panels": {
-      backgroundColor: "var(--bg-secondary)",
-      color: "var(--text-primary)",
-    },
-    ".cm-panels.cm-panels-top": {
-      borderBottom: "1px solid var(--border)",
-    },
-    ".cm-panels.cm-panels-bottom": {
-      borderTop: "1px solid var(--border)",
-    },
-    ".cm-searchMatch": {
-      backgroundColor: "#72a1ff59",
-      outline: "1px solid #457dff",
-    },
-    ".cm-searchMatch.cm-searchMatch-selected": {
-      backgroundColor: "#6199ff2f",
-    },
-    ".cm-activeLine": {
-      backgroundColor: "rgba(255, 255, 255, 0.03)",
-    },
-    ".cm-selectionMatch": {
-      backgroundColor: "#aafe661a",
-    },
-    "&.cm-focused .cm-matchingBracket, &.cm-focused .cm-nonmatchingBracket": {
-      backgroundColor: "#bad0f847",
-    },
-    ".cm-gutters": {
-      backgroundColor: "var(--bg-secondary)",
-      color: "var(--text-tertiary)",
-      border: "none",
-      borderRight: "1px solid var(--border)",
-    },
-    ".cm-activeLineGutter": {
-      backgroundColor: "rgba(255, 255, 255, 0.05)",
-    },
-    ".cm-foldPlaceholder": {
-      backgroundColor: "transparent",
-      border: "none",
-      color: "#ddd",
-    },
-    ".cm-tooltip": {
-      border: "1px solid var(--border)",
-      backgroundColor: "var(--bg-tertiary)",
-    },
-    ".cm-tooltip .cm-tooltip-arrow:before": {
-      borderTopColor: "transparent",
-      borderBottomColor: "transparent",
-    },
-    ".cm-tooltip .cm-tooltip-arrow:after": {
-      borderTopColor: "var(--bg-tertiary)",
-      borderBottomColor: "var(--bg-tertiary)",
-    },
-    ".cm-tooltip-autocomplete": {
-      "& > ul > li[aria-selected]": {
-        backgroundColor: "var(--accent)",
-        color: "white",
-      },
-    },
-    ".cm-lintRange-error": {
-      backgroundImage: `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='m0 3 l2 -2 l1 0 l2 2 l1 0' stroke='%23ef4444' fill='none' stroke-width='1.2'/></svg>")`,
-    },
-    ".cm-lintRange-warning": {
-      backgroundImage: `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='m0 3 l2 -2 l1 0 l2 2 l1 0' stroke='%23f59e0b' fill='none' stroke-width='1.2'/></svg>")`,
-    },
-    ".cm-diagnostic": {
-      padding: "3px 6px 3px 8px",
-      marginLeft: "-1px",
-      display: "block",
-      whiteSpace: "pre-wrap",
-    },
-    ".cm-diagnostic-error": {
-      borderLeft: "3px solid #ef4444",
-      background: "rgba(239, 68, 68, 0.1)",
-      color: "#fca5a5",
-    },
-    ".cm-diagnostic-warning": {
-      borderLeft: "3px solid #f59e0b",
-      background: "rgba(245, 158, 11, 0.1)",
-      color: "#fcd34d",
+// Editor theme using CSS variables for theme support
+const editorTheme = EditorView.theme({
+  "&": {
+    color: "var(--text-primary)",
+    backgroundColor: "var(--bg-primary)",
+    fontSize: "13px",
+    fontFamily: "'JetBrains Mono', monospace",
+  },
+  ".cm-content": {
+    caretColor: "var(--accent)",
+    padding: "8px 0",
+  },
+  ".cm-cursor, .cm-dropCursor": {
+    borderLeftColor: "var(--accent)",
+  },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "rgba(59, 130, 246, 0.3)",
+  },
+  ".cm-panels": {
+    backgroundColor: "var(--bg-secondary)",
+    color: "var(--text-primary)",
+  },
+  ".cm-panels.cm-panels-top": {
+    borderBottom: "1px solid var(--border)",
+  },
+  ".cm-panels.cm-panels-bottom": {
+    borderTop: "1px solid var(--border)",
+  },
+  ".cm-searchMatch": {
+    backgroundColor: "rgba(59, 130, 246, 0.35)",
+    outline: "1px solid var(--accent)",
+  },
+  ".cm-searchMatch.cm-searchMatch-selected": {
+    backgroundColor: "rgba(59, 130, 246, 0.2)",
+  },
+  ".cm-activeLine": {
+    backgroundColor: "var(--bg-hover)",
+  },
+  ".cm-selectionMatch": {
+    backgroundColor: "rgba(59, 130, 246, 0.15)",
+  },
+  "&.cm-focused .cm-matchingBracket, &.cm-focused .cm-nonmatchingBracket": {
+    backgroundColor: "rgba(59, 130, 246, 0.3)",
+  },
+  ".cm-gutters": {
+    backgroundColor: "var(--bg-secondary)",
+    color: "var(--text-tertiary)",
+    border: "none",
+    borderRight: "1px solid var(--border)",
+  },
+  ".cm-activeLineGutter": {
+    backgroundColor: "var(--bg-hover)",
+  },
+  ".cm-foldPlaceholder": {
+    backgroundColor: "transparent",
+    border: "none",
+    color: "var(--text-tertiary)",
+  },
+  ".cm-tooltip": {
+    border: "1px solid var(--border)",
+    backgroundColor: "var(--bg-tertiary)",
+  },
+  ".cm-tooltip .cm-tooltip-arrow:before": {
+    borderTopColor: "transparent",
+    borderBottomColor: "transparent",
+  },
+  ".cm-tooltip .cm-tooltip-arrow:after": {
+    borderTopColor: "var(--bg-tertiary)",
+    borderBottomColor: "var(--bg-tertiary)",
+  },
+  ".cm-tooltip-autocomplete": {
+    "& > ul > li[aria-selected]": {
+      backgroundColor: "var(--accent)",
+      color: "white",
     },
   },
-  { dark: true }
-);
+  ".cm-lintRange-error": {
+    backgroundImage: `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='m0 3 l2 -2 l1 0 l2 2 l1 0' stroke='%23ef4444' fill='none' stroke-width='1.2'/></svg>")`,
+  },
+  ".cm-lintRange-warning": {
+    backgroundImage: `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='m0 3 l2 -2 l1 0 l2 2 l1 0' stroke='%23f59e0b' fill='none' stroke-width='1.2'/></svg>")`,
+  },
+  ".cm-diagnostic": {
+    padding: "3px 6px 3px 8px",
+    marginLeft: "-1px",
+    display: "block",
+    whiteSpace: "pre-wrap",
+  },
+  ".cm-diagnostic-error": {
+    borderLeft: "3px solid #ef4444",
+    background: "rgba(239, 68, 68, 0.1)",
+    color: "#fca5a5",
+  },
+  ".cm-diagnostic-warning": {
+    borderLeft: "3px solid #f59e0b",
+    background: "rgba(245, 158, 11, 0.1)",
+    color: "#fcd34d",
+  },
+});
 
 // Custom syntax highlighting for JSON
 const jsonHighlightStyle = HighlightStyle.define([
@@ -213,7 +210,7 @@ export function JSONEditor({
           ...defaultKeymap,
           ...historyKeymap,
         ]),
-        darkTheme,
+        editorTheme,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             const content = update.state.doc.toString();

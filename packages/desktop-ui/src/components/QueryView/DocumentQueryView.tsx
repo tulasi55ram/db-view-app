@@ -21,6 +21,7 @@ import { QueryResultsGrid } from "./QueryResultsGrid";
 import { SavedQueriesPanel } from "./SavedQueriesPanel";
 import { SaveQueryModal } from "./SaveQueryModal";
 import { getElectronAPI, type QueryHistoryEntry, type SavedQuery } from "@/electron";
+import { useTheme } from "@/design-system";
 import { toast } from "sonner";
 import {
   MONGO_COMMANDS,
@@ -68,8 +69,10 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const readOnlyCompartment = useRef(new Compartment());
+  const themeCompartment = useRef(new Compartment());
 
   const api = getElectronAPI();
+  const { resolvedTheme } = useTheme();
 
   // Database-specific configuration
   const config = {
@@ -204,38 +207,41 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
       };
     };
 
-    // Dark theme
-    const darkTheme = EditorView.theme(
+    // Create theme based on current mode
+    const accentColor = dbType === "mongodb" ? "#22c55e" : dbType === "elasticsearch" ? "#eab308" : "#60a5fa";
+    const isDark = resolvedTheme === "dark";
+
+    const createEditorTheme = (dark: boolean) => EditorView.theme(
       {
         "&": {
-          backgroundColor: "#171717",
-          color: "#fafafa",
+          backgroundColor: dark ? "#171717" : "#ffffff",
+          color: dark ? "#fafafa" : "#171717",
           height: "220px",
           fontSize: "13px",
           lineHeight: "1.5",
           fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
         },
         ".cm-content": {
-          caretColor: dbType === "mongodb" ? "#22c55e" : dbType === "elasticsearch" ? "#eab308" : "#60a5fa",
+          caretColor: accentColor,
           padding: "12px 0",
         },
         ".cm-line": {
           lineHeight: "1.5",
         },
         ".cm-cursor": {
-          borderLeftColor: dbType === "mongodb" ? "#22c55e" : dbType === "elasticsearch" ? "#eab308" : "#60a5fa",
+          borderLeftColor: accentColor,
           borderLeftWidth: "2px",
           height: "1.2em !important",
         },
         ".cm-activeLine": {
-          backgroundColor: "#262626",
+          backgroundColor: dark ? "#262626" : "#f5f5f5",
         },
         ".cm-activeLineGutter": {
-          backgroundColor: "#262626",
+          backgroundColor: dark ? "#262626" : "#f5f5f5",
         },
         ".cm-gutters": {
-          backgroundColor: "#171717",
-          color: "#737373",
+          backgroundColor: dark ? "#171717" : "#fafafa",
+          color: dark ? "#737373" : "#a3a3a3",
           border: "none",
           minWidth: "40px",
         },
@@ -243,32 +249,34 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
           padding: "0 12px 0 8px",
         },
         "&.cm-focused .cm-selectionBackground, ::selection": {
-          backgroundColor: dbType === "mongodb" ? "#22c55e" : dbType === "elasticsearch" ? "#eab308" : "#60a5fa",
+          backgroundColor: accentColor,
           color: "#ffffff",
         },
         ".cm-selectionBackground": {
-          backgroundColor: "#262626",
+          backgroundColor: dark ? "#262626" : "#e5e5e5",
         },
         ".cm-tooltip": {
-          backgroundColor: "#262626",
-          border: "1px solid #404040",
-          color: "#fafafa",
+          backgroundColor: dark ? "#262626" : "#ffffff",
+          border: dark ? "1px solid #404040" : "1px solid #e5e5e5",
+          color: dark ? "#fafafa" : "#171717",
         },
         ".cm-tooltip-autocomplete": {
-          backgroundColor: "#262626",
-          border: "1px solid #404040",
+          backgroundColor: dark ? "#262626" : "#ffffff",
+          border: dark ? "1px solid #404040" : "1px solid #e5e5e5",
         },
         ".cm-tooltip-autocomplete ul li[aria-selected]": {
-          backgroundColor: "#404040",
-          color: "#fafafa",
+          backgroundColor: dark ? "#404040" : "#e5e5e5",
+          color: dark ? "#fafafa" : "#171717",
         },
         ".cm-placeholder": {
           color: "#737373",
           lineHeight: "1.5",
         },
       },
-      { dark: true }
+      { dark }
     );
+
+    const editorTheme = createEditorTheme(isDark);
 
     const startState = EditorState.create({
       doc: tab.sql || getDefaultQuery(dbType),
@@ -293,7 +301,7 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
           ...defaultKeymap,
           ...historyKeymap,
         ]),
-        darkTheme,
+        themeCompartment.current.of(editorTheme),
         readOnlyCompartment.current.of(EditorState.readOnly.of(tab.loading || false)),
         placeholderExt(config.placeholder),
         EditorView.updateListener.of((update) => {
@@ -328,6 +336,51 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
       });
     }
   }, [tab.loading]);
+
+  // Update theme when resolvedTheme changes
+  useEffect(() => {
+    if (viewRef.current) {
+      const isDark = resolvedTheme === "dark";
+      const newTheme = EditorView.theme(
+        {
+          "&": {
+            backgroundColor: isDark ? "#171717" : "#ffffff",
+            color: isDark ? "#fafafa" : "#171717",
+          },
+          ".cm-activeLine": {
+            backgroundColor: isDark ? "#262626" : "#f5f5f5",
+          },
+          ".cm-activeLineGutter": {
+            backgroundColor: isDark ? "#262626" : "#f5f5f5",
+          },
+          ".cm-gutters": {
+            backgroundColor: isDark ? "#171717" : "#fafafa",
+            color: isDark ? "#737373" : "#a3a3a3",
+          },
+          ".cm-selectionBackground": {
+            backgroundColor: isDark ? "#262626" : "#e5e5e5",
+          },
+          ".cm-tooltip": {
+            backgroundColor: isDark ? "#262626" : "#ffffff",
+            border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
+            color: isDark ? "#fafafa" : "#171717",
+          },
+          ".cm-tooltip-autocomplete": {
+            backgroundColor: isDark ? "#262626" : "#ffffff",
+            border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
+          },
+          ".cm-tooltip-autocomplete ul li[aria-selected]": {
+            backgroundColor: isDark ? "#404040" : "#e5e5e5",
+            color: isDark ? "#fafafa" : "#171717",
+          },
+        },
+        { dark: isDark }
+      );
+      viewRef.current.dispatch({
+        effects: themeCompartment.current.reconfigure(newTheme),
+      });
+    }
+  }, [resolvedTheme]);
 
   // Update editor content when value changes externally
   useEffect(() => {
