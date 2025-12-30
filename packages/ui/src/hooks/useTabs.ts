@@ -41,7 +41,7 @@ export function useTabs() {
       id: tabId,
       type: 'query',
       title: connectionName ? `Query - ${connectionName}` : 'New Query',
-      sql: 'SELECT NOW();',
+      sql: '', // Empty so placeholder examples are shown
       columns: [],
       rows: [],
       loading: false,

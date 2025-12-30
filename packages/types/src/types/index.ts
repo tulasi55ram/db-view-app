@@ -464,6 +464,18 @@ export interface TableTab extends BaseTab {
   rows: Record<string, unknown>[];
   loading: boolean;
   metadata?: ColumnMetadata[];
+  /** Database type for rendering appropriate view */
+  dbType?: DatabaseType;
+  /** Whether the connection is read-only */
+  readOnly?: boolean;
+  /** MongoDB-specific: view mode */
+  mongoViewMode?: 'table' | 'json';
+  /** MongoDB-specific: expanded document IDs */
+  expandedDocuments?: string[];
+  /** Redis-specific: current key type filter */
+  redisKeyType?: 'string' | 'hash' | 'list' | 'set' | 'zset' | 'stream';
+  /** Redis-specific: key pattern filter */
+  redisKeyPattern?: string;
 }
 
 export interface QueryTab extends BaseTab {
@@ -478,6 +490,8 @@ export interface QueryTab extends BaseTab {
   explainLoading?: boolean;
   explainError?: string;
   showExplainPanel?: boolean;
+  /** Database type for routing to correct query editor */
+  dbType?: DatabaseType;
 }
 
 export interface ERDiagramTab extends BaseTab {
@@ -568,6 +582,7 @@ export interface QueryHistoryEntry {
   success: boolean;
   error?: string;
   isFavorite?: boolean;
+  dbType?: DatabaseType; // Database type for filtering history by db
 }
 
 export interface QueryHistoryState {

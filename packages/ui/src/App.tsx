@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
-import type { ColumnMetadata, TableTab, QueryTab, ERDiagramTab, ERDiagramData, TableInfo, ExplainPlan } from "@dbview/types";
+import type { ColumnMetadata, TableTab, QueryTab, ERDiagramTab, ERDiagramData, TableInfo, ExplainPlan, DatabaseType } from "@dbview/types";
 import type { DataGridColumn } from "./components/DataGrid";
 import { TableView } from "./components/TableView";
+import { DataViewContainer } from "./components/dataViews";
 import { SqlRunnerView } from "./components/SqlRunnerView";
+import { DocumentQueryView } from "./components/DocumentQueryView";
+import { RedisQueryView } from "./components/RedisQueryView";
 import { ERDiagramPanel } from "./components/ERDiagramPanel";
 import { TabBar } from "./components/TabBar";
 import { useTabs } from "./hooks/useTabs";
@@ -14,15 +17,19 @@ import { getVsCodeApi } from "./vscode";
 type ThemeKind = 'light' | 'dark' | 'high-contrast' | 'high-contrast-light';
 
 type IncomingMessage =
-  | { type: "OPEN_TABLE"; schema: string; table: string; limit?: number; connectionName?: string }
-  | { type: "OPEN_QUERY_TAB"; connectionName?: string }
+  | { type: "OPEN_TABLE"; schema: string; table: string; limit?: number; connectionName?: string; dbType?: DatabaseType; readOnly?: boolean }
+  | { type: "OPEN_QUERY_TAB"; connectionName?: string; dbType?: DatabaseType }
   | { type: "OPEN_ER_DIAGRAM"; schemas: string[] }
-  | { type: "LOAD_TABLE_ROWS"; tabId?: string; schema: string; table: string; columns: string[]; rows: Record<string, unknown>[]; limit?: number; offset?: number }
+  | { type: "DOCUMENT_QUERY_RESULT"; tabId: string; columns: string[]; rows: Record<string, unknown>[]; duration?: number }
+  | { type: "DOCUMENT_QUERY_ERROR"; tabId: string; message: string }
+  | { type: "REDIS_COMMAND_RESULT"; tabId: string; columns: string[]; rows: Record<string, unknown>[]; duration?: number }
+  | { type: "REDIS_COMMAND_ERROR"; tabId: string; message: string }
+  | { type: "LOAD_TABLE_ROWS"; tabId?: string; schema: string; table: string; columns: string[]; rows: Record<string, unknown>[]; limit?: number; offset?: number; dbType?: DatabaseType }
   | { type: "ROW_COUNT"; tabId?: string; totalRows: number }
   | { type: "ROW_COUNT_ERROR"; tabId?: string; error: string }
   | { type: "QUERY_RESULT"; tabId?: string; columns: string[]; rows: Record<string, unknown>[] }
   | { type: "QUERY_ERROR"; tabId?: string; message?: string }
-  | { type: "TABLE_METADATA"; tabId?: string; columns: ColumnMetadata[] }
+  | { type: "TABLE_METADATA"; tabId?: string; columns: ColumnMetadata[]; dbType?: DatabaseType }
   | { type: "ER_DIAGRAM_DATA"; diagramData: ERDiagramData }
   | { type: "ER_DIAGRAM_ERROR"; error: string }
   | { type: "UPDATE_SUCCESS"; tabId?: string; rowIndex?: number }
@@ -44,6 +51,18 @@ function App() {
   const queryHistory = useQueryHistory();
   const savedQueries = useSavedQueries();
   const queryStartTimes = useRef<Map<string, number>>(new Map());
+
+  // Update history filter when active tab changes
+  useEffect(() => {
+    const activeTab = tabManager.getActiveTab();
+    if (activeTab?.type === 'query') {
+      queryHistory.setFilterDbType(activeTab.dbType);
+    } else if (activeTab?.type === 'table') {
+      queryHistory.setFilterDbType(activeTab.dbType);
+    } else {
+      queryHistory.setFilterDbType(undefined);
+    }
+  }, [tabManager.activeTabId, tabManager, queryHistory]);
 
   // Theme state - detect initial theme from document
   const [theme, setTheme] = useState<ThemeKind>(() => {
@@ -158,6 +177,38 @@ function App() {
     [vscode, tabManager]
   );
 
+  // Run document query (MongoDB/Elasticsearch/Cassandra)
+  const runDocumentQuery = useCallback(
+    (tabId: string, query: string, dbType: DatabaseType) => {
+      console.log(`[dbview-ui] Running ${dbType} query for tab ${tabId}`);
+      tabManager.updateTab<QueryTab>(tabId, { loading: true, error: undefined });
+
+      // Track query start time for duration calculation
+      queryStartTimes.current.set(tabId, Date.now());
+
+      if (vscode) {
+        vscode.postMessage({ type: "RUN_DOCUMENT_QUERY", tabId, query, dbType });
+      }
+    },
+    [vscode, tabManager]
+  );
+
+  // Run Redis command
+  const runRedisCommand = useCallback(
+    (tabId: string, command: string) => {
+      console.log(`[dbview-ui] Running Redis command for tab ${tabId}`);
+      tabManager.updateTab<QueryTab>(tabId, { loading: true, error: undefined });
+
+      // Track query start time for duration calculation
+      queryStartTimes.current.set(tabId, Date.now());
+
+      if (vscode) {
+        vscode.postMessage({ type: "RUN_REDIS_COMMAND", tabId, command });
+      }
+    },
+    [vscode, tabManager]
+  );
+
   // Handle incoming messages from extension
   useEffect(() => {
     if (!vscode) {
@@ -170,18 +221,45 @@ function App() {
 
       switch (message?.type) {
         case "OPEN_TABLE": {
-          console.log(`[dbview-ui] Opening table: ${message.schema}.${message.table} on ${message.connectionName}`);
+          console.log(`[dbview-ui] Opening table: ${message.schema}.${message.table} on ${message.connectionName} (${message.dbType || 'postgres'}) readOnly=${message.readOnly}`);
           const tabId = tabManager.findOrCreateTableTab(message.schema, message.table, message.limit ?? 100, message.connectionName);
+
+          // Set dbType and readOnly if provided
+          const updates: Partial<TableTab> = {};
+          if (message.dbType) {
+            updates.dbType = message.dbType;
+          }
+          if (message.readOnly !== undefined) {
+            updates.readOnly = message.readOnly;
+          }
+          if (Object.keys(updates).length > 0) {
+            tabManager.updateTab<TableTab>(tabId, updates);
+          }
 
           // Request initial data
           requestTableRows(tabId, message.schema, message.table, message.limit ?? 100, 0);
           requestRowCount(tabId, message.schema, message.table);
+
+          // Request table metadata (needed for DataViewContainer to work for MongoDB/Redis)
+          if (vscode) {
+            vscode.postMessage({
+              type: "GET_TABLE_METADATA",
+              tabId,
+              schema: message.schema,
+              table: message.table
+            });
+          }
           break;
         }
 
         case "OPEN_QUERY_TAB": {
-          console.log(`[dbview-ui] Opening new query tab for ${message.connectionName}`);
-          tabManager.addQueryTab(message.connectionName);
+          console.log(`[dbview-ui] Opening new query tab for ${message.connectionName} (${message.dbType || 'sql'})`);
+          const queryTabId = tabManager.addQueryTab(message.connectionName);
+
+          // Set dbType for the query tab to route to the correct editor
+          if (message.dbType && queryTabId) {
+            tabManager.updateTab<QueryTab>(queryTabId, { dbType: message.dbType });
+          }
           break;
         }
 
@@ -232,7 +310,7 @@ function App() {
           if (!tabId) break;
 
           console.log(`[dbview-ui] Loading table rows for tab ${tabId}: ${message.rows.length} rows`);
-          tabManager.updateTab<TableTab>(tabId, {
+          const updates: Partial<TableTab> = {
             schema: message.schema,
             table: message.table,
             columns: message.columns,
@@ -240,7 +318,14 @@ function App() {
             limit: message.limit ?? 100,
             offset: message.offset ?? 0,
             loading: false
-          });
+          };
+
+          // Include dbType if provided
+          if (message.dbType) {
+            updates.dbType = message.dbType;
+          }
+
+          tabManager.updateTab<TableTab>(tabId, updates);
           break;
         }
 
@@ -279,7 +364,9 @@ function App() {
               tab.sql,
               true,
               duration,
-              message.rows.length
+              message.rows.length,
+              undefined,
+              tab.dbType // Pass dbType for filtering
             );
           }
 
@@ -312,7 +399,8 @@ function App() {
               false,
               duration,
               undefined,
-              message.message ?? "Query failed"
+              message.message ?? "Query failed",
+              tab.dbType // Pass dbType for filtering
             );
           }
 
@@ -328,9 +416,16 @@ function App() {
           if (!tabId) break;
 
           console.log(`[dbview-ui] Received table metadata for tab ${tabId}: ${message.columns.length} columns`);
-          tabManager.updateTab<TableTab>(tabId, {
+          const metadataUpdates: Partial<TableTab> = {
             metadata: message.columns
-          });
+          };
+
+          // Include dbType if provided (enables new DataViewContainer)
+          if (message.dbType) {
+            metadataUpdates.dbType = message.dbType;
+          }
+
+          tabManager.updateTab<TableTab>(tabId, metadataUpdates);
           break;
         }
 
@@ -439,6 +534,128 @@ function App() {
           break;
         }
 
+        case "DOCUMENT_QUERY_RESULT": {
+          const tabId = message.tabId;
+          console.log(`[dbview-ui] Document query result for tab ${tabId}: ${message.rows.length} rows`);
+
+          // Calculate query duration
+          const startTime = queryStartTimes.current.get(tabId);
+          const duration = message.duration ?? (startTime ? Date.now() - startTime : undefined);
+          queryStartTimes.current.delete(tabId);
+
+          // Get the query from the tab and add to history
+          const tab = tabManager.getTab(tabId);
+          if (tab?.type === 'query') {
+            queryHistory.addQuery(
+              tab.sql,
+              true,
+              duration,
+              message.rows.length,
+              undefined,
+              tab.dbType // Pass dbType for filtering
+            );
+          }
+
+          tabManager.updateTab<QueryTab>(tabId, {
+            loading: false,
+            error: undefined,
+            columns: message.columns,
+            rows: message.rows,
+            duration
+          });
+          break;
+        }
+
+        case "DOCUMENT_QUERY_ERROR": {
+          const tabId = message.tabId;
+          console.error(`[dbview-ui] Document query error for tab ${tabId}:`, message.message);
+
+          // Calculate query duration
+          const startTime = queryStartTimes.current.get(tabId);
+          const duration = startTime ? Date.now() - startTime : undefined;
+          queryStartTimes.current.delete(tabId);
+
+          // Get the query from the tab and add to history
+          const tab = tabManager.getTab(tabId);
+          if (tab?.type === 'query') {
+            queryHistory.addQuery(
+              tab.sql,
+              false,
+              duration,
+              undefined,
+              message.message,
+              tab.dbType // Pass dbType for filtering
+            );
+          }
+
+          tabManager.updateTab<QueryTab>(tabId, {
+            loading: false,
+            error: message.message
+          });
+          break;
+        }
+
+        case "REDIS_COMMAND_RESULT": {
+          const tabId = message.tabId;
+          console.log(`[dbview-ui] Redis command result for tab ${tabId}: ${message.rows.length} rows`);
+
+          // Calculate query duration
+          const startTime = queryStartTimes.current.get(tabId);
+          const duration = message.duration ?? (startTime ? Date.now() - startTime : undefined);
+          queryStartTimes.current.delete(tabId);
+
+          // Get the command from the tab and add to history
+          const tab = tabManager.getTab(tabId);
+          if (tab?.type === 'query') {
+            queryHistory.addQuery(
+              tab.sql,
+              true,
+              duration,
+              message.rows.length,
+              undefined,
+              'redis' // Redis command
+            );
+          }
+
+          tabManager.updateTab<QueryTab>(tabId, {
+            loading: false,
+            error: undefined,
+            columns: message.columns,
+            rows: message.rows,
+            duration
+          });
+          break;
+        }
+
+        case "REDIS_COMMAND_ERROR": {
+          const tabId = message.tabId;
+          console.error(`[dbview-ui] Redis command error for tab ${tabId}:`, message.message);
+
+          // Calculate query duration
+          const startTime = queryStartTimes.current.get(tabId);
+          const duration = startTime ? Date.now() - startTime : undefined;
+          queryStartTimes.current.delete(tabId);
+
+          // Get the command from the tab and add to history
+          const tab = tabManager.getTab(tabId);
+          if (tab?.type === 'query') {
+            queryHistory.addQuery(
+              tab.sql,
+              false,
+              duration,
+              undefined,
+              message.message,
+              'redis' // Redis command
+            );
+          }
+
+          tabManager.updateTab<QueryTab>(tabId, {
+            loading: false,
+            error: message.message
+          });
+          break;
+        }
+
         case "THEME_CHANGE": {
           console.log(`[dbview-ui] Theme changed to: ${message.theme}`);
           // Update the data-theme attribute on the HTML element
@@ -484,6 +701,71 @@ function App() {
     }
 
     if (activeTab.type === 'query') {
+      const dbType = activeTab.dbType;
+
+      // Route to DocumentQueryView for MongoDB, Elasticsearch, Cassandra
+      if (dbType === 'mongodb' || dbType === 'elasticsearch' || dbType === 'cassandra') {
+        return (
+          <DocumentQueryView
+            dbType={dbType}
+            query={activeTab.sql}
+            onQueryChange={(value) => tabManager.updateTab<QueryTab>(activeTab.id, { sql: value })}
+            onRunQuery={() => runDocumentQuery(activeTab.id, activeTab.sql, dbType)}
+            loading={activeTab.loading}
+            error={activeTab.error}
+            columns={activeTab.columns.map(toColumn)}
+            rows={activeTab.rows}
+            duration={activeTab.duration}
+            connectionName={activeTab.connectionName}
+            collections={autocompleteData.tables.map(t => t.name)}
+            history={queryHistory.history}
+            filteredHistory={queryHistory.filteredHistory}
+            favorites={queryHistory.favorites}
+            searchTerm={queryHistory.searchTerm}
+            showFavoritesOnly={queryHistory.showFavoritesOnly}
+            onSearchChange={queryHistory.setSearchTerm}
+            onToggleFavorite={queryHistory.toggleFavorite}
+            onDeleteEntry={queryHistory.deleteEntry}
+            onClearHistory={() => queryHistory.clearHistory(dbType)}
+            onClearNonFavorites={() => queryHistory.clearNonFavorites(dbType)}
+            onToggleShowFavorites={() => queryHistory.setShowFavoritesOnly(!queryHistory.showFavoritesOnly)}
+            savedQueries={savedQueries.queries}
+            onSaveQuery={(name, description) => savedQueries.addQuery(name, activeTab.sql, description)}
+            onDeleteSavedQuery={savedQueries.deleteQuery}
+            onUpdateSavedQuery={savedQueries.updateQuery}
+          />
+        );
+      }
+
+      // Route to RedisQueryView for Redis
+      if (dbType === 'redis') {
+        return (
+          <RedisQueryView
+            command={activeTab.sql}
+            onCommandChange={(value) => tabManager.updateTab<QueryTab>(activeTab.id, { sql: value })}
+            onRunCommand={() => runRedisCommand(activeTab.id, activeTab.sql)}
+            loading={activeTab.loading}
+            error={activeTab.error}
+            columns={activeTab.columns.map(toColumn)}
+            rows={activeTab.rows}
+            duration={activeTab.duration}
+            connectionName={activeTab.connectionName}
+            history={queryHistory.history}
+            filteredHistory={queryHistory.filteredHistory}
+            favorites={queryHistory.favorites}
+            searchTerm={queryHistory.searchTerm}
+            showFavoritesOnly={queryHistory.showFavoritesOnly}
+            onSearchChange={queryHistory.setSearchTerm}
+            onToggleFavorite={queryHistory.toggleFavorite}
+            onDeleteEntry={queryHistory.deleteEntry}
+            onClearHistory={() => queryHistory.clearHistory('redis')}
+            onClearNonFavorites={() => queryHistory.clearNonFavorites('redis')}
+            onToggleShowFavorites={() => queryHistory.setShowFavoritesOnly(!queryHistory.showFavoritesOnly)}
+          />
+        );
+      }
+
+      // Default: SqlRunnerView for SQL databases
       return (
         <SqlRunnerView
           sql={activeTab.sql}
@@ -513,8 +795,8 @@ function App() {
           onSearchChange={queryHistory.setSearchTerm}
           onToggleFavorite={queryHistory.toggleFavorite}
           onDeleteEntry={queryHistory.deleteEntry}
-          onClearHistory={queryHistory.clearHistory}
-          onClearNonFavorites={queryHistory.clearNonFavorites}
+          onClearHistory={() => queryHistory.clearHistory(activeTab.dbType)}
+          onClearNonFavorites={() => queryHistory.clearNonFavorites(activeTab.dbType)}
           onToggleShowFavorites={() => queryHistory.setShowFavoritesOnly(!queryHistory.showFavoritesOnly)}
           savedQueries={savedQueries.queries}
           onSaveQuery={(name, description) => savedQueries.addQuery(name, activeTab.sql, description)}
@@ -525,6 +807,40 @@ function App() {
     }
 
     if (activeTab.type === 'table') {
+      // Use DataViewContainer for document/NoSQL databases when metadata is available
+      // This routes to the appropriate view (DocumentDataView, RedisDataView, etc.)
+      if (activeTab.dbType && activeTab.metadata && activeTab.metadata.length > 0) {
+        const isDocumentDb = ['mongodb', 'elasticsearch', 'cassandra'].includes(activeTab.dbType);
+        const isRedis = activeTab.dbType === 'redis';
+
+        // Use DataViewContainer for document DBs and Redis
+        if (isDocumentDb || isRedis) {
+          return (
+            <DataViewContainer
+              dbType={activeTab.dbType}
+              schema={activeTab.schema}
+              table={activeTab.table}
+              columns={activeTab.metadata}
+              rows={activeTab.rows}
+              loading={activeTab.loading}
+              totalRows={activeTab.totalRows ?? 0}
+              limit={activeTab.limit}
+              offset={activeTab.offset}
+              onPageChange={(page) => {
+                const newOffset = (page - 1) * activeTab.limit;
+                requestTableRows(activeTab.id, activeTab.schema, activeTab.table, activeTab.limit, newOffset);
+              }}
+              onPageSizeChange={(size) => {
+                requestTableRows(activeTab.id, activeTab.schema, activeTab.table, size, 0);
+              }}
+              onRefresh={() => handleRefreshTable(activeTab.id)}
+              readOnly={activeTab.readOnly ?? false}
+            />
+          );
+        }
+      }
+
+      // Default: Use TableView for SQL databases or when metadata isn't loaded yet
       return (
         <TableView
           schema={activeTab.schema}
@@ -537,6 +853,7 @@ function App() {
           limit={activeTab.limit}
           offset={activeTab.offset}
           totalRows={activeTab.totalRows}
+          dbType={activeTab.dbType}
         />
       );
     }
@@ -583,7 +900,7 @@ function App() {
     }
 
     return null;
-  }, [tabManager.tabs, tabManager.activeTabId, tabManager, runQuery, formatSql, explainQuery, handleRefreshTable, vscode, requestTableRows, requestRowCount, queryHistory, autocompleteData]);
+  }, [tabManager.tabs, tabManager.activeTabId, tabManager, runQuery, runDocumentQuery, runRedisCommand, formatSql, explainQuery, handleRefreshTable, vscode, requestTableRows, requestRowCount, queryHistory, savedQueries, autocompleteData]);
 
   return (
     <>
@@ -606,10 +923,18 @@ function App() {
             onTabSelect={tabManager.switchToTab}
             onTabClose={tabManager.closeTab}
             onNewQuery={() => {
-              // Get connection name from the active tab if available
+              // Get connection name and dbType from the active tab if available
               const activeTab = tabManager.getActiveTab();
               const connectionName = activeTab?.connectionName;
-              tabManager.addQueryTab(connectionName);
+              const dbType = activeTab?.type === 'table' ? activeTab.dbType :
+                             activeTab?.type === 'query' ? activeTab.dbType : undefined;
+
+              const newTabId = tabManager.addQueryTab(connectionName);
+
+              // Set dbType to route to the correct query editor
+              if (dbType && newTabId) {
+                tabManager.updateTab<QueryTab>(newTabId, { dbType });
+              }
             }}
             onCloseOtherTabs={tabManager.closeOtherTabs}
             onCloseAllTabs={tabManager.closeAllTabs}

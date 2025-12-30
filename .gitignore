@@ -8,6 +8,7 @@ apps/vscode-extension/media/webview/
 apps/desktop/dist/
 packages/types/dist/
 packages/adapters/dist/
+packages/core/dist/
 packages/ui/dist/
 packages/desktop-ui/dist/
 packages/utils/dist/

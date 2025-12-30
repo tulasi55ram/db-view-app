@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { QueryHistoryEntry, QueryHistoryState } from '@dbview/types';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import type { QueryHistoryEntry, QueryHistoryState, DatabaseType } from '@dbview/types';
 
 const STORAGE_KEY = 'dbview_query_history';
 const MAX_ENTRIES = 100;
@@ -8,6 +8,7 @@ export function useQueryHistory() {
   const [history, setHistory] = useState<QueryHistoryEntry[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [filterDbType, setFilterDbType] = useState<DatabaseType | undefined>(undefined);
 
   // Load history from localStorage on mount
   useEffect(() => {
@@ -41,7 +42,8 @@ export function useQueryHistory() {
     success: boolean,
     duration?: number,
     rowCount?: number,
-    error?: string
+    error?: string,
+    dbType?: DatabaseType
   ) => {
     const entry: QueryHistoryEntry = {
       id: crypto.randomUUID(),
@@ -51,7 +53,8 @@ export function useQueryHistory() {
       rowCount,
       success,
       error,
-      isFavorite: false
+      isFavorite: false,
+      dbType
     };
 
     setHistory(prev => {
@@ -86,36 +89,65 @@ export function useQueryHistory() {
     });
   }, [saveToStorage]);
 
-  // Clear all history
-  const clearHistory = useCallback(() => {
-    setHistory([]);
-    localStorage.removeItem(STORAGE_KEY);
-  }, []);
+  // Clear all history (optionally only for current dbType)
+  const clearHistory = useCallback((dbTypeOnly?: DatabaseType) => {
+    if (dbTypeOnly) {
+      // Only clear history for the specified dbType
+      setHistory(prev => {
+        const updated = prev.filter(entry => entry.dbType !== dbTypeOnly);
+        saveToStorage(updated);
+        return updated;
+      });
+    } else {
+      // Clear all history
+      setHistory([]);
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }, [saveToStorage]);
 
-  // Clear only non-favorite entries
-  const clearNonFavorites = useCallback(() => {
+  // Clear only non-favorite entries (optionally only for current dbType)
+  const clearNonFavorites = useCallback((dbTypeOnly?: DatabaseType) => {
     setHistory(prev => {
-      const updated = prev.filter(entry => entry.isFavorite);
+      const updated = prev.filter(entry => {
+        if (dbTypeOnly && entry.dbType !== dbTypeOnly) {
+          return true; // Keep entries from other db types
+        }
+        return entry.isFavorite;
+      });
       saveToStorage(updated);
       return updated;
     });
   }, [saveToStorage]);
 
-  // Filter history based on search and favorites
-  const filteredHistory = history.filter(entry => {
-    const matchesSearch = searchTerm === '' ||
-      entry.sql.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesFavorite = !showFavoritesOnly || entry.isFavorite;
-    return matchesSearch && matchesFavorite;
-  });
+  // Filter history based on search, favorites, and dbType
+  const filteredHistory = useMemo(() => {
+    return history.filter(entry => {
+      const matchesSearch = searchTerm === '' ||
+        entry.sql.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesFavorite = !showFavoritesOnly || entry.isFavorite;
+      const matchesDbType = !filterDbType || entry.dbType === filterDbType;
+      return matchesSearch && matchesFavorite && matchesDbType;
+    });
+  }, [history, searchTerm, showFavoritesOnly, filterDbType]);
 
-  // Get favorite queries
-  const favorites = history.filter(entry => entry.isFavorite);
+  // Get favorite queries (optionally filtered by dbType)
+  const favorites = useMemo(() => {
+    return history.filter(entry => {
+      const matchesFavorite = entry.isFavorite;
+      const matchesDbType = !filterDbType || entry.dbType === filterDbType;
+      return matchesFavorite && matchesDbType;
+    });
+  }, [history, filterDbType]);
 
   // Get recent successful queries
-  const recentSuccessful = history
-    .filter(entry => entry.success)
-    .slice(0, 10);
+  const recentSuccessful = useMemo(() => {
+    return history
+      .filter(entry => {
+        const matchesDbType = !filterDbType || entry.dbType === filterDbType;
+        return entry.success && matchesDbType;
+      })
+      .slice(0, 10);
+  }, [history, filterDbType]);
 
   return {
     history,
@@ -126,6 +158,8 @@ export function useQueryHistory() {
     setSearchTerm,
     showFavoritesOnly,
     setShowFavoritesOnly,
+    filterDbType,
+    setFilterDbType,
     addQuery,
     toggleFavorite,
     deleteEntry,

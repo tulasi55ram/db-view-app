@@ -29,6 +29,7 @@ import type {
   BulkDeleteOptions,
 } from "./DatabaseAdapter";
 import { getDatabaseCapabilities } from "../capabilities/DatabaseCapabilities";
+import { buildSqlFilter } from "@dbview/core";
 
 const DEFAULT_CONFIG: PoolConfig = process.env.DBVIEW_DATABASE_URL
   ? { connectionString: process.env.DBVIEW_DATABASE_URL }
@@ -1391,122 +1392,11 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
   }
 
   buildWhereClause(filters: FilterCondition[], logic: 'AND' | 'OR'): { whereClause: string; params: unknown[] } {
-    if (!filters || filters.length === 0) {
-      return { whereClause: '', params: [] };
-    }
-
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-    let paramIndex = 1;
-
-    for (const filter of filters) {
-      if (!filter.columnName || !filter.operator) {
-        continue;
-      }
-
-      const columnName = this.quoteIdentifier(filter.columnName);
-
-      switch (filter.operator) {
-        case 'equals':
-          conditions.push(`${columnName} = $${paramIndex}`);
-          params.push(filter.value);
-          paramIndex++;
-          break;
-
-        case 'not_equals':
-          conditions.push(`${columnName} != $${paramIndex}`);
-          params.push(filter.value);
-          paramIndex++;
-          break;
-
-        case 'contains':
-          conditions.push(`${columnName}::text ILIKE $${paramIndex}`);
-          params.push(`%${filter.value}%`);
-          paramIndex++;
-          break;
-
-        case 'not_contains':
-          conditions.push(`${columnName}::text NOT ILIKE $${paramIndex}`);
-          params.push(`%${filter.value}%`);
-          paramIndex++;
-          break;
-
-        case 'starts_with':
-          conditions.push(`${columnName}::text ILIKE $${paramIndex}`);
-          params.push(`${filter.value}%`);
-          paramIndex++;
-          break;
-
-        case 'ends_with':
-          conditions.push(`${columnName}::text ILIKE $${paramIndex}`);
-          params.push(`%${filter.value}`);
-          paramIndex++;
-          break;
-
-        case 'greater_than':
-          conditions.push(`${columnName} > $${paramIndex}`);
-          params.push(filter.value);
-          paramIndex++;
-          break;
-
-        case 'less_than':
-          conditions.push(`${columnName} < $${paramIndex}`);
-          params.push(filter.value);
-          paramIndex++;
-          break;
-
-        case 'greater_or_equal':
-          conditions.push(`${columnName} >= $${paramIndex}`);
-          params.push(filter.value);
-          paramIndex++;
-          break;
-
-        case 'less_or_equal':
-          conditions.push(`${columnName} <= $${paramIndex}`);
-          params.push(filter.value);
-          paramIndex++;
-          break;
-
-        case 'is_null':
-          conditions.push(`${columnName} IS NULL`);
-          break;
-
-        case 'is_not_null':
-          conditions.push(`${columnName} IS NOT NULL`);
-          break;
-
-        case 'between':
-          if (filter.value2 !== undefined) {
-            conditions.push(`${columnName} BETWEEN $${paramIndex} AND $${paramIndex + 1}`);
-            params.push(filter.value, filter.value2);
-            paramIndex += 2;
-          }
-          break;
-
-        case 'in':
-          // Filter out empty strings to avoid IN ('') which returns no results
-          const values = (Array.isArray(filter.value)
-            ? filter.value.map(v => String(v).trim())
-            : String(filter.value).split(',').map(v => v.trim())
-          ).filter(v => v !== '');
-
-          if (values.length > 0) {
-            const placeholders = values.map((_, i) => `$${paramIndex + i}`).join(', ');
-            conditions.push(`${columnName} IN (${placeholders})`);
-            params.push(...values);
-            paramIndex += values.length;
-          }
-          // Skip adding clause if no valid values (treats as "no filter")
-          break;
-      }
-    }
-
-    if (conditions.length === 0) {
-      return { whereClause: '', params: [] };
-    }
-
-    const whereClause = conditions.join(` ${logic} `);
-    return { whereClause, params };
+    // Delegate to @dbview/core filter builder
+    return buildSqlFilter(filters, logic, {
+      dbType: 'postgres',
+      quoteIdentifier: this.quoteIdentifier.bind(this),
+    });
   }
 
   // ==================== Private Helper Methods ====================

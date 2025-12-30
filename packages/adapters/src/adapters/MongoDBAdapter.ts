@@ -127,6 +127,10 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
       this.connectionStatus = 'connecting';
       this.emit('statusChange', { status: 'connecting' });
 
+      // Debug: Log connection config (without password)
+      const debugConfig = { ...this.connectionConfig, password: this.connectionConfig.password ? '***' : 'NOT SET' };
+      console.log('[dbview] MongoDBAdapter.connect() - config:', JSON.stringify(debugConfig));
+
       // Get pool configuration from connection config or use defaults
       const poolConfig = (this.connectionConfig as any).pool || {};
 
@@ -1118,7 +1122,10 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
     const { host, port, user, password, database, authDatabase } = this.connectionConfig;
 
     const credentials = user && password ? `${encodeURIComponent(user)}:${encodeURIComponent(password)}@` : '';
-    const authSourceParam = authDatabase ? `?authSource=${authDatabase}` : '';
+    // Default authDatabase to 'admin' if user credentials are provided but no authDatabase specified
+    // This is the standard MongoDB authentication behavior
+    const authSource = authDatabase || (user && password ? 'admin' : undefined);
+    const authSourceParam = authSource ? `?authSource=${authSource}` : '';
 
     return `mongodb://${credentials}${host}:${port || 27017}/${database}${authSourceParam}`;
   }

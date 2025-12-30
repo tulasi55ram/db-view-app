@@ -270,6 +270,7 @@ export interface QueryViewProps {
     limitApplied?: boolean;
     limit?: number;
     hasMore?: boolean;
+    duration?: number;
   };
   onTabUpdate: (
     tabId: string,
@@ -284,6 +285,7 @@ export interface QueryViewProps {
       limitApplied?: boolean;
       limit?: number;
       hasMore?: boolean;
+      duration?: number;
     }
   ) => void;
 }

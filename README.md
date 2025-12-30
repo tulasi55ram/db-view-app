@@ -11,6 +11,7 @@ A modern multi-database viewer/editor for VS Code with shared React webview UI, 
 - MongoDB
 - Redis
 - Elasticsearch
+- Cassandra
 
 ## Structure
 
@@ -30,6 +31,7 @@ docker/
   sqlserver/          # SQL Server init scripts & sample data
   redis/              # Redis init scripts & sample data
   elasticsearch/      # Elasticsearch init scripts & sample data
+  cassandra/          # Cassandra init scripts & sample data
 .vscode/launch.json   # Launch config to run the extension in VS Code
 docker-compose.yml    # Docker Compose for test databases
 package.json          # pnpm workspaces + top-level scripts
@@ -102,7 +104,7 @@ Once the Extension Development Host is running:
 
 - Open Command Palette (`Cmd+Shift+P` on Mac, `Ctrl+Shift+P` on Windows/Linux)
 - Run: `DBView: Configure Connection`
-- Select your database type (PostgreSQL, MySQL, SQL Server, SQLite, or MongoDB)
+- Select your database type (PostgreSQL, MySQL, SQL Server, SQLite, MongoDB, Redis, Elasticsearch, or Cassandra)
 - Enter your connection details:
   - Host (e.g., `localhost`)
   - Port (e.g., `5432` for PostgreSQL, `27017` for MongoDB)
@@ -183,9 +185,11 @@ The project includes Docker Compose configuration with sample data for testing.
 | SQLite        | -     | -       | -           | dbview_dev.db  | File-based |
 | SQL Server    | 1433  | sa      | Dbview123!  | dbview_dev     | Strong password required |
 | Elasticsearch | 9200  | elastic | dbview123   | -              | Indices: users, products, orders, app-logs |
+| Cassandra     | 9042  | -       | -           | dbview_dev     | No auth (dev mode), keyspace: dbview_dev |
 
 > **Note:** SQL Server requires a strong password (uppercase + lowercase + number + special char).
 > **Note:** Elasticsearch uses indices instead of databases. Sample indices are created on startup.
+> **Note:** Cassandra runs without authentication in development mode. Keyspace is `dbview_dev`.
 
 ### Quick Start
 
@@ -218,6 +222,7 @@ docker compose up -d redis
 docker compose up -d sqlite
 docker compose up -d sqlserver
 docker compose up -d elasticsearch elasticsearch-init
+docker compose up -d cassandra cassandra-init
 
 # Stop all databases (keeps data)
 docker compose down
@@ -240,6 +245,7 @@ The init scripts run **automatically on first container start**. They are mounte
 - SQL Server: `docker/sqlserver/init.sql` → `/docker-entrypoint-initdb.d/init.sql`
 - Redis: `docker/redis/init.sh` → runs via redis-init container
 - Elasticsearch: `docker/elasticsearch/init.sh` → runs via elasticsearch-init container
+- Cassandra: `docker/cassandra/init.cql` + `docker/cassandra/init.sh` → runs via cassandra-init container
 
 ```bash
 # Re-run init.sql manually (without resetting)
@@ -276,6 +282,10 @@ docker compose exec sqlserver /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -
 # Elasticsearch - query via curl
 curl -u elastic:dbview123 http://localhost:9200/_cat/indices?v
 curl -u elastic:dbview123 http://localhost:9200/users/_search?pretty
+
+# Cassandra - connect to cqlsh
+docker compose exec cassandra cqlsh
+# Then run: USE dbview_dev; SELECT * FROM users LIMIT 10;
 ```
 
 ### Verify Tables & Data (PostgreSQL)
@@ -402,5 +412,5 @@ See [FEATURES.md](./FEATURES.md) for the complete feature roadmap including:
 - Data editing (inline edit, insert, delete)
 - Advanced filtering and pagination
 - ER diagrams
-- Multi-database support (PostgreSQL, MySQL, MariaDB, SQL Server, SQLite, MongoDB, Redis, Elasticsearch)
+- Multi-database support (PostgreSQL, MySQL, MariaDB, SQL Server, SQLite, MongoDB, Redis, Elasticsearch, Cassandra)
 - Desktop app via Electron

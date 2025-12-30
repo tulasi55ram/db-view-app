@@ -1,149 +1,387 @@
-#!/bin/bash
-# Redis initialization script - creates sample data for ALL Redis types
+#!/bin/sh
+# Redis initialization script - creates comprehensive sample data for ALL Redis types
+# Target: ~1.5M total data points across 9 data types in 6 databases
+# Each database contains 3 different data types
 
 # Wait for Redis to be ready
 sleep 2
 
-echo "Initializing Redis sample data for all data types..."
+REDIS_HOST="redis"
+REDIS_PASS="dbview123"
+
+echo "============================================"
+echo "Redis Comprehensive Data Initialization"
+echo "============================================"
+echo "Target: ~1.5M data points across 6 databases"
+echo "Each database: 3 data types"
+echo ""
 
 # ============================================
-# HASH type - Multi-field records
+# DATABASE 0: STRING, HASH, LIST
 # ============================================
-echo "Creating HASH data..."
+echo "============================================"
+echo "[DB 0] STRING, HASH, LIST"
+echo "============================================"
 
-# Sample user hashes
-redis-cli -h redis -a dbview123 HSET user:1 name "Alice Johnson" email "alice@example.com" role "admin" created_at "2024-01-15"
-redis-cli -h redis -a dbview123 HSET user:2 name "Bob Smith" email "bob@example.com" role "user" created_at "2024-02-20"
-redis-cli -h redis -a dbview123 HSET user:3 name "Charlie Brown" email "charlie@example.com" role "user" created_at "2024-03-10"
+# STRING in DB 0
+echo "  [DB 0] Creating STRING data..."
+(
+    for i in $(seq 1 1000); do
+        echo "SET cache:page:$i \"<html><title>Page $i</title><body>Content $i</body></html>\""
+    done
+    for i in $(seq 1 500); do
+        echo "SET cache:api:$i '{\"id\":$i,\"name\":\"Item $i\",\"price\":$((i * 10))}'"
+    done
+    for i in $(seq 1 500); do
+        echo "SET session:token:$i \"jwt_token_user_$i\""
+    done
+) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 0 --pipe 2>/dev/null
+echo "    STRING: 2000 keys"
 
-# Sample product hashes
-redis-cli -h redis -a dbview123 HSET product:1 name "Laptop" price "999.99" stock "50" category "Electronics"
-redis-cli -h redis -a dbview123 HSET product:2 name "Keyboard" price "79.99" stock "150" category "Electronics"
-redis-cli -h redis -a dbview123 HSET product:3 name "Mouse" price "29.99" stock "200" category "Electronics"
-redis-cli -h redis -a dbview123 HSET product:4 name "Monitor" price "349.99" stock "75" category "Electronics"
+# HASH in DB 0
+echo "  [DB 0] Creating HASH data..."
+for prefix in "user:profile" "product:catalog"; do
+    for k in $(seq 1 200); do
+        (
+            printf "HSET $prefix:$k"
+            for f in $(seq 1 200); do
+                printf " field_$f \"value_${k}_${f}\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 0 --pipe 2>/dev/null
+    done
+done
+echo "    HASH: 400 keys × 200 fields"
 
-# Sample order hashes
-redis-cli -h redis -a dbview123 HSET order:1001 user_id "1" total "1079.98" status "completed" date "2024-06-01"
-redis-cli -h redis -a dbview123 HSET order:1002 user_id "2" total "29.99" status "shipped" date "2024-06-05"
-redis-cli -h redis -a dbview123 HSET order:1003 user_id "1" total "349.99" status "pending" date "2024-06-10"
-
-# Sample session hashes
-redis-cli -h redis -a dbview123 HSET session:abc123 user_id "1" ip "192.168.1.100" user_agent "Mozilla/5.0" expires_at "2024-12-31"
-redis-cli -h redis -a dbview123 HSET session:def456 user_id "2" ip "192.168.1.101" user_agent "Chrome/120" expires_at "2024-12-31"
-
-# Config hash (single key, many fields)
-redis-cli -h redis -a dbview123 HSET config:app theme "dark" language "en" timezone "UTC" max_connections "100"
-
-# ============================================
-# STRING type - Simple key-value pairs
-# ============================================
-echo "Creating STRING data..."
-
-# Cache entries
-redis-cli -h redis -a dbview123 SET cache:homepage "<html>...</html>"
-redis-cli -h redis -a dbview123 SET cache:api:users "[{\"id\":1,\"name\":\"Alice\"}]"
-redis-cli -h redis -a dbview123 SET cache:api:products "[{\"id\":1,\"name\":\"Laptop\"}]"
-
-# Counter strings
-redis-cli -h redis -a dbview123 SET counter:visitors "1543"
-redis-cli -h redis -a dbview123 SET counter:orders "287"
-redis-cli -h redis -a dbview123 SET counter:errors "12"
-
-# Settings strings
-redis-cli -h redis -a dbview123 SET setting:maintenance "false"
-redis-cli -h redis -a dbview123 SET setting:version "2.1.0"
-redis-cli -h redis -a dbview123 SET setting:last_backup "2024-12-20T10:30:00Z"
-
-# ============================================
-# LIST type - Ordered sequences
-# ============================================
-echo "Creating LIST data..."
-
-# Recent activity logs
-redis-cli -h redis -a dbview123 RPUSH log:activity "User alice logged in" "User bob updated profile" "Order #1001 created" "Payment processed" "User charlie signed up"
-
-# Task queues
-redis-cli -h redis -a dbview123 RPUSH queue:emails "send_welcome:user:3" "send_invoice:order:1001" "send_reminder:user:1"
-redis-cli -h redis -a dbview123 RPUSH queue:notifications "push:user:1:new_order" "push:user:2:shipment" "sms:user:3:verification"
-
-# Recent viewed items
-redis-cli -h redis -a dbview123 RPUSH recent:user:1 "product:1" "product:3" "product:2" "product:4"
-redis-cli -h redis -a dbview123 RPUSH recent:user:2 "product:2" "product:1"
+# LIST in DB 0
+echo "  [DB 0] Creating LIST data..."
+for prefix in "log:activity" "queue:jobs"; do
+    for k in $(seq 1 200); do
+        (
+            printf "RPUSH $prefix:$k"
+            for e in $(seq 1 200); do
+                printf " \"entry_${k}_${e}\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 0 --pipe 2>/dev/null
+    done
+done
+echo "    LIST: 400 keys × 200 elements"
 
 # ============================================
-# SET type - Unique collections
+# DATABASE 1: SET, ZSET, STREAM
 # ============================================
-echo "Creating SET data..."
+echo ""
+echo "============================================"
+echo "[DB 1] SET, ZSET, STREAM"
+echo "============================================"
 
-# User tags/interests
-redis-cli -h redis -a dbview123 SADD tags:user:1 "technology" "gaming" "music" "travel"
-redis-cli -h redis -a dbview123 SADD tags:user:2 "sports" "cooking" "photography"
-redis-cli -h redis -a dbview123 SADD tags:user:3 "books" "technology" "art"
+# SET in DB 1
+echo "  [DB 1] Creating SET data..."
+for prefix in "tags:user" "followers:user"; do
+    for k in $(seq 1 200); do
+        (
+            printf "SADD $prefix:$k"
+            for m in $(seq 1 200); do
+                printf " \"member_${k}_${m}\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 1 --pipe 2>/dev/null
+    done
+done
+echo "    SET: 400 keys × 200 members"
 
-# Online users
-redis-cli -h redis -a dbview123 SADD online:users "user:1" "user:3" "user:5" "user:8"
+# ZSET in DB 1
+echo "  [DB 1] Creating ZSET data..."
+for prefix in "leaderboard:game" "ranking:score"; do
+    for k in $(seq 1 200); do
+        (
+            printf "ZADD $prefix:$k"
+            for m in $(seq 1 200); do
+                printf " $((m * 10 + k)) \"player_${m}\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 1 --pipe 2>/dev/null
+    done
+done
+echo "    ZSET: 400 keys × 200 members"
 
-# Product categories
-redis-cli -h redis -a dbview123 SADD category:electronics "product:1" "product:2" "product:3" "product:4"
-redis-cli -h redis -a dbview123 SADD category:bestsellers "product:1" "product:3"
-
-# Blocked IPs
-redis-cli -h redis -a dbview123 SADD blocked:ips "192.168.1.50" "10.0.0.100" "172.16.0.25"
+# STREAM in DB 1
+echo "  [DB 1] Creating STREAM data..."
+for prefix in "events:order" "events:payment"; do
+    for k in $(seq 1 200); do
+        (
+            for e in $(seq 1 200); do
+                echo "XADD $prefix:$k * type event_$((e % 5)) id $e data payload_$e"
+            done
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 1 --pipe 2>/dev/null
+    done
+done
+echo "    STREAM: 400 keys × 200 entries"
 
 # ============================================
-# ZSET (Sorted Set) type - Scored rankings
+# DATABASE 2: BITMAP, HYPERLOGLOG, GEO
 # ============================================
-echo "Creating ZSET data..."
+echo ""
+echo "============================================"
+echo "[DB 2] BITMAP, HYPERLOGLOG, GEO"
+echo "============================================"
 
-# Leaderboard scores
-redis-cli -h redis -a dbview123 ZADD leaderboard:game 15000 "alice" 12500 "bob" 11000 "charlie" 9500 "david" 8000 "eve"
+# BITMAP in DB 2
+echo "  [DB 2] Creating BITMAP data..."
+(
+    for k in $(seq 1 2000); do
+        for bit in 0 50 100 150 200 250 300 350 400; do
+            echo "SETBIT bitmap:user:login:$k $bit 1"
+        done
+    done
+    for k in $(seq 1 1000); do
+        for bit in 0 30 60 90 120 150 180 210 240; do
+            echo "SETBIT bitmap:feature:flag:$k $bit $((k % 2))"
+        done
+    done
+) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 2 --pipe 2>/dev/null
+echo "    BITMAP: 3000 keys"
 
-# Product ratings (score = rating * 100 for precision)
-redis-cli -h redis -a dbview123 ZADD rating:products 485 "product:1" 420 "product:2" 395 "product:3" 450 "product:4"
+# HYPERLOGLOG in DB 2
+echo "  [DB 2] Creating HYPERLOGLOG data..."
+for prefix in "hll:visitors:page" "hll:unique:ips"; do
+    for k in $(seq 1 200); do
+        (
+            printf "PFADD $prefix:$k"
+            for v in $(seq 1 200); do
+                printf " \"elem_$((k * 200 + v))\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 2 --pipe 2>/dev/null
+    done
+done
+echo "    HYPERLOGLOG: 400 keys × 200 elements"
 
-# Search ranking by relevance score
-redis-cli -h redis -a dbview123 ZADD search:laptop 100 "product:1" 85 "product:4" 45 "product:2"
-
-# Article views (score = view count)
-redis-cli -h redis -a dbview123 ZADD views:articles 5420 "article:101" 3200 "article:102" 2800 "article:103" 1500 "article:104"
-
-# Scheduled tasks (score = unix timestamp)
-redis-cli -h redis -a dbview123 ZADD scheduled:tasks 1735084800 "backup:db" 1735171200 "cleanup:logs" 1735257600 "report:weekly"
+# GEO in DB 2
+echo "  [DB 2] Creating GEOSPATIAL data..."
+for prefix in "geo:stores:city" "geo:drivers:zone"; do
+    for k in $(seq 1 200); do
+        (
+            printf "GEOADD $prefix:$k"
+            for loc in $(seq 1 200); do
+                lon=$(( (k * 17 + loc * 31) % 360 - 180 ))
+                lat=$(( (k * 13 + loc * 29) % 170 - 85 ))
+                printf " $lon $lat \"loc_${k}_${loc}\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 2 --pipe 2>/dev/null
+    done
+done
+echo "    GEO: 400 keys × 200 locations"
 
 # ============================================
-# STREAM type - Event log entries
+# DATABASE 3: STRING, HASH, ZSET (different patterns)
 # ============================================
-echo "Creating STREAM data..."
+echo ""
+echo "============================================"
+echo "[DB 3] STRING, HASH, ZSET"
+echo "============================================"
 
-# Order events stream
-redis-cli -h redis -a dbview123 XADD events:orders "*" action "created" order_id "1001" user_id "1" total "1079.98"
-redis-cli -h redis -a dbview123 XADD events:orders "*" action "paid" order_id "1001" payment_method "credit_card"
-redis-cli -h redis -a dbview123 XADD events:orders "*" action "shipped" order_id "1001" tracking "TRK123456"
-redis-cli -h redis -a dbview123 XADD events:orders "*" action "created" order_id "1002" user_id "2" total "29.99"
-redis-cli -h redis -a dbview123 XADD events:orders "*" action "paid" order_id "1002" payment_method "paypal"
+# STRING in DB 3
+echo "  [DB 3] Creating STRING data..."
+(
+    for i in $(seq 1 800); do
+        echo "SET counter:visits:$i \"$((i * 100))\""
+    done
+    for i in $(seq 1 600); do
+        echo "SET config:app:$i \"{\\\"enabled\\\":true,\\\"level\\\":$i}\""
+    done
+    for i in $(seq 1 600); do
+        echo "SET lock:resource:$i \"locked_by_process_$i\""
+    done
+) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 3 --pipe 2>/dev/null
+echo "    STRING: 2000 keys"
 
-# User activity stream
-redis-cli -h redis -a dbview123 XADD stream:activity "*" user "alice" action "login" ip "192.168.1.100"
-redis-cli -h redis -a dbview123 XADD stream:activity "*" user "alice" action "view_product" product_id "1"
-redis-cli -h redis -a dbview123 XADD stream:activity "*" user "bob" action "login" ip "192.168.1.101"
-redis-cli -h redis -a dbview123 XADD stream:activity "*" user "alice" action "add_to_cart" product_id "1" quantity "1"
-redis-cli -h redis -a dbview123 XADD stream:activity "*" user "alice" action "checkout" order_id "1003"
+# HASH in DB 3
+echo "  [DB 3] Creating HASH data..."
+for prefix in "order:details" "inventory:stock"; do
+    for k in $(seq 1 200); do
+        (
+            printf "HSET $prefix:$k"
+            for f in $(seq 1 200); do
+                printf " item_$f \"qty_$((f * k % 1000))\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 3 --pipe 2>/dev/null
+    done
+done
+echo "    HASH: 400 keys × 200 fields"
 
-# System metrics stream
-redis-cli -h redis -a dbview123 XADD metrics:system "*" cpu "45.2" memory "62.8" disk "35.1" connections "127"
-redis-cli -h redis -a dbview123 XADD metrics:system "*" cpu "48.1" memory "63.2" disk "35.1" connections "132"
-redis-cli -h redis -a dbview123 XADD metrics:system "*" cpu "42.7" memory "61.5" disk "35.2" connections "125"
+# ZSET in DB 3
+echo "  [DB 3] Creating ZSET data..."
+for prefix in "timeline:posts" "priority:tasks"; do
+    for k in $(seq 1 200); do
+        (
+            printf "ZADD $prefix:$k"
+            for m in $(seq 1 200); do
+                printf " $((1700000000 + m * 60)) \"item_${m}\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 3 --pipe 2>/dev/null
+    done
+done
+echo "    ZSET: 400 keys × 200 members"
+
+# ============================================
+# DATABASE 4: LIST, SET, STREAM (different patterns)
+# ============================================
+echo ""
+echo "============================================"
+echo "[DB 4] LIST, SET, STREAM"
+echo "============================================"
+
+# LIST in DB 4
+echo "  [DB 4] Creating LIST data..."
+for prefix in "messages:chat" "notifications:user"; do
+    for k in $(seq 1 200); do
+        (
+            printf "RPUSH $prefix:$k"
+            for e in $(seq 1 200); do
+                printf " \"{\\\"id\\\":$e,\\\"text\\\":\\\"msg_$e\\\"}\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 4 --pipe 2>/dev/null
+    done
+done
+echo "    LIST: 400 keys × 200 elements"
+
+# SET in DB 4
+echo "  [DB 4] Creating SET data..."
+for prefix in "permissions:role" "category:products"; do
+    for k in $(seq 1 200); do
+        (
+            printf "SADD $prefix:$k"
+            for m in $(seq 1 200); do
+                printf " \"item_${k}_${m}\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 4 --pipe 2>/dev/null
+    done
+done
+echo "    SET: 400 keys × 200 members"
+
+# STREAM in DB 4
+echo "  [DB 4] Creating STREAM data..."
+for prefix in "metrics:server" "audit:actions"; do
+    for k in $(seq 1 200); do
+        (
+            for e in $(seq 1 200); do
+                echo "XADD $prefix:$k * cpu $((e % 100)) mem $((50 + e % 50)) action act_$e"
+            done
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 4 --pipe 2>/dev/null
+    done
+done
+echo "    STREAM: 400 keys × 200 entries"
+
+# ============================================
+# DATABASE 5: BITMAP, HYPERLOGLOG, GEO (different patterns)
+# ============================================
+echo ""
+echo "============================================"
+echo "[DB 5] BITMAP, HYPERLOGLOG, GEO"
+echo "============================================"
+
+# BITMAP in DB 5
+echo "  [DB 5] Creating BITMAP data..."
+(
+    for k in $(seq 1 1500); do
+        for bit in 0 20 40 60 80 100 120 140 160; do
+            echo "SETBIT bitmap:online:status:$k $bit 1"
+        done
+    done
+    for k in $(seq 1 1500); do
+        for bit in 0 15 30 45 60 75 90 105 120; do
+            echo "SETBIT bitmap:daily:active:$k $bit $((k % 2))"
+        done
+    done
+) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 5 --pipe 2>/dev/null
+echo "    BITMAP: 3000 keys"
+
+# HYPERLOGLOG in DB 5
+echo "  [DB 5] Creating HYPERLOGLOG data..."
+for prefix in "hll:searches:query" "hll:events:daily"; do
+    for k in $(seq 1 200); do
+        (
+            printf "PFADD $prefix:$k"
+            for v in $(seq 1 200); do
+                printf " \"data_$((k * 200 + v))\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 5 --pipe 2>/dev/null
+    done
+done
+echo "    HYPERLOGLOG: 400 keys × 200 elements"
+
+# GEO in DB 5
+echo "  [DB 5] Creating GEOSPATIAL data..."
+for prefix in "geo:restaurants:area" "geo:events:venue"; do
+    for k in $(seq 1 200); do
+        (
+            printf "GEOADD $prefix:$k"
+            for loc in $(seq 1 200); do
+                lon=$(( (k * 19 + loc * 37) % 360 - 180 ))
+                lat=$(( (k * 11 + loc * 23) % 170 - 85 ))
+                printf " $lon $lat \"place_${k}_${loc}\""
+            done
+            printf "\n"
+        ) | redis-cli -h $REDIS_HOST -a $REDIS_PASS -n 5 --pipe 2>/dev/null
+    done
+done
+echo "    GEO: 400 keys × 200 locations"
 
 echo ""
 echo "============================================"
-echo "Redis sample data initialized successfully!"
+echo "Redis Data Initialization Complete!"
 echo "============================================"
 echo ""
-echo "Data types created:"
-echo "  - HASH:   user:*, product:*, order:*, session:*, config:*"
-echo "  - STRING: cache:*, counter:*, setting:*"
-echo "  - LIST:   log:*, queue:*, recent:*"
-echo "  - SET:    tags:*, online:*, category:*, blocked:*"
-echo "  - ZSET:   leaderboard:*, rating:*, search:*, views:*, scheduled:*"
-echo "  - STREAM: events:*, stream:*, metrics:*"
+echo "Database Distribution (6 DBs × 3 types each):"
+echo ""
+echo "  DB 0: STRING, HASH, LIST"
+echo "    - cache:page:*, cache:api:*, session:token:*"
+echo "    - user:profile:*, product:catalog:*"
+echo "    - log:activity:*, queue:jobs:*"
+echo ""
+echo "  DB 1: SET, ZSET, STREAM"
+echo "    - tags:user:*, followers:user:*"
+echo "    - leaderboard:game:*, ranking:score:*"
+echo "    - events:order:*, events:payment:*"
+echo ""
+echo "  DB 2: BITMAP, HYPERLOGLOG, GEO"
+echo "    - bitmap:user:login:*, bitmap:feature:flag:*"
+echo "    - hll:visitors:page:*, hll:unique:ips:*"
+echo "    - geo:stores:city:*, geo:drivers:zone:*"
+echo ""
+echo "  DB 3: STRING, HASH, ZSET"
+echo "    - counter:visits:*, config:app:*, lock:resource:*"
+echo "    - order:details:*, inventory:stock:*"
+echo "    - timeline:posts:*, priority:tasks:*"
+echo ""
+echo "  DB 4: LIST, SET, STREAM"
+echo "    - messages:chat:*, notifications:user:*"
+echo "    - permissions:role:*, category:products:*"
+echo "    - metrics:server:*, audit:actions:*"
+echo ""
+echo "  DB 5: BITMAP, HYPERLOGLOG, GEO"
+echo "    - bitmap:online:status:*, bitmap:daily:active:*"
+echo "    - hll:searches:query:*, hll:events:daily:*"
+echo "    - geo:restaurants:area:*, geo:events:venue:*"
+echo ""
+echo "Summary (~1.5M total data points):"
+echo "  STRING:      4,000 keys (DB 0, 3)"
+echo "  HASH:        800 keys × 200 fields (DB 0, 3)"
+echo "  LIST:        800 keys × 200 elements (DB 0, 4)"
+echo "  SET:         800 keys × 200 members (DB 1, 4)"
+echo "  ZSET:        800 keys × 200 members (DB 1, 3)"
+echo "  STREAM:      800 keys × 200 entries (DB 1, 4)"
+echo "  BITMAP:      6,000 keys (DB 2, 5)"
+echo "  HYPERLOGLOG: 800 keys × 200 elements (DB 2, 5)"
+echo "  GEOSPATIAL:  800 keys × 200 locations (DB 2, 5)"
+echo ""
+echo "Total: ~16,000 keys, ~1,500,000 data points"
 echo ""

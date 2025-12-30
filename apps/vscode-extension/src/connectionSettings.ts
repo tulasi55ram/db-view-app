@@ -17,6 +17,18 @@ export async function getStoredConnection(
   context: vscode.ExtensionContext
 ): Promise<DatabaseConnectionConfig | null> {
   const dbType = context.globalState.get<DatabaseType>(STATE_KEYS.dbType) || 'postgres';
+
+  // Legacy storage only supports host/port/user/database format (postgres, mysql, mariadb, sqlserver)
+  // For other database types (cassandra, mongodb, sqlite, redis, elasticsearch),
+  // clear the legacy dbType and return null since they require different connection parameters
+  const legacySupportedTypes = ['postgres', 'mysql', 'mariadb', 'sqlserver'];
+  if (!legacySupportedTypes.includes(dbType)) {
+    console.log(`[dbview] getStoredConnection: dbType "${dbType}" is not supported by legacy storage, clearing and returning null`);
+    // Clear the legacy dbType to prevent future issues
+    await context.globalState.update(STATE_KEYS.dbType, undefined);
+    return null;
+  }
+
   const host = context.globalState.get<string>(STATE_KEYS.host);
   const port = context.globalState.get<number>(STATE_KEYS.port);
   const user = context.globalState.get<string>(STATE_KEYS.user);
@@ -160,11 +172,19 @@ async function saveConnection(
   context: vscode.ExtensionContext,
   connection: DatabaseConnectionConfig
 ): Promise<void> {
+  // Legacy storage only supports host/port/user/database format (postgres, mysql, mariadb, sqlserver)
+  // Skip saving for other database types to avoid storing incomplete/incompatible data
+  const legacySupportedTypes = ['postgres', 'mysql', 'mariadb', 'sqlserver'];
+  if (!legacySupportedTypes.includes(connection.dbType)) {
+    console.log(`[dbview] saveConnection: Skipping legacy save for dbType "${connection.dbType}"`);
+    return;
+  }
+
   const updates: Promise<void>[] = [
     Promise.resolve(context.globalState.update(STATE_KEYS.dbType, connection.dbType))
   ];
 
-  // Only save host/port/user/database if they exist (not for SQLite)
+  // Only save host/port/user/database if they exist
   if ('host' in connection && connection.host) {
     updates.push(Promise.resolve(context.globalState.update(STATE_KEYS.host, connection.host)));
   }
@@ -194,9 +214,29 @@ export async function getAllSavedConnections(
   context: vscode.ExtensionContext
 ): Promise<DatabaseConnectionConfig[]> {
   const connections = context.globalState.get<DatabaseConnectionConfig[]>(CONNECTIONS_KEY);
+  console.log(`[dbview] getAllSavedConnections: Found ${connections?.length ?? 0} connections in globalState`);
   if (!connections) {
     return [];
   }
+
+  // Debug: Log raw connection data from globalState
+  connections.forEach((conn, idx) => {
+    const debugConn = { ...conn } as any;
+    if (debugConn.password) debugConn.password = '***';
+    console.log(`[dbview] getAllSavedConnections: Connection ${idx} raw data:`, JSON.stringify(debugConn));
+    // Extra debug for Cassandra - check for missing/empty keyspace
+    if (debugConn.dbType === 'cassandra') {
+      const keyspaceStatus = debugConn.keyspace
+        ? `"${debugConn.keyspace}"`
+        : (debugConn.keyspace === '' ? 'EMPTY STRING' : 'UNDEFINED/MISSING');
+      console.log(`[dbview] Cassandra connection "${debugConn.name}" - keyspace: ${keyspaceStatus}, contactPoints: ${JSON.stringify(debugConn.contactPoints)}, localDatacenter: "${debugConn.localDatacenter}"`);
+
+      // Warn if keyspace is missing
+      if (!debugConn.keyspace) {
+        console.warn(`[dbview] WARNING: Cassandra connection "${debugConn.name}" has no keyspace configured!`);
+      }
+    }
+  });
 
   // Retrieve passwords from secrets for each connection
   const connectionsWithPasswords = await Promise.all(
@@ -205,9 +245,13 @@ export async function getAllSavedConnections(
       const connWithType = ('dbType' in conn ? conn : { ...(conn as any), dbType: 'postgres' as const }) as DatabaseConnectionConfig;
 
       if (conn.name) {
-        const password = await context.secrets.get(`dbview.connection.${conn.name}.password`);
-        return { ...(connWithType as any), password: password ?? undefined } as DatabaseConnectionConfig;
+        const secretKey = `dbview.connection.${conn.name}.password`;
+        const password = await context.secrets.get(secretKey);
+        console.log(`[dbview] getAllSavedConnections: ${conn.name} (${connWithType.dbType}) - secretKey="${secretKey}" - password ${password ? 'FOUND (length=' + password.length + ')' : 'NOT FOUND'}`);
+        const result = { ...connWithType, password: password ?? undefined } as DatabaseConnectionConfig;
+        return result;
       }
+      console.log(`[dbview] getAllSavedConnections: connection without name, dbType=${connWithType.dbType}`);
       return connWithType;
     })
   );
@@ -223,6 +267,20 @@ export async function saveConnectionWithName(
     throw new Error("Connection name is required");
   }
 
+  // Validate Cassandra-specific required fields
+  if (connection.dbType === 'cassandra') {
+    const cassandraConn = connection as any;
+    if (!cassandraConn.keyspace?.trim()) {
+      console.error('[dbview] saveConnectionWithName: Cassandra connection is missing keyspace!', JSON.stringify({
+        name: cassandraConn.name,
+        keyspace: cassandraConn.keyspace,
+        contactPoints: cassandraConn.contactPoints
+      }));
+      throw new Error("Cassandra keyspace is required");
+    }
+    console.log(`[dbview] saveConnectionWithName: Cassandra connection "${connection.name}" has keyspace: "${cassandraConn.keyspace}"`);
+  }
+
   const connections = await getAllSavedConnections(context);
 
   // Check if connection with this name already exists
@@ -230,12 +288,23 @@ export async function saveConnectionWithName(
 
   // Store password in secrets if provided
   if ('password' in connection && connection.password) {
-    await context.secrets.store(`dbview.connection.${connection.name}.password`, connection.password);
+    const secretKey = `dbview.connection.${connection.name}.password`;
+    await context.secrets.store(secretKey, connection.password);
+    console.log(`[dbview] saveConnectionWithName: Stored password for ${connection.name} - secretKey="${secretKey}" - length=${connection.password.length}`);
+  } else {
+    console.log(`[dbview] saveConnectionWithName: No password to store for ${connection.name} - password in connection: ${'password' in connection}, value: ${(connection as any).password ? 'has value' : 'empty/undefined'}`);
   }
 
   // Remove password from the connection object before storing in globalState
   const connectionToStore = { ...connection } as any;
   delete connectionToStore.password;
+
+  console.log(`[dbview] saveConnectionWithName: Storing connection:`, JSON.stringify(connectionToStore));
+
+  // Extra debug for Cassandra
+  if (connectionToStore.dbType === 'cassandra') {
+    console.log(`[dbview] saveConnectionWithName: Cassandra fields - keyspace: "${connectionToStore.keyspace}", contactPoints: ${JSON.stringify(connectionToStore.contactPoints)}, localDatacenter: "${connectionToStore.localDatacenter}"`);
+  }
 
   if (existingIndex >= 0) {
     // Update existing connection

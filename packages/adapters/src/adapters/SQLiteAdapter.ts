@@ -26,6 +26,7 @@ import type {
   BulkDeleteOptions,
 } from './DatabaseAdapter';
 import { getDatabaseCapabilities } from '../capabilities/DatabaseCapabilities';
+import { buildSqlFilter } from "@dbview/core";
 
 /**
  * SQLite Database Adapter
@@ -908,108 +909,10 @@ export class SQLiteAdapter extends EventEmitter implements DatabaseAdapter {
   }
 
   buildWhereClause(filters: FilterCondition[], logic: 'AND' | 'OR'): { whereClause: string; params: unknown[] } {
-    if (!filters || filters.length === 0) {
-      return { whereClause: '', params: [] };
-    }
-
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-
-    for (const filter of filters) {
-      if (!filter.columnName || !filter.operator) {
-        continue;
-      }
-
-      const columnName = this.quoteIdentifier(filter.columnName);
-
-      switch (filter.operator) {
-        case 'equals':
-          conditions.push(`${columnName} = ?`);
-          params.push(filter.value);
-          break;
-
-        case 'not_equals':
-          conditions.push(`${columnName} != ?`);
-          params.push(filter.value);
-          break;
-
-        case 'contains':
-          conditions.push(`${columnName} LIKE ?`);
-          params.push(`%${filter.value}%`);
-          break;
-
-        case 'not_contains':
-          conditions.push(`${columnName} NOT LIKE ?`);
-          params.push(`%${filter.value}%`);
-          break;
-
-        case 'starts_with':
-          conditions.push(`${columnName} LIKE ?`);
-          params.push(`${filter.value}%`);
-          break;
-
-        case 'ends_with':
-          conditions.push(`${columnName} LIKE ?`);
-          params.push(`%${filter.value}`);
-          break;
-
-        case 'greater_than':
-          conditions.push(`${columnName} > ?`);
-          params.push(filter.value);
-          break;
-
-        case 'less_than':
-          conditions.push(`${columnName} < ?`);
-          params.push(filter.value);
-          break;
-
-        case 'greater_or_equal':
-          conditions.push(`${columnName} >= ?`);
-          params.push(filter.value);
-          break;
-
-        case 'less_or_equal':
-          conditions.push(`${columnName} <= ?`);
-          params.push(filter.value);
-          break;
-
-        case 'is_null':
-          conditions.push(`${columnName} IS NULL`);
-          break;
-
-        case 'is_not_null':
-          conditions.push(`${columnName} IS NOT NULL`);
-          break;
-
-        case 'between':
-          if (filter.value2 !== undefined) {
-            conditions.push(`${columnName} BETWEEN ? AND ?`);
-            params.push(filter.value, filter.value2);
-          }
-          break;
-
-        case 'in':
-          // Filter out empty strings to avoid IN ('') which returns no results
-          const values = (Array.isArray(filter.value)
-            ? filter.value.map((v: unknown) => String(v).trim())
-            : String(filter.value).split(',').map((v: string) => v.trim())
-          ).filter((v: string) => v !== '');
-
-          if (values.length > 0) {
-            const placeholders = values.map(() => '?').join(', ');
-            conditions.push(`${columnName} IN (${placeholders})`);
-            params.push(...values);
-          }
-          // Skip adding clause if no valid values (treats as "no filter")
-          break;
-      }
-    }
-
-    if (conditions.length === 0) {
-      return { whereClause: '', params: [] };
-    }
-
-    const whereClause = conditions.join(` ${logic} `);
-    return { whereClause, params };
+    // Delegate to @dbview/core filter builder
+    return buildSqlFilter(filters, logic, {
+      dbType: 'sqlite',
+      quoteIdentifier: this.quoteIdentifier.bind(this),
+    });
   }
 }

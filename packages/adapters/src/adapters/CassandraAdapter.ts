@@ -127,7 +127,62 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
 
   constructor(config: CassandraConnectionConfig) {
     super();
-    this.connectionConfig = config;
+
+    // Debug: Log received config (without password)
+    const debugConfig = { ...config, password: config.password ? '***' : undefined };
+    console.log('[CassandraAdapter] Constructor called with config:', JSON.stringify(debugConfig));
+
+    // Normalize contactPoints - handle various formats that might come from storage
+    let contactPoints = config.contactPoints;
+
+    // If contactPoints is a string (comma-separated), convert to array
+    if (typeof contactPoints === 'string') {
+      console.warn('[CassandraAdapter] contactPoints is a string, converting to array:', contactPoints);
+      contactPoints = (contactPoints as string).split(',').map(cp => cp.trim()).filter(cp => cp.length > 0);
+    }
+
+    // If contactPoints is undefined but we have a host field (legacy format), use that
+    if ((!contactPoints || contactPoints.length === 0) && 'host' in config && (config as any).host) {
+      console.warn('[CassandraAdapter] Using host field as contactPoint fallback:', (config as any).host);
+      contactPoints = [(config as any).host];
+    }
+
+    // Validate required fields early for better error messages
+    if (!contactPoints || !Array.isArray(contactPoints) || contactPoints.length === 0) {
+      console.error('[CassandraAdapter] Invalid contactPoints after normalization:', contactPoints);
+      console.error('[CassandraAdapter] Full config received:', JSON.stringify(debugConfig));
+      throw new Error(
+        'Cassandra connection is missing contact points. ' +
+        'The connection configuration may be corrupted. Please delete and re-create the connection.'
+      );
+    }
+
+    // Normalize localDatacenter - use default if not provided
+    let localDatacenter = config.localDatacenter;
+    if (!localDatacenter) {
+      console.warn('[CassandraAdapter] localDatacenter not set, using default "datacenter1"');
+      localDatacenter = 'datacenter1';
+    }
+
+    // Validate keyspace - it's required for Cassandra connections
+    const keyspace = config.keyspace?.trim() || '';
+    if (!keyspace) {
+      console.error('[CassandraAdapter] Keyspace is missing or empty in config:', JSON.stringify(debugConfig));
+      throw new Error(
+        'Cassandra keyspace is not configured. ' +
+        'Please edit the connection and provide a keyspace name (e.g., "dbview_dev").'
+      );
+    }
+
+    // Store normalized config with validated keyspace
+    this.connectionConfig = {
+      ...config,
+      contactPoints,
+      localDatacenter,
+      keyspace,
+    };
+
+    console.log('[CassandraAdapter] Normalized config stored - keyspace:', this.connectionConfig.keyspace);
   }
 
   get status(): ConnectionStatus {
@@ -170,11 +225,16 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
     const driver = getDriver();
     const { types, policies, auth } = driver;
 
+    // These should already be normalized by the constructor, but double-check
+    const contactPoints = this.connectionConfig.contactPoints;
+    const localDatacenter = this.connectionConfig.localDatacenter;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const config: any = {
-      contactPoints: this.connectionConfig.contactPoints,
-      localDataCenter: this.connectionConfig.localDatacenter,
-      keyspace: this.connectionConfig.keyspace,
+      contactPoints,
+      localDataCenter: localDatacenter,
+      // Only set keyspace if it has a value (empty string causes "Key may not be empty" error)
+      ...(this.connectionConfig.keyspace ? { keyspace: this.connectionConfig.keyspace } : {}),
       protocolOptions: {
         port: this.connectionConfig.port || 9042,
       },
@@ -353,6 +413,22 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
     }
   }
 
+  // ==================== Helper Methods ====================
+
+  /**
+   * Resolve and validate keyspace - throws helpful error if keyspace is not configured
+   */
+  private resolveKeyspace(schema?: string): string {
+    const keyspace = schema || this.connectionConfig.keyspace;
+    if (!keyspace) {
+      throw new Error(
+        'Cassandra keyspace is not configured. ' +
+        'Please edit the connection and provide a keyspace name (e.g., "dbview_dev").'
+      );
+    }
+    return keyspace;
+  }
+
   // ==================== Hierarchy & Discovery ====================
 
   async getHierarchy(): Promise<DatabaseHierarchy> {
@@ -391,7 +467,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Not connected to Cassandra');
     }
 
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     const result = await this.client.execute(
       'SELECT table_name FROM system_schema.tables WHERE keyspace_name = ?',
@@ -399,34 +475,14 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       { prepare: true }
     );
 
-    const tableInfos: TableInfo[] = [];
-
-    for (const row of result.rows) {
-      const tableName = row.table_name;
-
-      // Get table size estimation (not exact due to Cassandra's distributed nature)
-      try {
-        const countResult = await this.client.execute(
-          `SELECT COUNT(*) as count FROM ${this.quoteIdentifier(keyspace)}.${this.quoteIdentifier(tableName)}`,
-          [],
-          { prepare: true, fetchSize: 1 }
-        );
-        tableInfos.push({
-          name: tableName,
-          rowCount: Number(countResult.rows[0]?.count || 0),
-          sizeBytes: 0, // Cassandra doesn't provide table size easily
-        });
-      } catch (error) {
-        // If count fails (e.g., timeout on large tables), still add the table
-        tableInfos.push({
-          name: tableName,
-          rowCount: undefined,
-          sizeBytes: 0,
-        });
-      }
-    }
-
-    return tableInfos;
+    // Return table names without row counts for fast initial loading
+    // Row counts are expensive in Cassandra (requires full table scan across partitions)
+    // Counts will be fetched on-demand when viewing specific table details via getTableStatistics()
+    return result.rows.map((row: CassandraRow) => ({
+      name: row.table_name as string,
+      rowCount: undefined, // Defer expensive COUNT(*) to on-demand requests
+      sizeBytes: 0, // Cassandra doesn't provide table size via CQL
+    }));
   }
 
   async getTableMetadata(schema: string, table: string): Promise<ColumnMetadata[]> {
@@ -434,7 +490,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Not connected to Cassandra');
     }
 
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     // Get column information from system_schema.columns
     const columnsResult = await this.client.execute(
@@ -519,7 +575,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
     }
 
     const { limit = 100, offset = 0, filters = [], filterLogic = 'AND', sortColumn, sortDirection = 'ASC' } = options;
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     // Build CQL query
     let cql = `SELECT * FROM ${this.quoteIdentifier(keyspace)}.${this.quoteIdentifier(table)}`;
@@ -564,7 +620,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
     }
 
     const { filters = [], filterLogic = 'AND' } = options;
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     let cql = `SELECT COUNT(*) as count FROM ${this.quoteIdentifier(keyspace)}.${this.quoteIdentifier(table)}`;
     const params: unknown[] = [];
@@ -586,7 +642,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Not connected to Cassandra');
     }
 
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     // Get row count (approximate for large tables)
     let rowCount = 0;
@@ -668,7 +724,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Cannot insert: Connection is in read-only mode');
     }
 
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
     const columns = Object.keys(data);
     const values = Object.values(data);
     const placeholders = columns.map(() => '?').join(', ');
@@ -698,7 +754,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Cannot update: Connection is in read-only mode');
     }
 
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     // Build WHERE clause from primary key
     const pkColumns = Object.keys(primaryKey);
@@ -725,7 +781,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       return 0;
     }
 
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
     let deletedCount = 0;
 
     // Cassandra requires individual deletes or batch
@@ -771,7 +827,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
     }
 
     const { batchSize = 50, onProgress, skipErrors = false } = options;
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     let successCount = 0;
     let failureCount = 0;
@@ -835,7 +891,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
     }
 
     const { batchSize = 50, onProgress, skipErrors = false } = options;
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     let successCount = 0;
     let failureCount = 0;
@@ -937,7 +993,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
     }
 
     const { limit = 100, filters = [], filterLogic = 'AND', sortColumn, sortDirection = 'ASC', cursor } = options;
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     // Build CQL query
     let cql = `SELECT * FROM ${this.quoteIdentifier(keyspace)}.${this.quoteIdentifier(table)}`;
@@ -1027,12 +1083,16 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
     const localResult = await this.client.execute('SELECT * FROM system.local');
     const localRow = localResult.rows[0];
 
-    // Get table count
-    const tablesResult = await this.client.execute(
-      'SELECT COUNT(*) as count FROM system_schema.tables WHERE keyspace_name = ?',
-      [this.connectionConfig.keyspace],
-      { prepare: true }
-    );
+    // Get table count (only if keyspace is configured)
+    let tableCount = 0;
+    if (this.connectionConfig.keyspace) {
+      const tablesResult = await this.client.execute(
+        'SELECT COUNT(*) as count FROM system_schema.tables WHERE keyspace_name = ?',
+        [this.connectionConfig.keyspace],
+        { prepare: true }
+      );
+      tableCount = Number(tablesResult.rows[0]?.count || 0);
+    }
 
     // Get keyspace count (excluding system)
     const keyspacesResult = await this.client.execute(
@@ -1042,12 +1102,12 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
     return {
       version: localRow?.release_version || 'unknown',
       size: 'N/A', // Would require nodetool
-      tableCount: Number(tablesResult.rows[0]?.count || 0),
+      tableCount,
       schemaCount: Number(keyspacesResult.rows[0]?.count || 0),
       uptime: 'N/A', // Not available via CQL
       maxConnections: undefined,
       activeConnections: undefined,
-      databaseName: this.connectionConfig.keyspace,
+      databaseName: this.connectionConfig.keyspace || '(no default keyspace)',
       encoding: 'UTF-8',
     };
   }
@@ -1063,35 +1123,35 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Not connected to Cassandra');
     }
 
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
-    // Count tables
-    const tablesResult = await this.client.execute(
-      'SELECT COUNT(*) as count FROM system_schema.tables WHERE keyspace_name = ?',
-      [keyspace],
-      { prepare: true }
-    );
-
-    // Count views (materialized views)
-    const viewsResult = await this.client.execute(
-      'SELECT COUNT(*) as count FROM system_schema.views WHERE keyspace_name = ?',
-      [keyspace],
-      { prepare: true }
-    );
-
-    // Count functions
-    const functionsResult = await this.client.execute(
-      'SELECT COUNT(*) as count FROM system_schema.functions WHERE keyspace_name = ?',
-      [keyspace],
-      { prepare: true }
-    );
-
-    // Count types
-    const typesResult = await this.client.execute(
-      'SELECT COUNT(*) as count FROM system_schema.types WHERE keyspace_name = ?',
-      [keyspace],
-      { prepare: true }
-    );
+    // Run all count queries in parallel for faster loading
+    const [tablesResult, viewsResult, functionsResult, typesResult] = await Promise.all([
+      // Count tables
+      this.client.execute(
+        'SELECT COUNT(*) as count FROM system_schema.tables WHERE keyspace_name = ?',
+        [keyspace],
+        { prepare: true }
+      ),
+      // Count views (materialized views)
+      this.client.execute(
+        'SELECT COUNT(*) as count FROM system_schema.views WHERE keyspace_name = ?',
+        [keyspace],
+        { prepare: true }
+      ),
+      // Count functions
+      this.client.execute(
+        'SELECT COUNT(*) as count FROM system_schema.functions WHERE keyspace_name = ?',
+        [keyspace],
+        { prepare: true }
+      ),
+      // Count types
+      this.client.execute(
+        'SELECT COUNT(*) as count FROM system_schema.types WHERE keyspace_name = ?',
+        [keyspace],
+        { prepare: true }
+      ),
+    ]);
 
     return {
       tables: Number(tablesResult.rows[0]?.count || 0),
@@ -1108,7 +1168,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Not connected to Cassandra');
     }
 
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     const result = await this.client.execute(
       'SELECT view_name FROM system_schema.views WHERE keyspace_name = ?',
@@ -1128,7 +1188,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Not connected to Cassandra');
     }
 
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     const result = await this.client.execute(
       'SELECT function_name FROM system_schema.functions WHERE keyspace_name = ?',
@@ -1144,7 +1204,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Not connected to Cassandra');
     }
 
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     const result = await this.client.execute(
       'SELECT type_name FROM system_schema.types WHERE keyspace_name = ?',
@@ -1160,7 +1220,7 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       throw new Error('Not connected to Cassandra');
     }
 
-    const keyspace = schema || this.connectionConfig.keyspace;
+    const keyspace = this.resolveKeyspace(schema);
 
     const result = await this.client.execute(
       `SELECT index_name, kind, options FROM system_schema.indexes

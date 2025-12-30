@@ -101,6 +101,78 @@ export function showConnectionConfigPanel(
                 authDatabase: message.authDatabase || 'admin',
                 readOnly: message.readOnly || false
               };
+            } else if (dbType === 'redis') {
+              // Get Redis-specific password
+              let redisPassword = message.redisPassword || undefined;
+              if (!redisPassword && defaults?.name) {
+                const storedPassword = await context.secrets.get(`dbview.connection.${defaults.name}.password`);
+                if (storedPassword) redisPassword = storedPassword;
+              }
+              connection = {
+                dbType: 'redis',
+                name: message.name || undefined,
+                host: message.redisHost || 'localhost',
+                port: parseInt(message.redisPort, 10) || 6379,
+                database: parseInt(message.redisDatabase, 10) || 0,
+                username: message.redisUsername || undefined,
+                password: redisPassword,
+                readOnly: message.readOnly || false
+              };
+            } else if (dbType === 'elasticsearch') {
+              // Get Elasticsearch-specific password/apiKey
+              let esPassword = message.esPassword || undefined;
+              let esApiKey = message.esApiKey || undefined;
+              if (!esPassword && !esApiKey && defaults?.name) {
+                const storedPassword = await context.secrets.get(`dbview.connection.${defaults.name}.password`);
+                if (storedPassword) esPassword = storedPassword;
+              }
+              connection = {
+                dbType: 'elasticsearch',
+                name: message.name || undefined,
+                node: message.esNode || undefined,
+                cloudId: message.esCloudId || undefined,
+                username: message.esUsername || undefined,
+                password: esPassword,
+                apiKey: esApiKey,
+                readOnly: message.readOnly || false
+              };
+            } else if (dbType === 'cassandra') {
+              // Get Cassandra-specific password
+              let cassandraPassword = message.cassandraPassword || undefined;
+              if (!cassandraPassword && defaults?.name) {
+                const storedPassword = await context.secrets.get(`dbview.connection.${defaults.name}.password`);
+                if (storedPassword) cassandraPassword = storedPassword;
+              }
+              // Debug: Log received Cassandra message fields
+              console.log(`[dbview] Cassandra message received - keyspace: "${message.cassandraKeyspace}", contactPoints: "${message.cassandraContactPoints}", datacenter: "${message.cassandraDatacenter}"`);
+
+              // Validate keyspace is provided (required for Cassandra)
+              const keyspace = (message.cassandraKeyspace || '').trim();
+              if (!keyspace) {
+                console.error('[dbview] Cassandra keyspace is empty or missing!');
+                panel.webview.postMessage({
+                  type: 'error',
+                  message: 'Keyspace is required for Cassandra connections'
+                });
+                return;
+              }
+
+              // Parse contact points from comma-separated string
+              const contactPoints = (message.cassandraContactPoints || 'localhost')
+                .split(',')
+                .map((cp: string) => cp.trim())
+                .filter((cp: string) => cp.length > 0);
+              connection = {
+                dbType: 'cassandra',
+                name: message.name || undefined,
+                contactPoints,
+                port: parseInt(message.cassandraPort, 10) || 9042,
+                keyspace, // Use validated keyspace
+                localDatacenter: message.cassandraDatacenter || 'datacenter1',
+                username: message.cassandraUsername || undefined,
+                password: cassandraPassword,
+                readOnly: message.readOnly || false
+              };
             } else {
               connection = {
                 dbType,
@@ -205,6 +277,74 @@ export function showConnectionConfigPanel(
                   mode: message.mode || 'readwrite',
                   readOnly: message.readOnly || false
                 };
+              } else if (dbType === 'redis') {
+                // Get Redis-specific password from form or secrets
+                let redisTestPassword = message.redisPassword || undefined;
+                if (!redisTestPassword && defaults?.name) {
+                  const storedPassword = await context.secrets.get(`dbview.connection.${defaults.name}.password`);
+                  if (storedPassword) redisTestPassword = storedPassword;
+                }
+                testConfig = {
+                  dbType: 'redis',
+                  name: message.name || undefined,
+                  host: message.redisHost || 'localhost',
+                  port: parseInt(message.redisPort, 10) || 6379,
+                  database: parseInt(message.redisDatabase, 10) || 0,
+                  username: message.redisUsername || undefined,
+                  password: redisTestPassword,
+                  readOnly: message.readOnly || false
+                };
+              } else if (dbType === 'elasticsearch') {
+                // Get Elasticsearch-specific password/apiKey from form or secrets
+                let esTestPassword = message.esPassword || undefined;
+                let esTestApiKey = message.esApiKey || undefined;
+                if (!esTestPassword && !esTestApiKey && defaults?.name) {
+                  const storedPassword = await context.secrets.get(`dbview.connection.${defaults.name}.password`);
+                  if (storedPassword) esTestPassword = storedPassword;
+                }
+                testConfig = {
+                  dbType: 'elasticsearch',
+                  name: message.name || undefined,
+                  node: message.esNode || undefined,
+                  cloudId: message.esCloudId || undefined,
+                  username: message.esUsername || undefined,
+                  password: esTestPassword,
+                  apiKey: esTestApiKey,
+                  readOnly: message.readOnly || false
+                };
+              } else if (dbType === 'cassandra') {
+                // Validate keyspace is provided
+                const cassandraKeyspace = (message.cassandraKeyspace || '').trim();
+                if (!cassandraKeyspace) {
+                  panel.webview.postMessage({
+                    command: "testResult",
+                    success: false,
+                    message: "Keyspace is required for Cassandra connections"
+                  });
+                  return;
+                }
+                // Get Cassandra-specific password from form or secrets
+                let cassandraTestPassword = message.cassandraPassword || undefined;
+                if (!cassandraTestPassword && defaults?.name) {
+                  const storedPassword = await context.secrets.get(`dbview.connection.${defaults.name}.password`);
+                  if (storedPassword) cassandraTestPassword = storedPassword;
+                }
+                // Parse contact points from comma-separated string
+                const contactPoints = (message.cassandraContactPoints || 'localhost')
+                  .split(',')
+                  .map((cp: string) => cp.trim())
+                  .filter((cp: string) => cp.length > 0);
+                testConfig = {
+                  dbType: 'cassandra',
+                  name: message.name || undefined,
+                  contactPoints,
+                  port: parseInt(message.cassandraPort, 10) || 9042,
+                  keyspace: cassandraKeyspace,
+                  localDatacenter: message.cassandraDatacenter || 'datacenter1',
+                  username: message.cassandraUsername || undefined,
+                  password: cassandraTestPassword,
+                  readOnly: message.readOnly || false
+                };
               } else {
                 testConfig = {
                   dbType,
@@ -306,13 +446,26 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
   const defaultName = escapeHtml(defaults?.name ?? "");
   const defaultHost = escapeHtml((defaults && 'host' in defaults ? defaults.host : undefined) ?? "localhost");
   const defaultPort = (defaults && 'port' in defaults ? defaults.port : undefined) ??
-    (dbType === 'mysql' ? 3306 : dbType === 'sqlserver' ? 1433 : dbType === 'mongodb' ? 27017 : 5432);
+    (dbType === 'mysql' || dbType === 'mariadb' ? 3306 : dbType === 'sqlserver' ? 1433 : dbType === 'mongodb' ? 27017 : 5432);
   const defaultDatabase = escapeHtml(String((defaults && 'database' in defaults ? defaults.database : undefined) ?? ""));
   const defaultUser = escapeHtml((defaults && 'user' in defaults ? defaults.user : undefined) ?? "");
   const defaultFilePath = escapeHtml((defaults && 'filePath' in defaults ? defaults.filePath : undefined) ?? "");
   const defaultAuthDatabase = escapeHtml((defaults && 'authDatabase' in defaults ? defaults.authDatabase : undefined) ?? "admin");
   const defaultReadOnly = defaults?.readOnly ?? false;
   const isEditing = Boolean(defaults?.name);
+
+  // Redis defaults
+  const defaultRedisDatabase = (defaults && 'database' in defaults && typeof defaults.database === 'number') ? defaults.database : 0;
+
+  // Elasticsearch defaults
+  const defaultEsNode = escapeHtml((defaults && 'node' in defaults ? defaults.node : undefined) ?? "http://localhost:9200");
+  const defaultEsCloudId = escapeHtml((defaults && 'cloudId' in defaults ? defaults.cloudId : undefined) ?? "");
+  const defaultEsApiKey = escapeHtml((defaults && 'apiKey' in defaults ? defaults.apiKey : undefined) ?? "");
+
+  // Cassandra defaults
+  const defaultCassandraContactPoints = escapeHtml((defaults && 'contactPoints' in defaults ? (defaults.contactPoints as string[]).join(', ') : undefined) ?? "localhost");
+  const defaultCassandraKeyspace = escapeHtml((defaults && 'keyspace' in defaults ? defaults.keyspace : undefined) ?? "");
+  const defaultCassandraDatacenter = escapeHtml((defaults && 'localDatacenter' in defaults ? defaults.localDatacenter : undefined) ?? "datacenter1");
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -544,6 +697,10 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
             margin-top: 6px;
         }
 
+        .required {
+            color: var(--vscode-errorForeground, #f44);
+        }
+
         /* Checkbox */
         .checkbox-group {
             display: flex;
@@ -755,6 +912,15 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                         <span class="db-type-desc">Popular open source</span>
                     </div>
                 </button>
+                <button type="button" class="db-type-btn ${dbType === 'mariadb' ? 'selected' : ''} ${isEditing ? 'disabled' : ''}" data-type="mariadb" ${isEditing ? 'disabled' : ''}>
+                    <div class="db-icon mariadb">
+                        <img src="${iconBaseUri}/mariadb.svg" alt="MariaDB" />
+                    </div>
+                    <div class="db-type-info">
+                        <span class="db-type-name">MariaDB</span>
+                        <span class="db-type-desc">MySQL fork</span>
+                    </div>
+                </button>
                 <button type="button" class="db-type-btn ${dbType === 'sqlserver' ? 'selected' : ''} ${isEditing ? 'disabled' : ''}" data-type="sqlserver" ${isEditing ? 'disabled' : ''}>
                     <div class="db-icon sqlserver">
                         <img src="${iconBaseUri}/sqlserver.svg" alt="SQL Server" />
@@ -780,6 +946,33 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                     <div class="db-type-info">
                         <span class="db-type-name">MongoDB</span>
                         <span class="db-type-desc">Document database</span>
+                    </div>
+                </button>
+                <button type="button" class="db-type-btn ${dbType === 'redis' ? 'selected' : ''} ${isEditing ? 'disabled' : ''}" data-type="redis" ${isEditing ? 'disabled' : ''}>
+                    <div class="db-icon redis">
+                        <img src="${iconBaseUri}/redis.svg" alt="Redis" />
+                    </div>
+                    <div class="db-type-info">
+                        <span class="db-type-name">Redis</span>
+                        <span class="db-type-desc">In-memory data store</span>
+                    </div>
+                </button>
+                <button type="button" class="db-type-btn ${dbType === 'elasticsearch' ? 'selected' : ''} ${isEditing ? 'disabled' : ''}" data-type="elasticsearch" ${isEditing ? 'disabled' : ''}>
+                    <div class="db-icon elasticsearch">
+                        <img src="${iconBaseUri}/elasticsearch.svg" alt="Elasticsearch" />
+                    </div>
+                    <div class="db-type-info">
+                        <span class="db-type-name">Elasticsearch</span>
+                        <span class="db-type-desc">Search & analytics</span>
+                    </div>
+                </button>
+                <button type="button" class="db-type-btn ${dbType === 'cassandra' ? 'selected' : ''} ${isEditing ? 'disabled' : ''}" data-type="cassandra" ${isEditing ? 'disabled' : ''}>
+                    <div class="db-icon cassandra">
+                        <img src="${iconBaseUri}/cassandra.svg" alt="Cassandra" />
+                    </div>
+                    <div class="db-type-info">
+                        <span class="db-type-name">Cassandra</span>
+                        <span class="db-type-desc">Wide-column database</span>
                     </div>
                 </button>
             </div>
@@ -863,6 +1056,132 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                     </div>
                 </div>
 
+                <!-- Redis Section -->
+                <div class="form-section redis-fields hidden">
+                    <div class="form-section-title">Redis Connection</div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="redisHost">Host</label>
+                            <input type="text" id="redisHost" name="redisHost" value="${defaultHost}" placeholder="localhost">
+                        </div>
+                        <div class="form-group">
+                            <label for="redisPort">Port</label>
+                            <input type="number" id="redisPort" name="redisPort" value="6379">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="redisDatabase">Database Index <span class="label-badge">0-15</span></label>
+                        <select id="redisDatabase" name="redisDatabase">
+                            ${Array.from({ length: 16 }, (_, i) => `<option value="${i}" ${i === defaultRedisDatabase ? 'selected' : ''}>Database ${i}</option>`).join('')}
+                        </select>
+                        <div class="help-text">Redis supports 16 databases (0-15)</div>
+                    </div>
+                </div>
+
+                <!-- Redis Auth Section -->
+                <div class="form-section redis-auth-fields hidden">
+                    <div class="form-section-title">Authentication <span class="label-badge">Optional</span></div>
+
+                    <div class="form-group">
+                        <label for="redisUsername">Username <span class="label-badge">Redis 6+ ACL</span></label>
+                        <input type="text" id="redisUsername" name="redisUsername" value="${defaultUser}" placeholder="default">
+                        <div class="help-text">Leave empty for Redis &lt; 6 or default user</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="redisPassword">Password ${isEditing ? '<span class="label-badge">Leave empty to keep existing</span>' : ''}</label>
+                        <input type="password" id="redisPassword" name="redisPassword" placeholder="${isEditing ? '••••••••' : 'Enter password (if required)'}">
+                    </div>
+                </div>
+
+                <!-- Elasticsearch Section -->
+                <div class="form-section elasticsearch-fields hidden">
+                    <div class="form-section-title">Elasticsearch Connection</div>
+
+                    <div class="form-group">
+                        <label for="esNode">Node URL</label>
+                        <input type="text" id="esNode" name="esNode" value="${defaultEsNode}" placeholder="http://localhost:9200">
+                        <div class="help-text">Full URL including protocol (http:// or https://)</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="esCloudId">Cloud ID <span class="label-badge">Elastic Cloud</span></label>
+                        <input type="text" id="esCloudId" name="esCloudId" value="${defaultEsCloudId}" placeholder="deployment:base64encoded...">
+                        <div class="help-text">Leave empty if not using Elastic Cloud</div>
+                    </div>
+                </div>
+
+                <!-- Elasticsearch Auth Section -->
+                <div class="form-section elasticsearch-auth-fields hidden">
+                    <div class="form-section-title">Authentication</div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="esUsername">Username</label>
+                            <input type="text" id="esUsername" name="esUsername" value="${defaultUser}" placeholder="elastic">
+                        </div>
+                        <div class="form-group">
+                            <label for="esPassword">Password ${isEditing ? '<span class="label-badge">Leave empty to keep</span>' : ''}</label>
+                            <input type="password" id="esPassword" name="esPassword" placeholder="${isEditing ? '••••••••' : 'Enter password'}">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="esApiKey">API Key <span class="label-badge">Alternative auth</span></label>
+                        <input type="password" id="esApiKey" name="esApiKey" value="${defaultEsApiKey}" placeholder="Enter API key (recommended for production)">
+                        <div class="help-text">Use API key OR username/password, not both</div>
+                    </div>
+                </div>
+
+                <!-- Cassandra Section -->
+                <div class="form-section cassandra-fields hidden">
+                    <div class="form-section-title">Cassandra Connection</div>
+
+                    <div class="form-row">
+                        <div class="form-group" style="grid-column: span 2;">
+                            <label for="cassandraContactPoints">Contact Points</label>
+                            <input type="text" id="cassandraContactPoints" name="cassandraContactPoints" value="${defaultCassandraContactPoints}" placeholder="node1.example.com, node2.example.com">
+                            <div class="help-text">Comma-separated list of cluster nodes</div>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="cassandraPort">Port</label>
+                            <input type="number" id="cassandraPort" name="cassandraPort" value="9042">
+                        </div>
+                        <div class="form-group">
+                            <label for="cassandraKeyspace">Keyspace <span class="required">*</span></label>
+                            <input type="text" id="cassandraKeyspace" name="cassandraKeyspace" value="${defaultCassandraKeyspace}" placeholder="dbview_dev" required>
+                            <div class="help-text">Required - e.g., dbview_dev</div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cassandraDatacenter">Local Datacenter</label>
+                        <input type="text" id="cassandraDatacenter" name="cassandraDatacenter" value="${defaultCassandraDatacenter}" placeholder="datacenter1">
+                        <div class="help-text">Required for token-aware routing</div>
+                    </div>
+                </div>
+
+                <!-- Cassandra Auth Section -->
+                <div class="form-section cassandra-auth-fields hidden">
+                    <div class="form-section-title">Authentication <span class="label-badge">Optional</span></div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="cassandraUsername">Username</label>
+                            <input type="text" id="cassandraUsername" name="cassandraUsername" value="${defaultUser}" placeholder="cassandra">
+                        </div>
+                        <div class="form-group">
+                            <label for="cassandraPassword">Password ${isEditing ? '<span class="label-badge">Leave empty to keep</span>' : ''}</label>
+                            <input type="password" id="cassandraPassword" name="cassandraPassword" placeholder="${isEditing ? '••••••••' : 'Enter password'}">
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Options Section -->
                 <div class="form-section">
                     <div class="form-section-title">Options</div>
@@ -915,18 +1234,26 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
         const dbIcons = {
             postgres: mediaUri + '/postgres.svg',
             mysql: mediaUri + '/mysql.svg',
+            mariadb: mediaUri + '/mariadb.svg',
             sqlserver: mediaUri + '/sqlserver.svg',
             sqlite: mediaUri + '/sqlite.svg',
-            mongodb: mediaUri + '/mongodb.svg'
+            mongodb: mediaUri + '/mongodb.svg',
+            redis: mediaUri + '/redis.svg',
+            elasticsearch: mediaUri + '/elasticsearch.svg',
+            cassandra: mediaUri + '/cassandra.svg'
         };
 
         // Database type configurations
         const dbTypeConfig = {
             postgres: { name: 'PostgreSQL', color: '#336791', defaultPort: 5432, subtitle: 'Configure your PostgreSQL connection' },
             mysql: { name: 'MySQL', color: '#00618a', defaultPort: 3306, subtitle: 'Configure your MySQL connection' },
+            mariadb: { name: 'MariaDB', color: '#003545', defaultPort: 3306, subtitle: 'Configure your MariaDB connection' },
             sqlserver: { name: 'SQL Server', color: '#cc2927', defaultPort: 1433, subtitle: 'Configure your SQL Server connection' },
             sqlite: { name: 'SQLite', color: '#003b57', defaultPort: 0, subtitle: 'Select your SQLite database file' },
-            mongodb: { name: 'MongoDB', color: '#13aa52', defaultPort: 27017, subtitle: 'Configure your MongoDB connection' }
+            mongodb: { name: 'MongoDB', color: '#13aa52', defaultPort: 27017, subtitle: 'Configure your MongoDB connection' },
+            redis: { name: 'Redis', color: '#dc382d', defaultPort: 6379, subtitle: 'Configure your Redis connection' },
+            elasticsearch: { name: 'Elasticsearch', color: '#fed10a', defaultPort: 9200, subtitle: 'Configure your Elasticsearch connection' },
+            cassandra: { name: 'Cassandra', color: '#1287b1', defaultPort: 9042, subtitle: 'Configure your Cassandra connection' }
         };
 
         // DOM Elements
@@ -974,25 +1301,60 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
             headerIcon.className = 'form-header-icon';
             formSubtitle.textContent = config.subtitle;
 
-            // Show/hide field sections
+            // Determine database category
             const isSQLite = type === 'sqlite';
             const isMongoDB = type === 'mongodb';
+            const isRedis = type === 'redis';
+            const isElasticsearch = type === 'elasticsearch';
+            const isCassandra = type === 'cassandra';
+            const isStandardDB = !isSQLite && !isRedis && !isElasticsearch && !isCassandra;
 
+            // Show/hide standard server fields (Postgres, MySQL, SQL Server, MongoDB)
             document.querySelectorAll('.server-fields').forEach(el => {
-                el.classList.toggle('hidden', isSQLite);
+                el.classList.toggle('hidden', !isStandardDB && !isMongoDB);
             });
+
+            // Show/hide SQLite fields
             document.querySelectorAll('.sqlite-fields').forEach(el => {
                 el.classList.toggle('hidden', !isSQLite);
             });
+
+            // Show/hide standard auth fields (Postgres, MySQL, SQL Server, MongoDB)
             document.querySelectorAll('.auth-fields').forEach(el => {
-                el.classList.toggle('hidden', isSQLite);
+                el.classList.toggle('hidden', !isStandardDB && !isMongoDB);
             });
+
+            // Show/hide MongoDB-specific fields
             document.querySelectorAll('.mongodb-fields').forEach(el => {
                 el.classList.toggle('hidden', !isMongoDB);
             });
 
+            // Show/hide Redis fields
+            document.querySelectorAll('.redis-fields').forEach(el => {
+                el.classList.toggle('hidden', !isRedis);
+            });
+            document.querySelectorAll('.redis-auth-fields').forEach(el => {
+                el.classList.toggle('hidden', !isRedis);
+            });
+
+            // Show/hide Elasticsearch fields
+            document.querySelectorAll('.elasticsearch-fields').forEach(el => {
+                el.classList.toggle('hidden', !isElasticsearch);
+            });
+            document.querySelectorAll('.elasticsearch-auth-fields').forEach(el => {
+                el.classList.toggle('hidden', !isElasticsearch);
+            });
+
+            // Show/hide Cassandra fields
+            document.querySelectorAll('.cassandra-fields').forEach(el => {
+                el.classList.toggle('hidden', !isCassandra);
+            });
+            document.querySelectorAll('.cassandra-auth-fields').forEach(el => {
+                el.classList.toggle('hidden', !isCassandra);
+            });
+
             // Update default port when switching database types
-            if (!isSQLite && config.defaultPort) {
+            if (isStandardDB && config.defaultPort) {
                 portInput.value = config.defaultPort;
             }
         }
@@ -1041,8 +1403,37 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
             const formData = new FormData(form);
             const dbType = formData.get('dbType') || 'postgres';
 
-            // Validation for server-based DBs
-            if (dbType !== 'sqlite') {
+            // Validation based on database type
+            if (dbType === 'sqlite') {
+                const filePath = formData.get('filePath');
+                if (!filePath) {
+                    showStatus('Please enter the database file path', 'error');
+                    return;
+                }
+            } else if (dbType === 'redis') {
+                const host = formData.get('redisHost');
+                const port = formData.get('redisPort');
+                if (!host || !port) {
+                    showStatus('Please fill in host and port', 'error');
+                    return;
+                }
+            } else if (dbType === 'elasticsearch') {
+                const node = formData.get('esNode');
+                const cloudId = formData.get('esCloudId');
+                if (!node && !cloudId) {
+                    showStatus('Please enter Node URL or Cloud ID', 'error');
+                    return;
+                }
+            } else if (dbType === 'cassandra') {
+                const contactPoints = formData.get('cassandraContactPoints');
+                const keyspace = formData.get('cassandraKeyspace');
+                const datacenter = formData.get('cassandraDatacenter');
+                if (!contactPoints || !keyspace || !datacenter) {
+                    showStatus('Please fill in Contact Points, Keyspace, and Datacenter', 'error');
+                    return;
+                }
+            } else {
+                // Standard databases (postgres, mysql, sqlserver, mongodb)
                 const host = formData.get('host');
                 const port = formData.get('port');
                 const database = formData.get('database');
@@ -1057,18 +1448,13 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                     showStatus('Please enter a valid port number (1-65535)', 'error');
                     return;
                 }
-            } else {
-                const filePath = formData.get('filePath');
-                if (!filePath) {
-                    showStatus('Please enter the database file path', 'error');
-                    return;
-                }
             }
 
             vscode.postMessage({
                 command: 'submit',
                 dbType: formData.get('dbType'),
                 name: formData.get('name'),
+                // Standard DB fields
                 host: formData.get('host'),
                 port: formData.get('port'),
                 database: formData.get('database'),
@@ -1076,6 +1462,26 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 password: formData.get('password'),
                 filePath: formData.get('filePath'),
                 authDatabase: formData.get('authDatabase'),
+                // Redis fields
+                redisHost: formData.get('redisHost'),
+                redisPort: formData.get('redisPort'),
+                redisDatabase: formData.get('redisDatabase'),
+                redisUsername: formData.get('redisUsername'),
+                redisPassword: formData.get('redisPassword'),
+                // Elasticsearch fields
+                esNode: formData.get('esNode'),
+                esCloudId: formData.get('esCloudId'),
+                esUsername: formData.get('esUsername'),
+                esPassword: formData.get('esPassword'),
+                esApiKey: formData.get('esApiKey'),
+                // Cassandra fields
+                cassandraContactPoints: formData.get('cassandraContactPoints'),
+                cassandraPort: formData.get('cassandraPort'),
+                cassandraKeyspace: formData.get('cassandraKeyspace'),
+                cassandraDatacenter: formData.get('cassandraDatacenter'),
+                cassandraUsername: formData.get('cassandraUsername'),
+                cassandraPassword: formData.get('cassandraPassword'),
+                // Common
                 readOnly: formData.get('readOnly') === 'on',
                 saveConnection: true
             });
@@ -1086,19 +1492,41 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
             const formData = new FormData(form);
             const dbType = formData.get('dbType') || 'postgres';
 
-            // Validation
-            if (dbType !== 'sqlite') {
-                const host = formData.get('host');
-                const port = formData.get('port');
-
+            // Validation based on database type
+            if (dbType === 'sqlite') {
+                const filePath = formData.get('filePath');
+                if (!filePath) {
+                    showStatus('Please enter the database file path', 'error');
+                    return;
+                }
+            } else if (dbType === 'redis') {
+                const host = formData.get('redisHost');
+                const port = formData.get('redisPort');
                 if (!host || !port) {
                     showStatus('Please fill in host and port', 'error');
                     return;
                 }
+            } else if (dbType === 'elasticsearch') {
+                const node = formData.get('esNode');
+                const cloudId = formData.get('esCloudId');
+                if (!node && !cloudId) {
+                    showStatus('Please enter Node URL or Cloud ID', 'error');
+                    return;
+                }
+            } else if (dbType === 'cassandra') {
+                const contactPoints = formData.get('cassandraContactPoints');
+                const keyspace = formData.get('cassandraKeyspace');
+                const datacenter = formData.get('cassandraDatacenter');
+                if (!contactPoints || !keyspace || !datacenter) {
+                    showStatus('Please fill in Contact Points, Keyspace, and Datacenter', 'error');
+                    return;
+                }
             } else {
-                const filePath = formData.get('filePath');
-                if (!filePath) {
-                    showStatus('Please enter the database file path', 'error');
+                // Standard databases
+                const host = formData.get('host');
+                const port = formData.get('port');
+                if (!host || !port) {
+                    showStatus('Please fill in host and port', 'error');
                     return;
                 }
             }
@@ -1110,6 +1538,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 command: 'testConnection',
                 dbType: formData.get('dbType'),
                 name: formData.get('name'),
+                // Standard DB fields
                 host: formData.get('host'),
                 port: formData.get('port'),
                 database: formData.get('database'),
@@ -1117,6 +1546,26 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 password: formData.get('password'),
                 filePath: formData.get('filePath'),
                 authDatabase: formData.get('authDatabase'),
+                // Redis fields
+                redisHost: formData.get('redisHost'),
+                redisPort: formData.get('redisPort'),
+                redisDatabase: formData.get('redisDatabase'),
+                redisUsername: formData.get('redisUsername'),
+                redisPassword: formData.get('redisPassword'),
+                // Elasticsearch fields
+                esNode: formData.get('esNode'),
+                esCloudId: formData.get('esCloudId'),
+                esUsername: formData.get('esUsername'),
+                esPassword: formData.get('esPassword'),
+                esApiKey: formData.get('esApiKey'),
+                // Cassandra fields
+                cassandraContactPoints: formData.get('cassandraContactPoints'),
+                cassandraPort: formData.get('cassandraPort'),
+                cassandraKeyspace: formData.get('cassandraKeyspace'),
+                cassandraDatacenter: formData.get('cassandraDatacenter'),
+                cassandraUsername: formData.get('cassandraUsername'),
+                cassandraPassword: formData.get('cassandraPassword'),
+                // Common
                 readOnly: formData.get('readOnly') === 'on'
             });
         }
