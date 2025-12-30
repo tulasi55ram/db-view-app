@@ -1,7 +1,7 @@
 import type { FC } from "react";
 import { useEffect, useState } from "react";
 import type { SortingState } from "@tanstack/react-table";
-import type { ColumnMetadata, TableIndex, TableStatistics } from "@dbview/types";
+import type { ColumnMetadata, TableIndex, TableStatistics, DatabaseType } from "@dbview/types";
 import { DataGrid, type DataGridColumn } from "./DataGrid";
 import { DataGridV2 } from "./DataGridV2";
 import { VirtualDataGrid } from "./VirtualDataGrid";
@@ -57,7 +57,21 @@ export interface TableViewProps {
   limit: number;
   offset: number;
   totalRows: number | null;
+  dbType?: DatabaseType;
 }
+
+// Database type labels for status bar
+const DB_TYPE_LABELS: Record<DatabaseType, string> = {
+  postgres: 'PostgreSQL',
+  mysql: 'MySQL',
+  mariadb: 'MariaDB',
+  sqlserver: 'SQL Server',
+  sqlite: 'SQLite',
+  mongodb: 'MongoDB',
+  redis: 'Redis',
+  elasticsearch: 'Elasticsearch',
+  cassandra: 'Cassandra',
+};
 
 export const TableView: FC<TableViewProps> = ({
   schema,
@@ -69,7 +83,8 @@ export const TableView: FC<TableViewProps> = ({
   onRefresh,
   limit,
   offset,
-  totalRows
+  totalRows,
+  dbType = 'postgres'
 }) => {
   const rowCount = rows.length;
   const columnCount = columns.length;
@@ -881,7 +896,7 @@ export const TableView: FC<TableViewProps> = ({
         </div>
         <div className="flex items-center gap-3">
           {metadata && <span>Editable</span>}
-          <span>PostgreSQL</span>
+          <span>{DB_TYPE_LABELS[dbType]}</span>
         </div>
       </footer>
 

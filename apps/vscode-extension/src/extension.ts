@@ -139,11 +139,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     connection = newConnection;
   }
 
-  console.log("[dbview] Registering tree data provider...");
+  console.log("[dbview] Registering tree view...");
 
-  context.subscriptions.push(
-    vscode.window.registerTreeDataProvider("dbview.dbExplorer", schemaExplorer)
-  );
+  // Use createTreeView instead of registerTreeDataProvider to get access to visibility events
+  const treeView = vscode.window.createTreeView("dbview.dbExplorer", {
+    treeDataProvider: schemaExplorer,
+    showCollapseAll: true
+  });
+
+  // Track if we've already shown the connection panel on first view
+  let hasShownInitialConnectionPanel = false;
+
+  // Function to check and show connection panel if no connections exist
+  const checkAndShowConnectionPanel = async () => {
+    if (hasShownInitialConnectionPanel) {
+      return;
+    }
+    const connections = await getAllSavedConnections(context);
+    console.log("[dbview] Checking connections, found:", connections.length);
+    if (connections.length === 0) {
+      hasShownInitialConnectionPanel = true;
+      console.log("[dbview] No connections found, showing connection config panel");
+      vscode.commands.executeCommand("dbview.configureConnection");
+    }
+  };
+
+  // Show connection panel by default when extension sidebar is opened with no connections
+  treeView.onDidChangeVisibility(async (e) => {
+    console.log("[dbview] Tree view visibility changed:", e.visible);
+    if (e.visible) {
+      await checkAndShowConnectionPanel();
+    }
+  });
+
+  // Also check immediately if the view is already visible (handles the case when extension activates with view open)
+  if (treeView.visible) {
+    console.log("[dbview] Tree view is already visible on activation");
+    checkAndShowConnectionPanel();
+  }
+
+  context.subscriptions.push(treeView);
 
   const configureConnectionCommand = vscode.commands.registerCommand(
     "dbview.configureConnection",
@@ -205,9 +240,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           // Get connection from tree item
           conn = treeItem.connectionInfo ?? null;
           console.log(`[dbview] openTable: Connection from tree item - ${formatConnectionDisplay(conn || ({dbType: 'postgres'} as any))}`);
-
-          // Show visual notification
-          vscode.window.showInformationMessage(`Opening table from connection: ${conn?.name || 'unnamed'}`);
 
           if (conn) {
             targetClient = await schemaExplorer.getOrCreateClient(conn);

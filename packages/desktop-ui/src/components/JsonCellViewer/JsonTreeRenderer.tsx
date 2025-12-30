@@ -1,6 +1,5 @@
 import { useState, type FC } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
-import { cn } from "@/utils/cn";
 
 interface JsonTreeRendererProps {
   data: unknown;

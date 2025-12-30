@@ -504,6 +504,28 @@ export class ElasticsearchAdapter extends EventEmitter implements DatabaseAdapte
         }
         // If not sortable, we silently skip sorting for this field
         // (text field without .keyword sub-field)
+      } else {
+        // No explicit sort requested - try to find a timestamp field for "latest first" ordering
+        // Common timestamp field names in Elasticsearch
+        const timestampFieldNames = ['@timestamp', 'timestamp', 'created_at', 'createdAt', 'date', 'indexed_at', 'indexedAt'];
+
+        // Find a sortable timestamp field
+        const timestampField = metadata.find((m) =>
+          timestampFieldNames.includes(m.name) &&
+          m.sortable &&
+          m.sortField &&
+          (m.type === 'date' || m.type.includes('date'))
+        );
+
+        if (timestampField?.sortField) {
+          // Sort by timestamp descending (latest first)
+          sort.push({
+            [timestampField.sortField]: {
+              order: 'desc',
+              missing: '_last',
+            },
+          });
+        }
       }
 
       // Always add _doc as tiebreaker for consistent pagination

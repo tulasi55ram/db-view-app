@@ -100,7 +100,7 @@ const VirtualRow = memo(function VirtualRow({
         return (
           <div
             key={cell.id}
-            className="border-r border-vscode-border last:border-r-0 flex-shrink-0"
+            className="border-r border-vscode-border flex-shrink-0"
             style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
           >
             {columnKey === '__select' ? (
@@ -370,11 +370,11 @@ export function VirtualDataGrid({
         tabIndex={0}
       >
         {/* Fixed width container for horizontal scroll */}
-        <div style={{ minWidth: totalWidth }}>
+        <div style={{ minWidth: totalWidth, width: 'fit-content' }}>
           {/* Sticky Header */}
           <div
             className="sticky top-0 z-20 bg-vscode-bg-lighter flex border-b border-vscode-border"
-            style={{ height: HEADER_HEIGHT }}
+            style={{ height: HEADER_HEIGHT, minWidth: totalWidth }}
           >
             {table.getHeaderGroups().map((headerGroup) => (
               <div key={headerGroup.id} className="flex">
@@ -382,7 +382,7 @@ export function VirtualDataGrid({
                   <div
                     key={header.id}
                     className={clsx(
-                      'px-3 py-2 flex items-center font-semibold text-vscode-text border-r border-vscode-border last:border-r-0 flex-shrink-0',
+                      'px-3 py-2 flex items-center font-semibold text-vscode-text border-r border-vscode-border flex-shrink-0',
                       header.column.getCanSort() && 'cursor-pointer hover:bg-vscode-bg-hover select-none'
                     )}
                     onClick={header.column.getToggleSortingHandler()}

@@ -25,6 +25,7 @@ import type {
   BulkDeleteOptions,
 } from './DatabaseAdapter';
 import { getDatabaseCapabilities } from '../capabilities/DatabaseCapabilities';
+import { buildSqlFilter } from "@dbview/core";
 
 /**
  * MariaDB Database Adapter
@@ -1267,83 +1268,11 @@ export class MariaDBAdapter extends EventEmitter implements DatabaseAdapter {
     filters: FilterCondition[],
     logic: 'AND' | 'OR'
   ): { whereClause: string; params: unknown[] } {
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-
-    for (const filter of filters) {
-      const column = this.quoteIdentifier(filter.columnName);
-
-      switch (filter.operator) {
-        case 'equals':
-          conditions.push(`${column} = ?`);
-          params.push(filter.value);
-          break;
-        case 'not_equals':
-          conditions.push(`${column} != ?`);
-          params.push(filter.value);
-          break;
-        case 'contains':
-          conditions.push(`${column} LIKE ?`);
-          params.push(`%${filter.value}%`);
-          break;
-        case 'not_contains':
-          conditions.push(`${column} NOT LIKE ?`);
-          params.push(`%${filter.value}%`);
-          break;
-        case 'starts_with':
-          conditions.push(`${column} LIKE ?`);
-          params.push(`${filter.value}%`);
-          break;
-        case 'ends_with':
-          conditions.push(`${column} LIKE ?`);
-          params.push(`%${filter.value}`);
-          break;
-        case 'greater_than':
-          conditions.push(`${column} > ?`);
-          params.push(filter.value);
-          break;
-        case 'less_than':
-          conditions.push(`${column} < ?`);
-          params.push(filter.value);
-          break;
-        case 'greater_or_equal':
-          conditions.push(`${column} >= ?`);
-          params.push(filter.value);
-          break;
-        case 'less_or_equal':
-          conditions.push(`${column} <= ?`);
-          params.push(filter.value);
-          break;
-        case 'is_null':
-          conditions.push(`${column} IS NULL`);
-          break;
-        case 'is_not_null':
-          conditions.push(`${column} IS NOT NULL`);
-          break;
-        case 'in':
-          // Handle both arrays and comma-separated strings from UI
-          // Filter out empty strings to avoid IN ('') which returns no results
-          const values = (Array.isArray(filter.value)
-            ? filter.value.map(v => String(v).trim())
-            : String(filter.value).split(',').map(v => v.trim())
-          ).filter(v => v !== '');
-
-          if (values.length > 0) {
-            const placeholders = values.map(() => '?').join(', ');
-            conditions.push(`${column} IN (${placeholders})`);
-            params.push(...values);
-          }
-          // Skip adding clause if no valid values (treats as "no filter")
-          break;
-        case 'between':
-          conditions.push(`${column} BETWEEN ? AND ?`);
-          params.push(filter.value, filter.value2);
-          break;
-      }
-    }
-
-    const whereClause = conditions.join(` ${logic} `);
-    return { whereClause, params };
+    // Delegate to @dbview/core filter builder
+    return buildSqlFilter(filters, logic, {
+      dbType: 'mariadb',
+      quoteIdentifier: this.quoteIdentifier.bind(this),
+    });
   }
 
   /**

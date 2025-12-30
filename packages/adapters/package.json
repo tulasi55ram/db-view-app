@@ -23,6 +23,7 @@
     "test:db:logs": "docker-compose -f docker-compose.test.yml logs"
   },
   "dependencies": {
+    "@dbview/core": "workspace:^",
     "@dbview/types": "workspace:^"
   },
   "peerDependencies": {

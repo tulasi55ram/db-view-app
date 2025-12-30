@@ -1,4 +1,4 @@
-import { type FC, useEffect, useRef } from "react";
+import { type FC, useEffect, useRef, useState } from "react";
 import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
@@ -15,6 +15,26 @@ import { search, searchKeymap } from "@codemirror/search";
 import type { ColumnMetadata, TableInfo } from "@dbview/types";
 import { SQL_SNIPPETS } from "../utils/sqlSnippets";
 
+// Detect theme from document
+function detectTheme(): 'light' | 'dark' {
+  // Check for VSCode theme classes
+  if (document.body.classList.contains('vscode-light') ||
+      document.body.classList.contains('vscode-high-contrast-light')) {
+    return 'light';
+  }
+  if (document.body.classList.contains('vscode-dark') ||
+      document.body.classList.contains('vscode-high-contrast')) {
+    return 'dark';
+  }
+  // Check data-theme attribute
+  const dataTheme = document.documentElement.getAttribute('data-theme');
+  if (dataTheme === 'light' || dataTheme === 'high-contrast-light') {
+    return 'light';
+  }
+  // Default to dark
+  return 'dark';
+}
+
 export interface CodeMirrorSqlEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -27,6 +47,88 @@ export interface CodeMirrorSqlEditorProps {
   schemas?: string[];
   tables?: TableInfo[];
   columns?: Record<string, ColumnMetadata[]>;
+}
+
+// Placeholder with SQL examples
+const PLACEHOLDER_TEXT = `-- Try these examples:
+-- SELECT * FROM users LIMIT 10;
+-- SELECT id, name, email FROM users WHERE status = 'active';
+-- SELECT COUNT(*) FROM orders WHERE created_at > '2024-01-01';`;
+
+// Create theme based on light/dark mode
+function createEditorTheme(isDark: boolean, height: string) {
+  return EditorView.theme({
+    "&": {
+      backgroundColor: isDark ? "#0f172a" : "#ffffff",
+      color: isDark ? "#f8fafc" : "#1e293b",
+      height: height,
+      fontSize: "13px",
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
+    },
+    ".cm-scroller": {
+      overflow: "auto",
+      height: "100%"
+    },
+    ".cm-content": {
+      caretColor: "#3b82f6",
+      padding: "8px 0",
+      minHeight: "100%"
+    },
+    ".cm-cursor": {
+      borderLeftColor: "#3b82f6"
+    },
+    ".cm-activeLine": {
+      backgroundColor: isDark ? "#1e293b" : "#f1f5f9"
+    },
+    ".cm-activeLineGutter": {
+      backgroundColor: isDark ? "#1e293b" : "#f1f5f9"
+    },
+    ".cm-gutters": {
+      backgroundColor: isDark ? "#0f172a" : "#f8fafc",
+      color: isDark ? "#64748b" : "#94a3b8",
+      border: "none",
+      minWidth: "36px"
+    },
+    ".cm-lineNumbers .cm-gutterElement": {
+      padding: "0 8px 0 4px"
+    },
+    "&.cm-focused .cm-selectionBackground, ::selection": {
+      backgroundColor: isDark ? "#334155" : "#bfdbfe"
+    },
+    ".cm-selectionBackground": {
+      backgroundColor: isDark ? "#1e293b" : "#e2e8f0"
+    },
+    ".cm-tooltip": {
+      backgroundColor: isDark ? "#1e293b" : "#ffffff",
+      border: isDark ? "1px solid #334155" : "1px solid #e2e8f0",
+      color: isDark ? "#f8fafc" : "#1e293b"
+    },
+    ".cm-tooltip-autocomplete": {
+      backgroundColor: isDark ? "#1e293b" : "#ffffff",
+      border: isDark ? "1px solid #334155" : "1px solid #e2e8f0"
+    },
+    ".cm-tooltip-autocomplete ul li[aria-selected]": {
+      backgroundColor: isDark ? "#334155" : "#e2e8f0",
+      color: isDark ? "#f8fafc" : "#1e293b"
+    },
+    ".cm-completionIcon": {
+      width: "1em",
+      fontSize: "14px",
+      lineHeight: "1",
+      marginRight: "0.5em",
+      textAlign: "center",
+      color: isDark ? "#94a3b8" : "#64748b"
+    },
+    ".cm-completionIcon-keyword": { color: isDark ? "#569cd6" : "#0000ff" },
+    ".cm-completionIcon-function": { color: isDark ? "#dcdcaa" : "#795e26" },
+    ".cm-completionIcon-class": { color: isDark ? "#4ec9b0" : "#267f99" },
+    ".cm-completionIcon-property": { color: isDark ? "#9cdcfe" : "#001080" },
+    ".cm-completionIcon-namespace": { color: isDark ? "#c586c0" : "#af00db" },
+    ".cm-completionIcon-snippet": { color: isDark ? "#c586c0" : "#af00db", fontWeight: "500" },
+    ".cm-placeholder": {
+      color: isDark ? "#64748b" : "#94a3b8"
+    }
+  }, { dark: isDark });
 }
 
 export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
@@ -44,6 +146,8 @@ export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const readOnlyCompartment = useRef(new Compartment());
+  const themeCompartment = useRef(new Compartment());
+  const [currentTheme, setCurrentTheme] = useState<'light' | 'dark'>(detectTheme);
 
   // Store autocomplete data in a ref so it can be updated without recreating the editor
   const autocompleteDataRef = useRef({ schemas, tables, columns });
@@ -164,71 +268,9 @@ export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
       };
     };
 
-    // VSCode-style dark theme
-    const darkTheme = EditorView.theme({
-      "&": {
-        backgroundColor: "#0f172a",
-        color: "#f8fafc",
-        height: height,
-        fontSize: "13px",
-        fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace"
-      },
-      ".cm-content": {
-        caretColor: "#3b82f6",
-        padding: "8px 0"
-      },
-      ".cm-cursor": {
-        borderLeftColor: "#3b82f6"
-      },
-      ".cm-activeLine": {
-        backgroundColor: "#1e293b"
-      },
-      ".cm-activeLineGutter": {
-        backgroundColor: "#1e293b"
-      },
-      ".cm-gutters": {
-        backgroundColor: "#0f172a",
-        color: "#64748b",
-        border: "none",
-        minWidth: "36px"
-      },
-      ".cm-lineNumbers .cm-gutterElement": {
-        padding: "0 8px 0 4px"
-      },
-      "&.cm-focused .cm-selectionBackground, ::selection": {
-        backgroundColor: "#334155"
-      },
-      ".cm-selectionBackground": {
-        backgroundColor: "#1e293b"
-      },
-      ".cm-tooltip": {
-        backgroundColor: "#1e293b",
-        border: "1px solid #334155",
-        color: "#f8fafc"
-      },
-      ".cm-tooltip-autocomplete": {
-        backgroundColor: "#1e293b",
-        border: "1px solid #334155"
-      },
-      ".cm-tooltip-autocomplete ul li[aria-selected]": {
-        backgroundColor: "#334155",
-        color: "#f8fafc"
-      },
-      ".cm-completionIcon": {
-        width: "1em",
-        fontSize: "14px",
-        lineHeight: "1",
-        marginRight: "0.5em",
-        textAlign: "center",
-        color: "#94a3b8"
-      },
-      ".cm-completionIcon-keyword": { color: "#569cd6" },
-      ".cm-completionIcon-function": { color: "#dcdcaa" },
-      ".cm-completionIcon-class": { color: "#4ec9b0" },
-      ".cm-completionIcon-property": { color: "#9cdcfe" },
-      ".cm-completionIcon-namespace": { color: "#c586c0" },
-      ".cm-completionIcon-snippet": { color: "#c586c0", fontWeight: "500" }
-    }, { dark: true });
+    // Create theme based on current detected theme
+    const isDark = currentTheme === 'dark';
+    const editorTheme = createEditorTheme(isDark, height);
 
     // Custom syntax highlighting for SQL
     const sqlHighlighting = syntaxHighlighting(defaultHighlightStyle);
@@ -267,9 +309,9 @@ export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
           maxRenderedOptions: 12
         }),
         customKeybindings,
-        darkTheme,
+        themeCompartment.current.of(editorTheme),
         readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly || loading)),
-        placeholderExt("Write your SQL query here..."),
+        placeholderExt(PLACEHOLDER_TEXT),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             const newValue = update.state.doc.toString();
@@ -305,6 +347,41 @@ export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
     }
   }, [readOnly, loading]);
 
+  // Listen for theme changes
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      const newTheme = detectTheme();
+      if (newTheme !== currentTheme) {
+        setCurrentTheme(newTheme);
+      }
+    });
+
+    // Observe body class changes (VSCode theme classes)
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['class']
+    });
+
+    // Observe html data-theme attribute changes
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme']
+    });
+
+    return () => observer.disconnect();
+  }, [currentTheme]);
+
+  // Update editor theme when currentTheme changes
+  useEffect(() => {
+    if (viewRef.current) {
+      const isDark = currentTheme === 'dark';
+      const newTheme = createEditorTheme(isDark, height);
+      viewRef.current.dispatch({
+        effects: themeCompartment.current.reconfigure(newTheme)
+      });
+    }
+  }, [currentTheme, height]);
+
   // Update editor content when value changes externally
   useEffect(() => {
     if (viewRef.current) {
@@ -322,11 +399,11 @@ export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
   }, [value]);
 
   return (
-    <div className="relative">
+    <div className="relative h-full">
       <div
         ref={editorRef}
-        className="rounded border border-vscode-border overflow-hidden"
-        style={{ height }}
+        className="h-full rounded border border-vscode-border overflow-hidden"
+        style={{ height: height === "100%" ? "100%" : height }}
       />
 
       {/* Error indicator border */}

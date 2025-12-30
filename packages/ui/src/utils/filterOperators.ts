@@ -1,88 +1,23 @@
+/**
+ * Filter Operators - Re-exports from @dbview/core with UI-specific additions
+ */
+
 import type { FilterOperator, PostgreSQLType } from '@dbview/types';
 
-// Type-aware operator lists
-export const STRING_OPERATORS: FilterOperator[] = [
-  'equals', 'not_equals', 'contains', 'not_contains',
-  'starts_with', 'ends_with', 'in', 'is_null', 'is_not_null'
-];
+// Re-export from @dbview/core
+export {
+  STRING_OPERATORS,
+  NUMERIC_OPERATORS,
+  DATE_OPERATORS,
+  BOOLEAN_OPERATORS,
+  OPERATOR_LABELS,
+  getOperatorsForType,
+  operatorNeedsValue,
+  operatorNeedsTwoValues,
+  operatorNeedsCommaSeparated,
+} from '@dbview/core';
 
-export const NUMERIC_OPERATORS: FilterOperator[] = [
-  'equals', 'not_equals', 'greater_than', 'less_than',
-  'greater_or_equal', 'less_or_equal', 'between', 'in', 'is_null', 'is_not_null'
-];
-
-export const DATE_OPERATORS: FilterOperator[] = [
-  'equals', 'not_equals', 'greater_than', 'less_than',
-  'between', 'is_null', 'is_not_null'
-];
-
-export const BOOLEAN_OPERATORS: FilterOperator[] = [
-  'equals', 'is_null', 'is_not_null'
-];
-
-// Get operators for a given column type
-export function getOperatorsForType(type: PostgreSQLType): FilterOperator[] {
-  const normalizedType = type.toLowerCase();
-
-  // Numeric types
-  if (normalizedType.includes('int') ||
-      normalizedType.includes('numeric') ||
-      normalizedType.includes('decimal') ||
-      normalizedType.includes('real') ||
-      normalizedType.includes('double')) {
-    return NUMERIC_OPERATORS;
-  }
-
-  // Date/time types
-  if (normalizedType.includes('date') ||
-      normalizedType.includes('time') ||
-      normalizedType.includes('timestamp')) {
-    return DATE_OPERATORS;
-  }
-
-  // Boolean type
-  if (normalizedType === 'boolean') {
-    return BOOLEAN_OPERATORS;
-  }
-
-  // Default to string operators
-  return STRING_OPERATORS;
-}
-
-// Operator display labels
-export const OPERATOR_LABELS: Record<FilterOperator, string> = {
-  'equals': 'Equals',
-  'not_equals': 'Not Equals',
-  'contains': 'Contains',
-  'not_contains': 'Does Not Contain',
-  'starts_with': 'Starts With',
-  'ends_with': 'Ends With',
-  'greater_than': 'Greater Than',
-  'less_than': 'Less Than',
-  'greater_or_equal': 'Greater or Equal',
-  'less_or_equal': 'Less or Equal',
-  'is_null': 'Is NULL',
-  'is_not_null': 'Is Not NULL',
-  'in': 'In List',
-  'between': 'Between'
-};
-
-// Check if operator requires a value input
-export function operatorNeedsValue(operator: FilterOperator): boolean {
-  return operator !== 'is_null' && operator !== 'is_not_null';
-}
-
-// Check if operator requires two values (BETWEEN)
-export function operatorNeedsTwoValues(operator: FilterOperator): boolean {
-  return operator === 'between';
-}
-
-// Check if operator requires comma-separated values (IN)
-export function operatorNeedsCommaSeparated(operator: FilterOperator): boolean {
-  return operator === 'in';
-}
-
-// Filter function factory for TanStack Table
+// UI-specific: Filter function factory for TanStack Table
 export function createFilterFn(operator: FilterOperator) {
   return (row: any, columnId: string, filterValue: any) => {
     const cellValue = row.getValue(columnId);
@@ -150,15 +85,12 @@ export function createFilterFn(operator: FilterOperator) {
   };
 }
 
-// Global filter function for quick search across all columns
+// UI-specific: Global filter function for quick search across all columns
 export function globalFilterFn(row: any, columnId: string, filterValue: string): boolean {
   const searchValue = String(filterValue).toLowerCase();
-
-  // Search in the specific column
   const cellValue = row.getValue(columnId);
   if (cellValue != null) {
     return String(cellValue).toLowerCase().includes(searchValue);
   }
-
   return false;
 }

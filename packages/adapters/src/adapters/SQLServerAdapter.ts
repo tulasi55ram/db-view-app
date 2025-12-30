@@ -24,6 +24,7 @@ import type {
   RunningQuery,
 } from './DatabaseAdapter';
 import { getDatabaseCapabilities } from '../capabilities/DatabaseCapabilities';
+import { buildSqlFilterNamed } from "@dbview/core";
 
 /**
  * SQL Server Database Adapter
@@ -1074,126 +1075,11 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
    * @private
    */
   private buildWhereClauseNamed(filters: FilterCondition[], logic: 'AND' | 'OR'): { whereClause: string; params: Record<string, unknown> } {
-    if (!filters || filters.length === 0) {
-      return { whereClause: '', params: {} };
-    }
-
-    const conditions: string[] = [];
-    const params: Record<string, unknown> = {};
-    let paramIndex = 0;
-
-    for (const filter of filters) {
-      if (!filter.columnName || !filter.operator) {
-        continue;
-      }
-
-      const columnName = this.quoteIdentifier(filter.columnName);
-      const paramName = `filter${paramIndex}`;
-
-      switch (filter.operator) {
-        case 'equals':
-          conditions.push(`${columnName} = @${paramName}`);
-          params[paramName] = filter.value;
-          paramIndex++;
-          break;
-
-        case 'not_equals':
-          conditions.push(`${columnName} != @${paramName}`);
-          params[paramName] = filter.value;
-          paramIndex++;
-          break;
-
-        case 'contains':
-          conditions.push(`${columnName} LIKE @${paramName}`);
-          params[paramName] = `%${filter.value}%`;
-          paramIndex++;
-          break;
-
-        case 'not_contains':
-          conditions.push(`${columnName} NOT LIKE @${paramName}`);
-          params[paramName] = `%${filter.value}%`;
-          paramIndex++;
-          break;
-
-        case 'starts_with':
-          conditions.push(`${columnName} LIKE @${paramName}`);
-          params[paramName] = `${filter.value}%`;
-          paramIndex++;
-          break;
-
-        case 'ends_with':
-          conditions.push(`${columnName} LIKE @${paramName}`);
-          params[paramName] = `%${filter.value}`;
-          paramIndex++;
-          break;
-
-        case 'greater_than':
-          conditions.push(`${columnName} > @${paramName}`);
-          params[paramName] = filter.value;
-          paramIndex++;
-          break;
-
-        case 'less_than':
-          conditions.push(`${columnName} < @${paramName}`);
-          params[paramName] = filter.value;
-          paramIndex++;
-          break;
-
-        case 'greater_or_equal':
-          conditions.push(`${columnName} >= @${paramName}`);
-          params[paramName] = filter.value;
-          paramIndex++;
-          break;
-
-        case 'less_or_equal':
-          conditions.push(`${columnName} <= @${paramName}`);
-          params[paramName] = filter.value;
-          paramIndex++;
-          break;
-
-        case 'is_null':
-          conditions.push(`${columnName} IS NULL`);
-          break;
-
-        case 'is_not_null':
-          conditions.push(`${columnName} IS NOT NULL`);
-          break;
-
-        case 'between':
-          if (filter.value2 !== undefined) {
-            conditions.push(`${columnName} BETWEEN @${paramName} AND @${paramName}_2`);
-            params[paramName] = filter.value;
-            params[`${paramName}_2`] = filter.value2;
-            paramIndex++;
-          }
-          break;
-
-        case 'in':
-          // Filter out empty strings to avoid IN ('') which returns no results
-          const values = (Array.isArray(filter.value)
-            ? filter.value.map((v: unknown) => String(v).trim())
-            : String(filter.value).split(',').map((v: string) => v.trim())
-          ).filter((v: string) => v !== '');
-
-          if (values.length > 0) {
-            const placeholders = values.map((_: string, i: number) => `@${paramName}_${i}`).join(', ');
-            conditions.push(`${columnName} IN (${placeholders})`);
-            values.forEach((val: string, i: number) => {
-              params[`${paramName}_${i}`] = val;
-            });
-            paramIndex++;
-          }
-          // Skip adding clause if no valid values (treats as "no filter")
-          break;
-      }
-    }
-
-    if (conditions.length === 0) {
-      return { whereClause: '', params: {} };
-    }
-
-    const whereClause = conditions.join(` ${logic} `);
-    return { whereClause, params };
+    // Delegate to @dbview/core filter builder
+    return buildSqlFilterNamed(filters, logic, {
+      dbType: 'sqlserver',
+      quoteIdentifier: this.quoteIdentifier.bind(this),
+    });
   }
 
   /**

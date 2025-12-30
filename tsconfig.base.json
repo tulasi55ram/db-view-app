@@ -13,7 +13,8 @@
       "@dbview/types": ["packages/types/src"],
       "@dbview/utils": ["packages/utils/src"],
       "@dbview/ui": ["packages/ui/src"],
-      "@dbview/adapters": ["packages/adapters/src"]
+      "@dbview/adapters": ["packages/adapters/src"],
+      "@dbview/core": ["packages/core/src"]
     }
   }
 }

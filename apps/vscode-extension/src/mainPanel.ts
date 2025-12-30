@@ -89,6 +89,48 @@ function isReadOnlyMode(config: DatabaseConnectionConfig): boolean {
 }
 
 /**
+ * Ensure the client is connected before database operations.
+ * For MongoDB and other databases that may lose connection, this attempts to reconnect.
+ * @param client The database adapter to check
+ * @returns true if connected (or reconnected successfully), false otherwise
+ */
+async function ensureClientConnected(client: DatabaseAdapter): Promise<boolean> {
+  let needsReconnect = false;
+
+  // If already connected, verify with ping
+  if (client.status === 'connected') {
+    try {
+      const isAlive = await client.ping();
+      if (isAlive) {
+        return true;
+      }
+      console.log('[dbview-mainPanel] Client ping failed, will attempt reconnect...');
+      needsReconnect = true;
+    } catch (error) {
+      console.log('[dbview-mainPanel] Client ping threw error, will attempt reconnect...', error);
+      needsReconnect = true;
+    }
+  }
+
+  // Attempt to reconnect if needed or if status indicates disconnected/error
+  if (needsReconnect || client.status === 'disconnected' || client.status === 'error') {
+    console.log(`[dbview-mainPanel] Client status is ${client.status}, attempting to connect...`);
+    try {
+      await client.connect();
+      const isAlive = await client.ping();
+      if (isAlive) {
+        console.log('[dbview-mainPanel] Client reconnected successfully');
+        return true;
+      }
+    } catch (error) {
+      console.error('[dbview-mainPanel] Failed to reconnect client:', error);
+    }
+  }
+
+  return client.status === 'connected';
+}
+
+/**
  * Get existing panel for a connection config
  * @param config Connection configuration (must match what was used to create panel)
  * @returns The webview panel if it exists, undefined otherwise
@@ -136,7 +178,8 @@ export async function getOrCreateMainPanel(
   const existingPanel = panels.get(key);
   if (existingPanel) {
     console.log(`[dbview-mainPanel] ✓ REUSING existing panel for connection key: "${key}"`);
-    vscode.window.showInformationMessage(`[DEBUG] Reusing panel: ${key}`);
+    // Update the client in case it was reconnected
+    panelClients.set(key, client);
     existingPanel.reveal(vscode.ViewColumn.Active);
     return existingPanel;
   }
@@ -144,7 +187,6 @@ export async function getOrCreateMainPanel(
   // Create new panel for this connection
   const connectionTitle = connectionConfig.name || ('database' in connectionConfig ? connectionConfig.database : connectionConfig.dbType);
   console.log(`[dbview-mainPanel] ✓ CREATING NEW panel for connection: ${connectionTitle} (key: "${key}")`);
-  vscode.window.showInformationMessage(`[DEBUG] Creating NEW panel: ${connectionTitle}`);
 
   const panel = vscode.window.createWebviewPanel(
     "dbview.mainView",
@@ -182,10 +224,49 @@ export async function getOrCreateMainPanel(
   panel.webview.html = getWebviewHtml(panel.webview, context.extensionUri);
 
   // Handle messages from the webview
-  // Message handler is a closure that captures client and connectionConfig for this specific panel
+  // Message handler uses panelClients.get(key) to get the current client (may be updated after reconnects)
   panel.webview.onDidReceiveMessage(async (message: any) => {
     try {
       const tabId = message.tabId;
+      // Always get the current client from the map (may have been updated after reconnection)
+      const currentClient = panelClients.get(key);
+      if (!currentClient) {
+        console.error(`[dbview-mainPanel] No client found for connection key: ${key}`);
+        return;
+      }
+
+      // For database operations, ensure client is connected
+      const requiresConnection = [
+        "LOAD_TABLE_ROWS", "GET_ROW_COUNT", "GET_TABLE_METADATA", "GET_TABLE_INDEXES",
+        "RUN_QUERY", "INSERT_ROW", "UPDATE_CELL", "DELETE_ROWS", "GET_EXPLAIN_PLAN",
+        "GET_AUTOCOMPLETE_DATA",
+        // Document database operations (MongoDB, Elasticsearch, Cassandra)
+        "UPDATE_DOCUMENT", "INSERT_DOCUMENT", "DELETE_DOCUMENTS", "RUN_DOCUMENT_QUERY",
+        // Redis operations
+        "LOAD_REDIS_KEYS", "RUN_REDIS_COMMAND"
+      ].includes(message?.type);
+
+      if (requiresConnection) {
+        const isConnected = await ensureClientConnected(currentClient);
+        if (!isConnected) {
+          const errorMsg = 'Database connection lost. Please reconnect and try again.';
+          console.error(`[dbview-mainPanel] ${errorMsg}`);
+          vscode.window.showErrorMessage(`dbview: ${errorMsg}`, 'Reconnect').then(selection => {
+            if (selection === 'Reconnect') {
+              vscode.commands.executeCommand('dbview.reconnectConnection');
+            }
+          });
+          // Send error response to webview for operations that expect a response
+          if (message.tabId) {
+            panel.webview.postMessage({
+              type: "CONNECTION_ERROR",
+              tabId: message.tabId,
+              error: errorMsg
+            });
+          }
+          return;
+        }
+      }
 
       switch (message?.type) {
         case "WEBVIEW_READY": {
@@ -213,7 +294,7 @@ export async function getOrCreateMainPanel(
           console.log(`[dbview] Loading table rows for tab ${tabId}: ${schema}.${table} (limit: ${limit}, offset: ${offset}, filters: ${filters?.length ?? 0})`);
 
           try {
-            const result = await client.fetchTableRows(schema, table, { limit, offset, filters, filterLogic });
+            const result = await currentClient.fetchTableRows(schema, table, { limit, offset, filters, filterLogic });
             panel.webview.postMessage({
               type: "LOAD_TABLE_ROWS",
               tabId,
@@ -222,7 +303,8 @@ export async function getOrCreateMainPanel(
               columns: result.columns,
               rows: result.rows,
               limit,
-              offset
+              offset,
+              dbType: connectionConfig.dbType || 'postgres'
             });
           } catch (error) {
             console.error(`[dbview] Error loading table rows:`, error);
@@ -236,7 +318,7 @@ export async function getOrCreateMainPanel(
           try {
             const filters = message.filters as FilterCondition[] | undefined;
             const filterLogic = (message.filterLogic as 'AND' | 'OR') ?? 'AND';
-            const totalRows = await client.getTableRowCount(message.schema, message.table, { filters, filterLogic });
+            const totalRows = await currentClient.getTableRowCount(message.schema, message.table, { filters, filterLogic });
             panel.webview.postMessage({
               type: "ROW_COUNT",
               tabId,
@@ -256,11 +338,12 @@ export async function getOrCreateMainPanel(
         case "GET_TABLE_METADATA": {
           console.log(`[dbview] Getting metadata for tab ${tabId}: ${message.schema}.${message.table}`);
           try {
-            const metadata = await client.getTableMetadata(message.schema, message.table);
+            const metadata = await currentClient.getTableMetadata(message.schema, message.table);
             panel.webview.postMessage({
               type: "TABLE_METADATA",
               tabId,
-              columns: metadata
+              columns: metadata,
+              dbType: connectionConfig.dbType || 'postgres'
             });
           } catch (error) {
             console.error(`[dbview] Error getting table metadata:`, error);
@@ -272,8 +355,8 @@ export async function getOrCreateMainPanel(
         case "GET_TABLE_INDEXES": {
           console.log(`[dbview] Getting indexes for ${message.schema}.${message.table}`);
           try {
-            if (client.getIndexes) {
-              const indexes = await client.getIndexes(message.schema, message.table);
+            if (currentClient.getIndexes) {
+              const indexes = await currentClient.getIndexes(message.schema, message.table);
               panel.webview.postMessage({
                 type: "TABLE_INDEXES",
                 indexes
@@ -297,7 +380,7 @@ export async function getOrCreateMainPanel(
         case "GET_TABLE_STATISTICS": {
           console.log(`[dbview] Getting statistics for ${message.schema}.${message.table}`);
           try {
-            const statistics = await client.getTableStatistics(message.schema, message.table);
+            const statistics = await currentClient.getTableStatistics(message.schema, message.table);
             panel.webview.postMessage({
               type: "TABLE_STATISTICS",
               statistics
@@ -315,8 +398,8 @@ export async function getOrCreateMainPanel(
         case "GET_ER_DIAGRAM": {
           console.log(`[dbview] Getting ER diagram for schemas:`, message.schemas);
           try {
-            if (client.getERDiagramData) {
-              const diagramData = await client.getERDiagramData(message.schemas);
+            if (currentClient.getERDiagramData) {
+              const diagramData = await currentClient.getERDiagramData(message.schemas);
               panel.webview.postMessage({
                 type: "ER_DIAGRAM_DATA",
                 diagramData
@@ -354,7 +437,7 @@ export async function getOrCreateMainPanel(
           }
 
           try {
-            await client.updateCell(
+            await currentClient.updateCell(
               message.schema,
               message.table,
               message.primaryKey,
@@ -402,8 +485,8 @@ export async function getOrCreateMainPanel(
           }
 
           try {
-            console.log(`[dbview] Calling client.insertRow...`);
-            const newRow = await client.insertRow(message.schema, message.table, message.values);
+            console.log(`[dbview] Calling currentClient.insertRow...`);
+            const newRow = await currentClient.insertRow(message.schema, message.table, message.values);
             console.log(`[dbview] ========== INSERT SUCCESSFUL ==========`);
             console.log(`[dbview] Inserted row:`, newRow);
 
@@ -443,7 +526,7 @@ export async function getOrCreateMainPanel(
           }
 
           try {
-            const deletedCount = await client.deleteRows(message.schema, message.table, message.primaryKeys);
+            const deletedCount = await currentClient.deleteRows(message.schema, message.table, message.primaryKeys);
             panel.webview.postMessage({
               type: "DELETE_SUCCESS",
               tabId,
@@ -460,10 +543,814 @@ export async function getOrCreateMainPanel(
           break;
         }
 
+        // ==================== Document Database Operations (MongoDB, Elasticsearch) ====================
+
+        case "UPDATE_DOCUMENT": {
+          console.log(`[dbview] Updating document ${message.documentId} in ${message.schema}.${message.table}`);
+          try {
+            // For MongoDB, use updateCell with the document ID as the primary key
+            const primaryKey = { _id: message.documentId };
+
+            // Apply each field update, skipping immutable fields like _id
+            for (const [field, value] of Object.entries(message.updates as Record<string, unknown>)) {
+              // Skip _id field - it's immutable in MongoDB and used as the primary key
+              if (field === '_id') {
+                console.log(`[dbview] Skipping immutable field: _id`);
+                continue;
+              }
+
+              await currentClient.updateCell(
+                message.schema,
+                message.table,
+                primaryKey,
+                field,
+                value
+              );
+            }
+
+            panel.webview.postMessage({
+              type: "UPDATE_SUCCESS",
+              tabId,
+              documentId: message.documentId
+            });
+          } catch (error) {
+            console.error(`[dbview] Error updating document:`, error);
+            panel.webview.postMessage({
+              type: "UPDATE_ERROR",
+              tabId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+          break;
+        }
+
+        case "INSERT_DOCUMENT": {
+          console.log(`[dbview] ========== INSERT DOCUMENT REQUEST ==========`);
+          console.log(`[dbview] Tab ID: ${tabId}`);
+          console.log(`[dbview] Schema: ${message.schema}`);
+          console.log(`[dbview] Table/Collection: ${message.table}`);
+          console.log(`[dbview] Document to insert:`, JSON.stringify(message.document, null, 2));
+          console.log(`[dbview] Client type: ${currentClient?.constructor?.name}`);
+
+          // Check for read-only mode
+          if (isReadOnlyMode(connectionConfig)) {
+            console.log(`[dbview] INSERT blocked - connection is in read-only mode`);
+            panel.webview.postMessage({
+              type: "INSERT_ERROR",
+              tabId,
+              error: "🔒 Connection is in read-only mode. Write operations are blocked."
+            });
+            break;
+          }
+
+          try {
+            console.log(`[dbview] Calling currentClient.insertRow...`);
+            const newRow = await currentClient.insertRow(
+              message.schema,
+              message.table,
+              message.document as Record<string, unknown>
+            );
+            console.log(`[dbview] ========== INSERT DOCUMENT SUCCESSFUL ==========`);
+            console.log(`[dbview] Inserted document:`, JSON.stringify(newRow, null, 2));
+
+            panel.webview.postMessage({
+              type: "INSERT_SUCCESS",
+              tabId,
+              newRow
+            });
+            console.log(`[dbview] INSERT_SUCCESS message sent to webview`);
+          } catch (error) {
+            console.error(`[dbview] ========== INSERT DOCUMENT FAILED ==========`);
+            console.error(`[dbview] Error inserting document:`, error);
+            console.error(`[dbview] Error stack:`, error instanceof Error ? error.stack : 'No stack trace');
+
+            panel.webview.postMessage({
+              type: "INSERT_ERROR",
+              tabId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+            console.log(`[dbview] INSERT_ERROR message sent to webview`);
+          }
+          break;
+        }
+
+        case "DELETE_DOCUMENTS": {
+          console.log(`[dbview] Deleting ${message.documentIds?.length} document(s) from ${message.schema}.${message.table}`);
+          try {
+            const documentIds = message.documentIds as string[];
+
+            // Convert document IDs to primary key objects
+            const primaryKeys = documentIds.map(id => ({ _id: id }));
+
+            const deletedCount = await currentClient.deleteRows(
+              message.schema,
+              message.table,
+              primaryKeys
+            );
+
+            panel.webview.postMessage({
+              type: "DELETE_SUCCESS",
+              tabId,
+              deletedCount
+            });
+          } catch (error) {
+            console.error(`[dbview] Error deleting documents:`, error);
+            panel.webview.postMessage({
+              type: "DELETE_ERROR",
+              tabId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+          break;
+        }
+
+        // ==================== Document Template Management ====================
+
+        case "GET_DOCUMENT_TEMPLATES": {
+          console.log(`[dbview] Getting templates for ${message.schema}.${message.table}`);
+          try {
+            const connKey = getConnectionKey(connectionConfig);
+            const templateKey = `documentTemplates:${connKey}:${message.schema}:${message.table}`;
+            const templates = context.workspaceState.get<any[]>(templateKey, []);
+            panel.webview.postMessage({
+              type: "DOCUMENT_TEMPLATES",
+              tabId,
+              schema: message.schema,
+              table: message.table,
+              templates
+            });
+          } catch (error) {
+            console.error(`[dbview] Error getting templates:`, error);
+          }
+          break;
+        }
+
+        case "SAVE_DOCUMENT_TEMPLATE": {
+          console.log(`[dbview] Saving template "${message.templateName}" for ${message.schema}.${message.table}`);
+          try {
+            const connKey = getConnectionKey(connectionConfig);
+            const templateKey = `documentTemplates:${connKey}:${message.schema}:${message.table}`;
+            const templates = context.workspaceState.get<any[]>(templateKey, []);
+
+            const newTemplate = {
+              id: `template-${Date.now()}`,
+              name: message.templateName,
+              content: message.templateContent,
+              createdAt: new Date().toISOString()
+            };
+
+            templates.push(newTemplate);
+            await context.workspaceState.update(templateKey, templates);
+
+            panel.webview.postMessage({
+              type: "TEMPLATE_SAVED",
+              tabId,
+              schema: message.schema,
+              table: message.table,
+              template: newTemplate
+            });
+          } catch (error) {
+            console.error(`[dbview] Error saving template:`, error);
+          }
+          break;
+        }
+
+        case "DELETE_DOCUMENT_TEMPLATE": {
+          console.log(`[dbview] Deleting template ${message.templateId} for ${message.schema}.${message.table}`);
+          try {
+            const connKey = getConnectionKey(connectionConfig);
+            const templateKey = `documentTemplates:${connKey}:${message.schema}:${message.table}`;
+            const templates = context.workspaceState.get<any[]>(templateKey, []);
+
+            const filteredTemplates = templates.filter(t => t.id !== message.templateId);
+            await context.workspaceState.update(templateKey, filteredTemplates);
+
+            panel.webview.postMessage({
+              type: "TEMPLATE_DELETED",
+              tabId,
+              schema: message.schema,
+              table: message.table,
+              templateId: message.templateId
+            });
+          } catch (error) {
+            console.error(`[dbview] Error deleting template:`, error);
+          }
+          break;
+        }
+
+        // ==================== Redis Operations ====================
+
+        case "LOAD_REDIS_KEYS": {
+          console.log(`[dbview] Loading Redis keys: type=${message.keyType}, pattern=${message.pattern}`);
+          try {
+            // For Redis, the table name encodes the key type: "[type] pattern"
+            const keyType = message.keyType || 'string';
+            const pattern = message.pattern || '*';
+            const tableName = `[${keyType}] ${pattern}`;
+
+            const result = await currentClient.fetchTableRows(
+              message.schema || '',
+              tableName,
+              {
+                limit: message.limit || 100,
+                offset: message.offset || 0
+              }
+            );
+
+            // Get metadata for the key type
+            const metadata = await currentClient.getTableMetadata(message.schema || '', tableName);
+
+            panel.webview.postMessage({
+              type: "LOAD_TABLE_ROWS",
+              tabId,
+              schema: message.schema || '',
+              table: tableName,
+              columns: result.columns,
+              rows: result.rows,
+              limit: message.limit || 100,
+              offset: message.offset || 0,
+              dbType: 'redis'
+            });
+
+            panel.webview.postMessage({
+              type: "TABLE_METADATA",
+              tabId,
+              columns: metadata,
+              dbType: 'redis'
+            });
+          } catch (error) {
+            console.error(`[dbview] Error loading Redis keys:`, error);
+            vscode.window.showErrorMessage(`Failed to load Redis keys: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          break;
+        }
+
+        case "SCAN_REDIS_KEYS": {
+          // Cursor-based SCAN for namespace tree (like desktop RedisSidebarTree)
+          console.log(`[dbview] Scanning Redis keys: pattern=${message.pattern}, cursor=${message.cursor}, schema=${message.schema}`);
+          try {
+            const pattern = message.pattern || '*';
+            const cursor = message.cursor || '0';
+            const count = message.count || 100;
+
+            // Select the correct database (schema is "db0", "db1", etc.)
+            const dbIndex = message.schema ? parseInt(message.schema.replace('db', ''), 10) : 0;
+            if (!isNaN(dbIndex)) {
+              await currentClient.runQuery(`SELECT ${dbIndex}`);
+            }
+
+            // Execute SCAN command
+            const scanResult = await currentClient.runQuery(`SCAN ${cursor} MATCH ${pattern} COUNT ${count}`);
+
+            if (!scanResult.rows || scanResult.rows.length < 2) {
+              panel.webview.postMessage({
+                type: "REDIS_SCAN_RESULT",
+                tabId,
+                keys: [],
+                cursor: "0",
+                hasMore: false
+              });
+              break;
+            }
+
+            // Parse SCAN result: [cursor, [keys...]]
+            const cursorRow = scanResult.rows[0] as Record<string, unknown>;
+            const keysRow = scanResult.rows[1] as Record<string, unknown>;
+            const nextCursor = String(cursorRow.value ?? "0");
+            const scannedKeys = (keysRow.value as string[]) || [];
+
+            // Get types for each key (in parallel for performance)
+            const keysWithTypes = await Promise.all(
+              scannedKeys.map(async (key) => {
+                try {
+                  const typeResult = await currentClient.runQuery(`TYPE ${key}`);
+                  const type = typeResult.rows?.[0] ? String(Object.values(typeResult.rows[0])[0]) : 'unknown';
+                  return { key, type };
+                } catch {
+                  return { key, type: 'unknown' };
+                }
+              })
+            );
+
+            panel.webview.postMessage({
+              type: "REDIS_SCAN_RESULT",
+              tabId,
+              keys: keysWithTypes,
+              cursor: nextCursor,
+              hasMore: nextCursor !== "0"
+            });
+          } catch (error) {
+            console.error(`[dbview] Error scanning Redis keys:`, error);
+            panel.webview.postMessage({
+              type: "REDIS_ERROR",
+              tabId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+          break;
+        }
+
+        case "GET_REDIS_KEY_VALUE": {
+          // Get value for a selected key based on its type
+          console.log(`[dbview] Getting Redis key value: ${message.key}, schema=${message.schema}`);
+          try {
+            const key = message.key;
+
+            // Select the correct database (schema is "db0", "db1", etc.)
+            const dbIndex = message.schema ? parseInt(message.schema.replace('db', ''), 10) : 0;
+            if (!isNaN(dbIndex)) {
+              await currentClient.runQuery(`SELECT ${dbIndex}`);
+            }
+
+            // Get key type first
+            const typeResult = await currentClient.runQuery(`TYPE ${key}`);
+            const keyType = typeResult.rows?.[0] ? String(Object.values(typeResult.rows[0])[0]) : 'none';
+
+            // Get TTL
+            const ttlResult = await currentClient.runQuery(`TTL ${key}`);
+            const ttl = ttlResult.rows?.[0] ? Number(Object.values(ttlResult.rows[0])[0]) : -1;
+
+            // Try to get memory usage (may fail on older Redis)
+            let memory: number | undefined;
+            try {
+              const memResult = await currentClient.runQuery(`MEMORY USAGE ${key}`);
+              if (memResult.rows?.[0]) {
+                memory = Number(Object.values(memResult.rows[0])[0]);
+              }
+            } catch {
+              // Memory command not supported
+            }
+
+            // Get value based on type
+            let data: any = { type: keyType, ttl, memory };
+
+            switch (keyType) {
+              case 'string': {
+                const result = await currentClient.runQuery(`GET ${key}`);
+                // Result format: [{ result: value }] or [{ index, value }]
+                if (result.rows?.[0]) {
+                  const row = result.rows[0] as Record<string, unknown>;
+                  // Handle both formats: { result: value } or { value: value }
+                  data.value = String(row.result ?? row.value ?? Object.values(row)[0] ?? '');
+                } else {
+                  data.value = null;
+                }
+                break;
+              }
+              case 'hash': {
+                const result = await currentClient.runQuery(`HGETALL ${key}`);
+                // Parse hash result into field-value pairs
+                // runQuery returns alternating [{ index: 0, value: "field1" }, { index: 1, value: "value1" }, ...]
+                // OR could be object format { field1: value1, field2: value2 }
+                const fields: { field: string; value: string }[] = [];
+                if (result.rows && result.rows.length > 0) {
+                  const firstRow = result.rows[0] as Record<string, unknown>;
+
+                  if ('index' in firstRow && 'value' in firstRow) {
+                    // Array format - alternating field/value pairs from runQuery
+                    for (let i = 0; i < result.rows.length; i += 2) {
+                      const fieldRow = result.rows[i] as Record<string, unknown>;
+                      const valueRow = result.rows[i + 1] as Record<string, unknown>;
+                      if (fieldRow && valueRow) {
+                        const field = String(fieldRow.value ?? '');
+                        const value = String(valueRow.value ?? '');
+                        fields.push({ field, value });
+                      }
+                    }
+                  } else {
+                    // Object format - keys are field names
+                    for (const [field, value] of Object.entries(firstRow)) {
+                      fields.push({ field, value: String(value ?? '') });
+                    }
+                  }
+                }
+                data.fields = fields;
+                break;
+              }
+              case 'list': {
+                const result = await currentClient.runQuery(`LRANGE ${key} 0 -1`);
+                // runQuery returns [{ index: 0, value: "item1" }, { index: 1, value: "item2" }, ...]
+                const items: { index: number; value: string }[] = [];
+                if (result.rows) {
+                  result.rows.forEach((row) => {
+                    const rowData = row as Record<string, unknown>;
+                    const index = typeof rowData.index === 'number' ? rowData.index : items.length;
+                    const value = String(rowData.value ?? Object.values(rowData).find(v => typeof v === 'string') ?? '');
+                    items.push({ index, value });
+                  });
+                }
+                data.items = items;
+                break;
+              }
+              case 'set': {
+                const result = await currentClient.runQuery(`SMEMBERS ${key}`);
+                // runQuery returns [{ index: 0, value: "member1" }, { index: 1, value: "member2" }, ...]
+                const members: { value: string }[] = [];
+                if (result.rows) {
+                  result.rows.forEach((row) => {
+                    const rowData = row as Record<string, unknown>;
+                    const value = String(rowData.value ?? Object.values(rowData).find(v => typeof v === 'string') ?? '');
+                    members.push({ value });
+                  });
+                }
+                data.members = members;
+                break;
+              }
+              case 'zset': {
+                const result = await currentClient.runQuery(`ZRANGE ${key} 0 -1 WITHSCORES`);
+                // runQuery returns [{ index: 0, value: "member1" }, { index: 1, value: "score1" }, ...]
+                // Alternating member/score pairs
+                const members: { value: string; score: number }[] = [];
+                if (result.rows) {
+                  for (let i = 0; i < result.rows.length; i += 2) {
+                    const memberRow = result.rows[i] as Record<string, unknown>;
+                    const scoreRow = result.rows[i + 1] as Record<string, unknown>;
+                    const value = String(memberRow?.value ?? Object.values(memberRow || {}).find(v => typeof v === 'string') ?? '');
+                    const score = scoreRow ? Number(scoreRow.value ?? Object.values(scoreRow).find(v => typeof v === 'string' || typeof v === 'number') ?? 0) : 0;
+                    members.push({ value, score });
+                  }
+                }
+                data.members = members;
+                break;
+              }
+              case 'stream': {
+                // Get stream entries using XRANGE
+                const result = await currentClient.runQuery(`XRANGE ${key} - + COUNT 100`);
+                const entries: { id: string; fields: Record<string, unknown> }[] = [];
+
+                if (result.rows && result.rows.length > 0) {
+                  // XRANGE returns: [[id1, [field1, val1, field2, val2]], [id2, ...]]
+                  // runQuery may format this in different ways:
+                  // 1. Raw array: row is [id, [field1, val1, ...]]
+                  // 2. Object with value: { index: 0, value: [id, [fields]] }
+                  // 3. Already parsed: { id: "...", fields: {...} }
+                  for (const row of result.rows) {
+                    // Case 1: Row is an array [id, [field1, val1, ...]]
+                    if (Array.isArray(row)) {
+                      const rowArray = row as unknown as [string, string[]];
+                      const [id, fieldArray] = rowArray;
+                      const fields: Record<string, unknown> = {};
+                      if (Array.isArray(fieldArray)) {
+                        for (let i = 0; i < fieldArray.length; i += 2) {
+                          fields[String(fieldArray[i])] = fieldArray[i + 1];
+                        }
+                      }
+                      entries.push({ id: String(id), fields });
+                      continue;
+                    }
+
+                    const rowData = row as Record<string, unknown>;
+
+                    // Case 2: Already parsed format { id, fields }
+                    if (rowData.id && rowData.fields) {
+                      entries.push({
+                        id: String(rowData.id),
+                        fields: (rowData.fields as Record<string, unknown>) || {}
+                      });
+                      continue;
+                    }
+
+                    // Case 3: Value is an array [id, [field1, val1, ...]]
+                    if (Array.isArray(rowData.value)) {
+                      const [id, fieldArray] = rowData.value as [string, string[]];
+                      const fields: Record<string, unknown> = {};
+                      if (Array.isArray(fieldArray)) {
+                        for (let i = 0; i < fieldArray.length; i += 2) {
+                          fields[String(fieldArray[i])] = fieldArray[i + 1];
+                        }
+                      }
+                      entries.push({ id: String(id), fields });
+                      continue;
+                    }
+
+                    // Case 4: Fallback - try to extract from object values
+                    const values = Object.values(rowData);
+                    if (values.length >= 2 && typeof values[0] === 'string') {
+                      // Might be { index: id, value: [fields] } or similar
+                      const potentialId = String(values[0]);
+                      const potentialFields = values[1];
+                      if (Array.isArray(potentialFields)) {
+                        const fields: Record<string, unknown> = {};
+                        for (let i = 0; i < potentialFields.length; i += 2) {
+                          fields[String(potentialFields[i])] = potentialFields[i + 1];
+                        }
+                        entries.push({ id: potentialId, fields });
+                      }
+                    }
+                  }
+                }
+
+                // Get stream length
+                const infoResult = await currentClient.runQuery(`XLEN ${key}`);
+                const length = infoResult.rows?.[0]
+                  ? Number((infoResult.rows[0] as Record<string, unknown>).result ?? Object.values(infoResult.rows[0])[0] ?? 0)
+                  : 0;
+
+                data.entries = entries;
+                data.streamInfo = { length };
+                break;
+              }
+
+              // RedisJSON module types
+              case 'ReJSON-RL':
+              case 'rejson-rl': {
+                // Try JSON.GET for RedisJSON module
+                try {
+                  const result = await currentClient.runQuery(`JSON.GET ${key}`);
+                  if (result.rows?.[0]) {
+                    const row = result.rows[0] as Record<string, unknown>;
+                    const jsonStr = String(row.result ?? row.value ?? Object.values(row)[0] ?? '');
+                    try {
+                      data.jsonValue = JSON.parse(jsonStr);
+                      data.rawValue = jsonStr;
+                    } catch {
+                      data.rawValue = jsonStr;
+                    }
+                  }
+                } catch (jsonErr) {
+                  // JSON.GET failed, try to get debug info
+                  data.rawValue = `RedisJSON key (JSON.GET failed: ${jsonErr instanceof Error ? jsonErr.message : String(jsonErr)})`;
+                }
+                break;
+              }
+
+              // Fallback for unknown types (HyperLogLog, module types, etc.)
+              default: {
+                // Try multiple approaches to get some data
+                let rawValue: string | null = null;
+
+                // 1. Try DEBUG OBJECT for metadata
+                try {
+                  const debugResult = await currentClient.runQuery(`DEBUG OBJECT ${key}`);
+                  if (debugResult.rows?.[0]) {
+                    const row = debugResult.rows[0] as Record<string, unknown>;
+                    data.debugInfo = String(row.result ?? row.value ?? Object.values(row)[0] ?? '');
+                  }
+                } catch {
+                  // DEBUG command may be disabled
+                }
+
+                // 2. Try OBJECT ENCODING to understand the internal encoding
+                try {
+                  const encodingResult = await currentClient.runQuery(`OBJECT ENCODING ${key}`);
+                  if (encodingResult.rows?.[0]) {
+                    const row = encodingResult.rows[0] as Record<string, unknown>;
+                    data.encoding = String(row.result ?? row.value ?? Object.values(row)[0] ?? '');
+                  }
+                } catch {
+                  // OBJECT command may fail
+                }
+
+                // 3. For unknown types, try common commands based on probable encoding
+                // HyperLogLog uses string encoding internally
+                if (keyType === 'string' || data.encoding === 'raw' || data.encoding === 'embstr') {
+                  try {
+                    const getResult = await currentClient.runQuery(`GET ${key}`);
+                    if (getResult.rows?.[0]) {
+                      const row = getResult.rows[0] as Record<string, unknown>;
+                      rawValue = String(row.result ?? row.value ?? Object.values(row)[0] ?? '');
+                    }
+                  } catch {
+                    // GET failed
+                  }
+                }
+
+                // 4. Try DUMP as last resort (returns serialized value)
+                if (!rawValue) {
+                  try {
+                    const dumpResult = await currentClient.runQuery(`DUMP ${key}`);
+                    if (dumpResult.rows?.[0]) {
+                      const row = dumpResult.rows[0] as Record<string, unknown>;
+                      const dumpValue = row.result ?? row.value ?? Object.values(row)[0];
+                      if (dumpValue) {
+                        // DUMP returns binary data, convert to hex for display
+                        data.dumpHex = Buffer.isBuffer(dumpValue)
+                          ? (dumpValue as Buffer).toString('hex')
+                          : String(dumpValue);
+                      }
+                    }
+                  } catch {
+                    // DUMP failed
+                  }
+                }
+
+                data.rawValue = rawValue;
+                data.isUnknownType = true;
+                break;
+              }
+            }
+
+            panel.webview.postMessage({
+              type: "REDIS_KEY_VALUE",
+              tabId,
+              key,
+              data
+            });
+          } catch (error) {
+            console.error(`[dbview] Error getting Redis key value:`, error);
+            panel.webview.postMessage({
+              type: "REDIS_ERROR",
+              tabId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+          break;
+        }
+
+        case "GET_REDIS_KEY_INFO": {
+          // Get metadata for a key (TYPE, TTL, MEMORY)
+          console.log(`[dbview] Getting Redis key info: ${message.key}, schema=${message.schema}`);
+          try {
+            const key = message.key;
+
+            // Select the correct database (schema is "db0", "db1", etc.)
+            const dbIndex = message.schema ? parseInt(message.schema.replace('db', ''), 10) : 0;
+            if (!isNaN(dbIndex)) {
+              await currentClient.runQuery(`SELECT ${dbIndex}`);
+            }
+
+            // Get type
+            const typeResult = await currentClient.runQuery(`TYPE ${key}`);
+            const keyType = typeResult.rows?.[0] ? String(Object.values(typeResult.rows[0])[0]) : 'none';
+
+            // Get TTL
+            const ttlResult = await currentClient.runQuery(`TTL ${key}`);
+            const ttl = ttlResult.rows?.[0] ? Number(Object.values(ttlResult.rows[0])[0]) : -1;
+
+            // Try to get memory usage
+            let memory: number | undefined;
+            try {
+              const memResult = await currentClient.runQuery(`MEMORY USAGE ${key}`);
+              if (memResult.rows?.[0]) {
+                memory = Number(Object.values(memResult.rows[0])[0]);
+              }
+            } catch {
+              // Memory command not supported
+            }
+
+            panel.webview.postMessage({
+              type: "REDIS_KEY_INFO",
+              tabId,
+              key,
+              keyType,
+              ttl,
+              memory
+            });
+          } catch (error) {
+            console.error(`[dbview] Error getting Redis key info:`, error);
+            panel.webview.postMessage({
+              type: "REDIS_ERROR",
+              tabId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+          break;
+        }
+
+        case "GET_REDIS_DBSIZE": {
+          // Get total key count for a database (O(1) operation)
+          console.log(`[dbview] Getting Redis DBSIZE for schema: ${message.schema}`);
+          try {
+            // Select the correct database (schema is "db0", "db1", etc.)
+            const dbIndex = message.schema ? parseInt(message.schema.replace('db', ''), 10) : 0;
+            if (!isNaN(dbIndex)) {
+              await currentClient.runQuery(`SELECT ${dbIndex}`);
+            }
+
+            const result = await currentClient.runQuery("DBSIZE");
+            const size = result.rows?.[0] ? Number(Object.values(result.rows[0])[0]) : 0;
+
+            panel.webview.postMessage({
+              type: "REDIS_DBSIZE",
+              tabId,
+              schema: message.schema,
+              size
+            });
+          } catch (error) {
+            console.error(`[dbview] Error getting Redis DBSIZE:`, error);
+            panel.webview.postMessage({
+              type: "REDIS_ERROR",
+              tabId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+          break;
+        }
+
+        // ==================== Document Query Operations (MongoDB, Elasticsearch, Cassandra) ====================
+
+        case "RUN_DOCUMENT_QUERY": {
+          // Execute query from the Document Query Editor (MongoDB/Elasticsearch/Cassandra)
+          const queryDbType = message.dbType as string;
+          console.log(`[dbview] Running ${queryDbType} query for tab ${tabId}: ${message.query?.substring(0, 100)}...`);
+          const docQueryStartTime = Date.now();
+
+          try {
+            let result: QueryResultSet;
+
+            if (queryDbType === 'cassandra') {
+              // Cassandra uses CQL - pass directly to runQuery
+              result = await currentClient.runQuery(message.query);
+            } else if (queryDbType === 'mongodb' || queryDbType === 'elasticsearch') {
+              // MongoDB and Elasticsearch use JSON queries
+              // The query should be valid JSON that the adapter can interpret
+              result = await currentClient.runQuery(message.query);
+            } else {
+              throw new Error(`Unsupported document database type: ${queryDbType}`);
+            }
+
+            const docQueryDuration = Date.now() - docQueryStartTime;
+
+            // Format results for the UI grid
+            let columns: string[] = [];
+            let rows: Record<string, unknown>[] = result.rows || [];
+
+            if (rows.length > 0) {
+              // Extract columns from the first row's keys
+              const firstRow = rows[0];
+              columns = Object.keys(firstRow);
+            } else {
+              // No results - show empty state
+              columns = ['result'];
+              rows = [{ result: '(no results)' }];
+            }
+
+            panel.webview.postMessage({
+              type: "DOCUMENT_QUERY_RESULT",
+              tabId,
+              columns,
+              rows,
+              duration: docQueryDuration
+            });
+          } catch (error) {
+            console.error(`[dbview] Error running ${queryDbType} query:`, error);
+            panel.webview.postMessage({
+              type: "DOCUMENT_QUERY_ERROR",
+              tabId,
+              message: error instanceof Error ? error.message : String(error)
+            });
+          }
+          break;
+        }
+
+        case "RUN_REDIS_COMMAND": {
+          // Execute raw Redis command from the Redis query editor
+          console.log(`[dbview] Running Redis command from query editor: ${message.command}`);
+          const redisStartTime = Date.now();
+          try {
+            const result = await currentClient.runQuery(message.command);
+            const redisDuration = Date.now() - redisStartTime;
+
+            // Format results for the UI grid
+            let columns: string[] = [];
+            let rows: Record<string, unknown>[] = [];
+
+            if (result.rows && result.rows.length > 0) {
+              // If rows have 'index' and 'value' properties, format them nicely
+              const firstRow = result.rows[0] as Record<string, unknown>;
+              if ('index' in firstRow && 'value' in firstRow) {
+                columns = ['index', 'value'];
+                rows = result.rows.map((r) => {
+                  const row = r as Record<string, unknown>;
+                  return { index: row.index, value: row.value };
+                });
+              } else if ('result' in firstRow) {
+                // Single result value
+                columns = ['result'];
+                rows = [{ result: firstRow.result }];
+              } else {
+                // Use whatever columns are present
+                columns = Object.keys(firstRow);
+                rows = result.rows;
+              }
+            } else {
+              // Empty result
+              columns = ['result'];
+              rows = [{ result: '(empty)' }];
+            }
+
+            panel.webview.postMessage({
+              type: "REDIS_COMMAND_RESULT",
+              tabId,
+              columns,
+              rows,
+              duration: redisDuration
+            });
+          } catch (error) {
+            console.error(`[dbview] Error running Redis command:`, error);
+            panel.webview.postMessage({
+              type: "REDIS_COMMAND_ERROR",
+              tabId,
+              message: error instanceof Error ? error.message : String(error)
+            });
+          }
+          break;
+        }
+
         case "RUN_QUERY": {
           console.log(`[dbview] Running query for tab ${tabId}`);
           try {
-            const result = await client.runQuery(message.sql);
+            const result = await currentClient.runQuery(message.sql);
             panel.webview.postMessage({
               type: "QUERY_RESULT",
               tabId,
@@ -617,7 +1504,7 @@ export async function getOrCreateMainPanel(
             console.log(`[dbview] Using limits: ${limits.MAX_TOTAL_TABLES} tables max, ${limits.MAX_TABLES_WITH_METADATA} with metadata`);
 
             // Fetch all schemas using database-agnostic adapter method
-            const schemas = await client.listSchemas();
+            const schemas = await currentClient.listSchemas();
             console.log(`[dbview] Fetched ${schemas.length} schemas in ${Date.now() - startTime}ms`);
 
             // Fetch tables with row counts for each schema (with limits for performance)
@@ -630,7 +1517,7 @@ export async function getOrCreateMainPanel(
               }
 
               try {
-                const schemaTables = await client.listTables(schema);
+                const schemaTables = await currentClient.listTables(schema);
                 // Limit tables per schema
                 const limitedTables = schemaTables.slice(0, limits.MAX_TABLES_PER_SCHEMA);
 
@@ -661,7 +1548,7 @@ export async function getOrCreateMainPanel(
             for (const table of tablesToFetchMetadata) {
               const key = `${table.schema}.${table.name}`;
               try {
-                columns[key] = await client.getTableMetadata(table.schema, table.name);
+                columns[key] = await currentClient.getTableMetadata(table.schema, table.name);
               } catch (error) {
                 console.error(`[dbview] Error fetching metadata for ${key}:`, error);
                 columns[key] = [];
@@ -687,7 +1574,7 @@ export async function getOrCreateMainPanel(
           console.log(`[dbview] Formatting SQL for tab ${tabId}`);
           try {
             // Determine SQL dialect based on database type
-            const sqlDialect = client.type === 'mysql' ? 'mysql' : 'postgresql';
+            const sqlDialect = currentClient.type === 'mysql' ? 'mysql' : 'postgresql';
 
             const formatted = formatSql(message.sql, {
               language: sqlDialect,
@@ -718,7 +1605,7 @@ export async function getOrCreateMainPanel(
           try {
             // Use database-specific EXPLAIN syntax
             let explainSQL: string;
-            if (client.type === 'mysql') {
+            if (currentClient.type === 'mysql') {
               // MySQL uses simpler EXPLAIN syntax
               explainSQL = `EXPLAIN FORMAT=JSON ${message.sql}`;
             } else {
@@ -726,11 +1613,11 @@ export async function getOrCreateMainPanel(
               explainSQL = `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${message.sql}`;
             }
 
-            const result = await client.runQuery(explainSQL);
+            const result = await currentClient.runQuery(explainSQL);
 
             // Extract the plan from the result (format varies by database)
             let plan;
-            if (client.type === 'mysql') {
+            if (currentClient.type === 'mysql') {
               // MySQL returns JSON in 'EXPLAIN' column
               const explainOutput = result.rows[0]['EXPLAIN'];
               plan = typeof explainOutput === 'string' ? JSON.parse(explainOutput) : explainOutput;
@@ -816,7 +1703,7 @@ export async function getOrCreateMainPanel(
 
             for (let i = 0; i < rows.length; i++) {
               try {
-                await client.insertRow(schema, table, rows[i]);
+                await currentClient.insertRow(schema, table, rows[i]);
                 successCount++;
               } catch (error) {
                 errors.push(`Row ${i + 1}: ${error instanceof Error ? error.message : String(error)}`);
@@ -899,7 +1786,9 @@ export async function openTableInPanel(
     schema: target.schema,
     table: target.table,
     limit: 100,
-    connectionName
+    connectionName,
+    dbType: connectionConfig.dbType || 'postgres',
+    readOnly: 'readOnly' in connectionConfig ? Boolean(connectionConfig.readOnly) : false
   });
 }
 
@@ -913,9 +1802,11 @@ export async function openQueryInPanel(
   const key = getConnectionKey(connectionConfig);
 
   // Send message to open a new query tab (queues if webview not ready)
+  // Include dbType to route to the correct query editor (SQL, Document, or Redis)
   sendMessageToPanel(key, {
     type: "OPEN_QUERY_TAB",
-    connectionName
+    connectionName,
+    dbType: connectionConfig.dbType || 'postgres'
   });
 }
 
@@ -933,7 +1824,7 @@ export async function openERDiagramInPanel(
   if (!schemasToVisualize) {
     try {
       schemasToVisualize = await client.listSchemas();
-      console.log(`[dbview] Fetched ${schemasToVisualize.length} schemas for ER diagram`);
+      console.log(`[dbview] Fetched ${schemasToVisualize!.length} schemas for ER diagram`);
     } catch (error) {
       console.error('[dbview] Error fetching schemas:', error);
       // Fallback based on database type
