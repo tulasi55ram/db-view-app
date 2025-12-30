@@ -251,10 +251,8 @@ export const RedisDataView: FC<RedisDataViewProps> = ({
       return;
     }
     const exportData = {
-      key: selectedKey,
-      type: selectedKeyData.type,
-      ttl: selectedKeyData.ttl,
       ...selectedKeyData,
+      key: selectedKey, // Override key with the selected key name
     };
     const json = JSON.stringify(exportData, null, 2);
     vscode?.postMessage({

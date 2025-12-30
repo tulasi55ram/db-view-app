@@ -8,11 +8,12 @@
  * - Hierarchical tree view with type indicators
  * - Table view for flat data
  * - JSON view for raw document viewing
- * - Document CRUD operations
+ * - Document CRUD operations with slide-out editor panel
+ * - Template management for quick document insertion
  */
 
 import type { FC } from "react";
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import type { ColumnMetadata } from "@dbview/types";
 import type { DocumentDataViewProps } from "./types";
 import { getRowLabel, getDocumentIdField } from "./types";
@@ -23,8 +24,11 @@ import { getVsCodeApi } from "../../vscode";
 import {
   TreeView,
   DocumentList,
+  DocumentEditorPanel,
+  createEmptyTemplate,
   type DocumentItem,
   type ViewMode,
+  type DocumentTemplate,
   DB_LABELS,
   VIEW_MODE_LABELS,
 } from "./documentView";
@@ -40,6 +44,8 @@ import {
   TreeDeciduous,
   RefreshCw,
   Braces,
+  Edit3,
+  Files,
 } from "lucide-react";
 import clsx from "clsx";
 import { toast } from "sonner";
@@ -110,6 +116,113 @@ export const DocumentDataView: FC<DocumentDataViewProps> = ({
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const hasSelectedRows = selectedRows.size > 0;
 
+  // Editor panel state
+  const [editorPanelOpen, setEditorPanelOpen] = useState(false);
+  const [editorMode, setEditorMode] = useState<'insert' | 'edit'>('insert');
+  const [editingDocument, setEditingDocument] = useState<Record<string, unknown> | null>(null);
+  const [editingDocumentId, setEditingDocumentId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
+
+  // Helper function to safely call refresh with error handling
+  const safeRefresh = useCallback(() => {
+    if (onRefresh) {
+      try {
+        onRefresh();
+      } catch (error) {
+        console.error('[DocumentDataView] Error calling onRefresh:', error);
+        // Fallback: directly request data refresh via vscode message
+        vscode?.postMessage({
+          type: "LOAD_TABLE_ROWS",
+          schema,
+          table,
+          limit,
+          offset: 0
+        });
+      }
+    } else {
+      // Fallback: directly request data refresh via vscode message
+      vscode?.postMessage({
+        type: "LOAD_TABLE_ROWS",
+        schema,
+        table,
+        limit,
+        offset: 0
+      });
+    }
+  }, [onRefresh, vscode, schema, table, limit]);
+
+  // Listen for messages from extension
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data;
+
+      switch (message?.type) {
+        case 'INSERT_SUCCESS':
+          setIsSaving(false);
+          setEditorPanelOpen(false);
+          toast.success(`${labels.itemLabel} inserted successfully`);
+          // Use setTimeout to ensure state updates are processed first
+          setTimeout(() => {
+            safeRefresh();
+          }, 100);
+          break;
+
+        case 'INSERT_ERROR':
+          setIsSaving(false);
+          setSaveError(message.error || 'Failed to insert document');
+          toast.error(`Failed to insert ${labels.itemLabel.toLowerCase()}`);
+          break;
+
+        case 'UPDATE_SUCCESS':
+          setIsSaving(false);
+          setEditorPanelOpen(false);
+          toast.success(`${labels.itemLabel} updated successfully`);
+          // Use setTimeout to ensure state updates are processed first
+          setTimeout(() => {
+            safeRefresh();
+          }, 100);
+          break;
+
+        case 'UPDATE_ERROR':
+          setIsSaving(false);
+          setSaveError(message.error || 'Failed to update document');
+          toast.error(`Failed to update ${labels.itemLabel.toLowerCase()}`);
+          break;
+
+        case 'DELETE_SUCCESS':
+          toast.success(`${labels.itemLabel}(s) deleted successfully`);
+          // Clear selection since deleted document no longer exists
+          setSelectedDocId(null);
+          // Use setTimeout to ensure state updates are processed first
+          setTimeout(() => {
+            safeRefresh();
+          }, 100);
+          break;
+
+        case 'DELETE_ERROR':
+          toast.error(`Failed to delete ${labels.itemLabel.toLowerCase()}: ${message.error}`);
+          break;
+
+        case 'DOCUMENT_TEMPLATES':
+          if (message.schema === schema && message.table === table) {
+            setTemplates(message.templates || []);
+          }
+          break;
+
+        case 'TEMPLATE_SAVED':
+          if (message.schema === schema && message.table === table) {
+            setTemplates(prev => [...prev, message.template]);
+          }
+          break;
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [labels.itemLabel, schema, table, safeRefresh]);
+
   // Convert rows to DocumentItem format
   const documents: DocumentItem[] = useMemo(() => {
     return rows.map((row, index) => ({
@@ -130,8 +243,8 @@ export const DocumentDataView: FC<DocumentDataViewProps> = ({
     return documents.find((d) => d._id === selectedDocId) || null;
   }, [documents, selectedDocId, loading]);
 
-  // Auto-select first document when documents change
-  useMemo(() => {
+  // Auto-select first document when documents change (use useEffect for side effects)
+  useEffect(() => {
     if (!selectedDocId && documents.length > 0 && !loading) {
       setSelectedDocId(documents[0]._id);
     }
@@ -190,11 +303,19 @@ export const DocumentDataView: FC<DocumentDataViewProps> = ({
   }, []);
 
   // CRUD handlers
-  const handleDeleteDocuments = () => {
+  const handleDeleteDocuments = useCallback(() => {
     if (selectedRows.size === 0) return;
 
     const selectedIndices = Array.from(selectedRows);
     const documentIds = selectedIndices.map(idx => rows[idx][docIdField] as string);
+    const count = documentIds.length;
+
+    // Show confirmation dialog
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${count} ${count === 1 ? labels.itemLabel.toLowerCase() : labels.itemLabelPlural.toLowerCase()}?\n\nThis action cannot be undone.`
+    );
+
+    if (!confirmed) return;
 
     if (onDeleteDocuments) {
       onDeleteDocuments(documentIds);
@@ -208,22 +329,147 @@ export const DocumentDataView: FC<DocumentDataViewProps> = ({
     }
 
     setSelectedRows(new Set());
-    toast.success(`Deleted ${documentIds.length} document(s)`);
-  };
+    // Toast and refresh will be handled by DELETE_SUCCESS handler
+  }, [selectedRows, rows, docIdField, labels, onDeleteDocuments, vscode, schema, table]);
 
-  const handleInsertDocument = () => {
-    const emptyDoc = {};
-    if (onInsertDocument) {
-      onInsertDocument(emptyDoc);
+  // Delete a single document with confirmation
+  const handleDeleteSingleDocument = useCallback((docId: string) => {
+    // Show confirmation dialog
+    const confirmed = window.confirm(
+      `Are you sure you want to delete this ${labels.itemLabel.toLowerCase()}?\n\nThis action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    if (onDeleteDocuments) {
+      onDeleteDocuments([docId]);
     } else {
       vscode?.postMessage({
-        type: "INSERT_DOCUMENT",
+        type: "DELETE_DOCUMENTS",
         schema,
         table,
-        document: emptyDoc
+        documentIds: [docId]
       });
     }
+  }, [labels, onDeleteDocuments, vscode, schema, table]);
+
+  // Open editor panel for inserting new document
+  // If a document is selected, use its structure as a template with empty values
+  const handleInsertDocument = () => {
+    setEditorMode('insert');
+
+    // Use selected document's structure as template, or empty object
+    if (selectedDocument) {
+      const emptyTemplate = createEmptyTemplate(selectedDocument._source);
+      setEditingDocument(emptyTemplate);
+    } else {
+      setEditingDocument(null);
+    }
+
+    setEditingDocumentId(null);
+    setSaveError(null);
+    setEditorPanelOpen(true);
   };
+
+  // Open editor panel for editing existing document (double-click)
+  const handleEditDocument = useCallback((doc: DocumentItem) => {
+    if (readOnly) return;
+    setEditorMode('edit');
+    setEditingDocument(doc._source);
+    setEditingDocumentId(doc._id);
+    setSaveError(null);
+    setEditorPanelOpen(true);
+  }, [readOnly]);
+
+  // Duplicate document - opens insert mode with full values (except _id)
+  const handleDuplicateDocument = useCallback((doc: DocumentItem) => {
+    if (readOnly) return;
+    setEditorMode('insert');
+
+    // Copy all values except internal fields like _id
+    const duplicatedDoc: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(doc._source)) {
+      if (!key.startsWith('_')) {
+        duplicatedDoc[key] = value;
+      }
+    }
+
+    setEditingDocument(duplicatedDoc);
+    setEditingDocumentId(null);
+    setSaveError(null);
+    setEditorPanelOpen(true);
+    toast.info('Duplicating document - modify and save as new');
+  }, [readOnly]);
+
+  // Close editor panel
+  const handleCloseEditor = useCallback(() => {
+    setEditorPanelOpen(false);
+    setEditingDocument(null);
+    setEditingDocumentId(null);
+    setSaveError(null);
+    setIsSaving(false);
+  }, []);
+
+  // Save document (insert or update)
+  const handleSaveDocument = useCallback((document: Record<string, unknown>) => {
+    setIsSaving(true);
+    setSaveError(null);
+
+    if (editorMode === 'insert') {
+      if (onInsertDocument) {
+        onInsertDocument(document);
+      } else {
+        vscode?.postMessage({
+          type: "INSERT_DOCUMENT",
+          schema,
+          table,
+          document
+        });
+      }
+    } else {
+      // Update mode
+      if (onUpdateDocument && editingDocumentId) {
+        onUpdateDocument(editingDocumentId, document);
+      } else {
+        vscode?.postMessage({
+          type: "UPDATE_DOCUMENT",
+          schema,
+          table,
+          documentId: editingDocumentId,
+          updates: document
+        });
+      }
+    }
+  }, [editorMode, schema, table, editingDocumentId, onInsertDocument, onUpdateDocument, vscode]);
+
+  // Template handlers
+  const handleLoadTemplates = useCallback(() => {
+    vscode?.postMessage({
+      type: "GET_DOCUMENT_TEMPLATES",
+      schema,
+      table
+    });
+  }, [schema, table, vscode]);
+
+  const handleSaveTemplate = useCallback((name: string, content: string) => {
+    vscode?.postMessage({
+      type: "SAVE_DOCUMENT_TEMPLATE",
+      schema,
+      table,
+      templateName: name,
+      templateContent: content
+    });
+  }, [schema, table, vscode]);
+
+  const handleDeleteTemplate = useCallback((templateId: string) => {
+    vscode?.postMessage({
+      type: "DELETE_DOCUMENT_TEMPLATE",
+      schema,
+      table,
+      templateId
+    });
+    setTemplates(prev => prev.filter(t => t.id !== templateId));
+  }, [schema, table, vscode]);
 
   const handleCopyAsJson = () => {
     if (!selectedDocument) {
@@ -422,10 +668,11 @@ export const DocumentDataView: FC<DocumentDataViewProps> = ({
             documents={documents}
             selectedDocId={selectedDocId}
             onSelect={setSelectedDocId}
+            onDoubleClick={!readOnly ? handleEditDocument : undefined}
             loading={loading}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            searchPlaceholder={`Search ${labels.itemLabelPlural.toLowerCase()}...`}
+            searchPlaceholder={`Filter ${labels.itemLabelPlural.toLowerCase()}...`}
             dbType={dbType as 'mongodb' | 'elasticsearch' | 'cassandra'}
             itemLabel={labels.itemLabelPlural.toLowerCase()}
             totalCount={totalRows}
@@ -445,23 +692,30 @@ export const DocumentDataView: FC<DocumentDataViewProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 {!readOnly && (
-                  <button
-                    onClick={() => {
-                      if (onDeleteDocuments) {
-                        onDeleteDocuments([selectedDocument._id]);
-                      } else {
-                        vscode?.postMessage({
-                          type: "DELETE_DOCUMENTS",
-                          schema,
-                          table,
-                          documentIds: [selectedDocument._id]
-                        });
-                      }
-                    }}
-                    className="text-xs px-2 py-1 rounded hover:bg-vscode-error/10 text-vscode-text-muted hover:text-vscode-error transition-colors"
-                  >
-                    Delete
-                  </button>
+                  <>
+                    <button
+                      onClick={() => handleEditDocument(selectedDocument)}
+                      className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-vscode-accent/10 text-vscode-text-muted hover:text-vscode-accent transition-colors"
+                      title="Edit document"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDuplicateDocument(selectedDocument)}
+                      className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-vscode-accent/10 text-vscode-text-muted hover:text-vscode-accent transition-colors"
+                      title="Duplicate document (create copy)"
+                    >
+                      <Files className="w-3 h-3" />
+                      Duplicate
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSingleDocument(selectedDocument._id)}
+                      className="text-xs px-2 py-1 rounded hover:bg-vscode-error/10 text-vscode-text-muted hover:text-vscode-error transition-colors"
+                    >
+                      Delete
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -490,6 +744,25 @@ export const DocumentDataView: FC<DocumentDataViewProps> = ({
         onPageChange={onPageChange}
         onPageSizeChange={onPageSizeChange}
         loading={loading}
+      />
+
+      {/* Document Editor Panel (Slide-out) */}
+      <DocumentEditorPanel
+        isOpen={editorPanelOpen}
+        onClose={handleCloseEditor}
+        mode={editorMode}
+        dbType={dbType as 'mongodb' | 'elasticsearch' | 'cassandra'}
+        schema={schema}
+        table={table}
+        documentId={editingDocumentId || undefined}
+        initialDocument={editingDocument || undefined}
+        onSave={handleSaveDocument}
+        isSaving={isSaving}
+        saveError={saveError}
+        templates={templates}
+        onSaveTemplate={handleSaveTemplate}
+        onDeleteTemplate={handleDeleteTemplate}
+        onLoadTemplates={handleLoadTemplates}
       />
     </div>
   );

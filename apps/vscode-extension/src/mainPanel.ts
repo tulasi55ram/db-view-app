@@ -551,8 +551,14 @@ export async function getOrCreateMainPanel(
             // For MongoDB, use updateCell with the document ID as the primary key
             const primaryKey = { _id: message.documentId };
 
-            // Apply each field update
+            // Apply each field update, skipping immutable fields like _id
             for (const [field, value] of Object.entries(message.updates as Record<string, unknown>)) {
+              // Skip _id field - it's immutable in MongoDB and used as the primary key
+              if (field === '_id') {
+                console.log(`[dbview] Skipping immutable field: _id`);
+                continue;
+              }
+
               await currentClient.updateCell(
                 message.schema,
                 message.table,
@@ -579,25 +585,51 @@ export async function getOrCreateMainPanel(
         }
 
         case "INSERT_DOCUMENT": {
-          console.log(`[dbview] Inserting document into ${message.schema}.${message.table}`);
+          console.log(`[dbview] ========== INSERT DOCUMENT REQUEST ==========`);
+          console.log(`[dbview] Tab ID: ${tabId}`);
+          console.log(`[dbview] Schema: ${message.schema}`);
+          console.log(`[dbview] Table/Collection: ${message.table}`);
+          console.log(`[dbview] Document to insert:`, JSON.stringify(message.document, null, 2));
+          console.log(`[dbview] Client type: ${currentClient?.constructor?.name}`);
+
+          // Check for read-only mode
+          if (isReadOnlyMode(connectionConfig)) {
+            console.log(`[dbview] INSERT blocked - connection is in read-only mode`);
+            panel.webview.postMessage({
+              type: "INSERT_ERROR",
+              tabId,
+              error: "🔒 Connection is in read-only mode. Write operations are blocked."
+            });
+            break;
+          }
+
           try {
+            console.log(`[dbview] Calling currentClient.insertRow...`);
             const newRow = await currentClient.insertRow(
               message.schema,
               message.table,
               message.document as Record<string, unknown>
             );
+            console.log(`[dbview] ========== INSERT DOCUMENT SUCCESSFUL ==========`);
+            console.log(`[dbview] Inserted document:`, JSON.stringify(newRow, null, 2));
+
             panel.webview.postMessage({
               type: "INSERT_SUCCESS",
               tabId,
               newRow
             });
+            console.log(`[dbview] INSERT_SUCCESS message sent to webview`);
           } catch (error) {
+            console.error(`[dbview] ========== INSERT DOCUMENT FAILED ==========`);
             console.error(`[dbview] Error inserting document:`, error);
+            console.error(`[dbview] Error stack:`, error instanceof Error ? error.stack : 'No stack trace');
+
             panel.webview.postMessage({
               type: "INSERT_ERROR",
               tabId,
               error: error instanceof Error ? error.message : String(error)
             });
+            console.log(`[dbview] INSERT_ERROR message sent to webview`);
           }
           break;
         }
@@ -628,6 +660,80 @@ export async function getOrCreateMainPanel(
               tabId,
               error: error instanceof Error ? error.message : String(error)
             });
+          }
+          break;
+        }
+
+        // ==================== Document Template Management ====================
+
+        case "GET_DOCUMENT_TEMPLATES": {
+          console.log(`[dbview] Getting templates for ${message.schema}.${message.table}`);
+          try {
+            const connKey = getConnectionKey(connectionConfig);
+            const templateKey = `documentTemplates:${connKey}:${message.schema}:${message.table}`;
+            const templates = context.workspaceState.get<any[]>(templateKey, []);
+            panel.webview.postMessage({
+              type: "DOCUMENT_TEMPLATES",
+              tabId,
+              schema: message.schema,
+              table: message.table,
+              templates
+            });
+          } catch (error) {
+            console.error(`[dbview] Error getting templates:`, error);
+          }
+          break;
+        }
+
+        case "SAVE_DOCUMENT_TEMPLATE": {
+          console.log(`[dbview] Saving template "${message.templateName}" for ${message.schema}.${message.table}`);
+          try {
+            const connKey = getConnectionKey(connectionConfig);
+            const templateKey = `documentTemplates:${connKey}:${message.schema}:${message.table}`;
+            const templates = context.workspaceState.get<any[]>(templateKey, []);
+
+            const newTemplate = {
+              id: `template-${Date.now()}`,
+              name: message.templateName,
+              content: message.templateContent,
+              createdAt: new Date().toISOString()
+            };
+
+            templates.push(newTemplate);
+            await context.workspaceState.update(templateKey, templates);
+
+            panel.webview.postMessage({
+              type: "TEMPLATE_SAVED",
+              tabId,
+              schema: message.schema,
+              table: message.table,
+              template: newTemplate
+            });
+          } catch (error) {
+            console.error(`[dbview] Error saving template:`, error);
+          }
+          break;
+        }
+
+        case "DELETE_DOCUMENT_TEMPLATE": {
+          console.log(`[dbview] Deleting template ${message.templateId} for ${message.schema}.${message.table}`);
+          try {
+            const connKey = getConnectionKey(connectionConfig);
+            const templateKey = `documentTemplates:${connKey}:${message.schema}:${message.table}`;
+            const templates = context.workspaceState.get<any[]>(templateKey, []);
+
+            const filteredTemplates = templates.filter(t => t.id !== message.templateId);
+            await context.workspaceState.update(templateKey, filteredTemplates);
+
+            panel.webview.postMessage({
+              type: "TEMPLATE_DELETED",
+              tabId,
+              schema: message.schema,
+              table: message.table,
+              templateId: message.templateId
+            });
+          } catch (error) {
+            console.error(`[dbview] Error deleting template:`, error);
           }
           break;
         }

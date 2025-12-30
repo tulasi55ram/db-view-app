@@ -18,6 +18,8 @@ interface DocumentListProps {
   selectedDocId: string | null;
   /** Callback when a document is selected */
   onSelect: (docId: string) => void;
+  /** Callback when a document is double-clicked (for editing) */
+  onDoubleClick?: (doc: DocumentItem) => void;
   /** Whether initially loading */
   loading: boolean;
   /** Search query value */
@@ -38,10 +40,11 @@ export const DocumentList: FC<DocumentListProps> = ({
   documents,
   selectedDocId,
   onSelect,
+  onDoubleClick,
   loading,
   searchQuery,
   onSearchChange,
-  searchPlaceholder = 'Search...',
+  searchPlaceholder = 'Filter...',
   dbType = 'mongodb',
   itemLabel = 'documents',
   totalCount,
@@ -197,6 +200,7 @@ export const DocumentList: FC<DocumentListProps> = ({
                 document={doc}
                 isSelected={doc._id === selectedDocId}
                 onClick={() => handleSelect(doc._id)}
+                onDoubleClick={() => onDoubleClick?.(doc)}
                 highlightText={searchQuery}
                 dbType={dbType}
               />

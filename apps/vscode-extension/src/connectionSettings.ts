@@ -261,7 +261,8 @@ export async function getAllSavedConnections(
 
 export async function saveConnectionWithName(
   context: vscode.ExtensionContext,
-  connection: DatabaseConnectionConfig
+  connection: DatabaseConnectionConfig,
+  originalName?: string // Original name when editing, empty/undefined for new connections
 ): Promise<void> {
   if (!connection.name?.trim()) {
     throw new Error("Connection name is required");
@@ -286,6 +287,15 @@ export async function saveConnectionWithName(
   // Check if connection with this name already exists
   const existingIndex = connections.findIndex(c => c.name === connection.name);
 
+  // Check for duplicate name when creating a new connection
+  // Allow if: editing existing connection (originalName matches new name) OR no existing connection with this name
+  const isNewConnection = !originalName || originalName.trim() === '';
+  const isRenamingToExisting = originalName && originalName.trim() !== '' && originalName !== connection.name && existingIndex >= 0;
+
+  if ((isNewConnection && existingIndex >= 0) || isRenamingToExisting) {
+    throw new Error(`A connection named "${connection.name}" already exists. Please choose a different name.`);
+  }
+
   // Store password in secrets if provided
   if ('password' in connection && connection.password) {
     const secretKey = `dbview.connection.${connection.name}.password`;
@@ -309,18 +319,30 @@ export async function saveConnectionWithName(
   if (existingIndex >= 0) {
     // Update existing connection
     connections[existingIndex] = connectionToStore;
+    console.log(`[dbview] saveConnectionWithName: Updating existing connection at index ${existingIndex}`);
   } else {
     // Add new connection
     connections.push(connectionToStore);
+    console.log(`[dbview] saveConnectionWithName: Adding new connection, total count: ${connections.length}`);
   }
 
+  console.log(`[dbview] saveConnectionWithName: About to save ${connections.length} connections to globalState key "${CONNECTIONS_KEY}"`);
   await context.globalState.update(CONNECTIONS_KEY, connections);
+  console.log(`[dbview] saveConnectionWithName: globalState.update completed`);
+
+  // Verify the save by reading back
+  const savedConnections = context.globalState.get<DatabaseConnectionConfig[]>(CONNECTIONS_KEY);
+  console.log(`[dbview] saveConnectionWithName: Verification - found ${savedConnections?.length ?? 0} connections after save`);
+  if (savedConnections && savedConnections.length > 0) {
+    console.log(`[dbview] saveConnectionWithName: First saved connection name: "${savedConnections[0].name}"`);
+  }
 
   // Also save as the legacy single connection for backward compatibility
   await saveConnection(context, connection);
 
   // Set as active connection
   await context.globalState.update(ACTIVE_CONNECTION_KEY, connection.name);
+  console.log(`[dbview] saveConnectionWithName: Set active connection to "${connection.name}"`);
 }
 
 export async function deleteConnection(

@@ -369,6 +369,7 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
 
     const documents = await collection
       .find(query, { maxTimeMS: this.getQueryTimeoutMs() })
+      .sort({ _id: -1 })
       .skip(offset)
       .limit(limit)
       .toArray();
@@ -568,27 +569,44 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
   // ==================== CRUD Operations ====================
 
   async insertRow(schema: string, table: string, data: Record<string, unknown>): Promise<Record<string, unknown>> {
+    console.log(`[MongoDB] insertRow called - schema: ${schema}, table: ${table}`);
+    console.log(`[MongoDB] Data to insert:`, JSON.stringify(data, null, 2));
+
     if (!this.db) {
+      console.error(`[MongoDB] Not connected to database`);
       throw new Error('Not connected to MongoDB database');
     }
 
     if (this.connectionConfig.readOnly) {
+      console.error(`[MongoDB] Connection is read-only`);
       throw new Error('Cannot insert: Connection is in read-only mode');
     }
 
+    console.log(`[MongoDB] Getting collection: ${table}`);
     const collection = this.db.collection(table);
 
     // Remove _id if it's empty or null
     const insertData = { ...data };
     if (insertData._id === null || insertData._id === '') {
       delete insertData._id;
+      console.log(`[MongoDB] Removed empty _id from insert data`);
     }
 
+    console.log(`[MongoDB] Final insert data:`, JSON.stringify(insertData, null, 2));
+    console.log(`[MongoDB] Calling collection.insertOne...`);
+
     const result = await collection.insertOne(insertData);
+    console.log(`[MongoDB] insertOne result:`, JSON.stringify(result, null, 2));
+    console.log(`[MongoDB] Inserted ID: ${result.insertedId}`);
 
     // Return the inserted document
     const inserted = await collection.findOne({ _id: result.insertedId });
-    return inserted ? this.convertDocument(inserted) : {};
+    console.log(`[MongoDB] Retrieved inserted document:`, inserted ? 'found' : 'not found');
+
+    const converted = inserted ? this.convertDocument(inserted) : {};
+    console.log(`[MongoDB] Returning:`, JSON.stringify(converted, null, 2));
+
+    return converted;
   }
 
   async updateCell(

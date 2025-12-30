@@ -11,3 +11,5 @@ export { TreeNode } from './TreeNode';
 export { TypeIndicator } from './TypeIndicator';
 export { DocumentList } from './DocumentList';
 export { DocumentPreview } from './DocumentPreview';
+export { DocumentEditorPanel, createEmptyTemplate } from './DocumentEditorPanel';
+export type { DocumentTemplate, DocumentEditorPanelProps } from './DocumentEditorPanel';

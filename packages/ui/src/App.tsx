@@ -86,7 +86,6 @@ function App() {
   // Notify extension that webview is ready and request autocomplete data on mount
   useEffect(() => {
     if (vscode) {
-      console.log('[dbview-ui] Webview mounted, sending READY message');
       vscode.postMessage({ type: "WEBVIEW_READY" });
       vscode.postMessage({ type: "GET_AUTOCOMPLETE_DATA" });
     }
@@ -95,12 +94,9 @@ function App() {
   // Request table rows for a specific tab
   const requestTableRows = useCallback(
     (tabId: string, schema: string, table: string, limit: number, offset: number, filters?: any[], filterLogic?: 'AND' | 'OR') => {
-      console.log(`[dbview-ui] Requesting table rows for tab ${tabId}: ${schema}.${table} (limit: ${limit}, offset: ${offset})`);
-
       tabManager.updateTab<TableTab>(tabId, { loading: true });
 
       if (vscode) {
-        console.log(`[dbview-ui] Sending LOAD_TABLE_ROWS message to extension`);
         vscode.postMessage({
           type: "LOAD_TABLE_ROWS",
           tabId,
@@ -119,7 +115,6 @@ function App() {
   // Request row count for a specific tab
   const requestRowCount = useCallback(
     (tabId: string, schema: string, table: string, filters?: any[], filterLogic?: 'AND' | 'OR') => {
-      console.log(`[dbview-ui] Requesting row count for tab ${tabId}: ${schema}.${table}`);
       if (vscode) {
         vscode.postMessage({
           type: "GET_ROW_COUNT",
@@ -137,7 +132,6 @@ function App() {
   // Run query for a specific query tab
   const runQuery = useCallback(
     (tabId: string, sql: string) => {
-      console.log(`[dbview-ui] Running query for tab ${tabId}`);
       tabManager.updateTab<QueryTab>(tabId, { loading: true, error: undefined });
 
       // Track query start time for duration calculation
@@ -153,7 +147,6 @@ function App() {
   // Format SQL for a specific query tab
   const formatSql = useCallback(
     (tabId: string, sql: string) => {
-      console.log(`[dbview-ui] Formatting SQL for tab ${tabId}`);
       if (vscode && sql.trim()) {
         vscode.postMessage({ type: "FORMAT_SQL", tabId, sql });
       }
@@ -164,7 +157,6 @@ function App() {
   // Explain query for a specific query tab
   const explainQuery = useCallback(
     (tabId: string, sql: string) => {
-      console.log(`[dbview-ui] Explaining query for tab ${tabId}`);
       if (vscode && sql.trim()) {
         tabManager.updateTab<QueryTab>(tabId, {
           explainLoading: true,
@@ -180,7 +172,6 @@ function App() {
   // Run document query (MongoDB/Elasticsearch/Cassandra)
   const runDocumentQuery = useCallback(
     (tabId: string, query: string, dbType: DatabaseType) => {
-      console.log(`[dbview-ui] Running ${dbType} query for tab ${tabId}`);
       tabManager.updateTab<QueryTab>(tabId, { loading: true, error: undefined });
 
       // Track query start time for duration calculation
@@ -196,7 +187,6 @@ function App() {
   // Run Redis command
   const runRedisCommand = useCallback(
     (tabId: string, command: string) => {
-      console.log(`[dbview-ui] Running Redis command for tab ${tabId}`);
       tabManager.updateTab<QueryTab>(tabId, { loading: true, error: undefined });
 
       // Track query start time for duration calculation
@@ -217,11 +207,9 @@ function App() {
 
     const handleMessage = (event: MessageEvent<IncomingMessage>) => {
       const message = event.data;
-      console.log("[dbview-ui] Received message:", message?.type, message);
 
       switch (message?.type) {
         case "OPEN_TABLE": {
-          console.log(`[dbview-ui] Opening table: ${message.schema}.${message.table} on ${message.connectionName} (${message.dbType || 'postgres'}) readOnly=${message.readOnly}`);
           const tabId = tabManager.findOrCreateTableTab(message.schema, message.table, message.limit ?? 100, message.connectionName);
 
           // Set dbType and readOnly if provided
@@ -253,7 +241,6 @@ function App() {
         }
 
         case "OPEN_QUERY_TAB": {
-          console.log(`[dbview-ui] Opening new query tab for ${message.connectionName} (${message.dbType || 'sql'})`);
           const queryTabId = tabManager.addQueryTab(message.connectionName);
 
           // Set dbType for the query tab to route to the correct editor
@@ -264,8 +251,7 @@ function App() {
         }
 
         case "OPEN_ER_DIAGRAM": {
-          console.log(`[dbview-ui] Opening ER diagram for schemas:`, message.schemas);
-          const tabId = tabManager.addERDiagramTab(message.schemas);
+          tabManager.addERDiagramTab(message.schemas);
 
           // Request diagram data
           if (vscode) {
@@ -281,7 +267,6 @@ function App() {
           // Find the active ER diagram tab
           const activeTab = tabManager.getActiveTab();
           if (activeTab?.type === 'er-diagram') {
-            console.log(`[dbview-ui] Received ER diagram data`);
             tabManager.updateTab<ERDiagramTab>(activeTab.id, {
               diagramData: message.diagramData,
               loading: false
@@ -309,7 +294,6 @@ function App() {
           const tabId = message.tabId || tabManager.activeTabId;
           if (!tabId) break;
 
-          console.log(`[dbview-ui] Loading table rows for tab ${tabId}: ${message.rows.length} rows`);
           const updates: Partial<TableTab> = {
             schema: message.schema,
             table: message.table,
@@ -333,7 +317,6 @@ function App() {
           const tabId = message.tabId || tabManager.activeTabId;
           if (!tabId) break;
 
-          console.log(`[dbview-ui] Received row count for tab ${tabId}: ${message.totalRows}`);
           tabManager.updateTab<TableTab>(tabId, {
             totalRows: message.totalRows
           });
@@ -349,8 +332,6 @@ function App() {
         case "QUERY_RESULT": {
           const tabId = message.tabId || tabManager.activeTabId;
           if (!tabId) break;
-
-          console.log(`[dbview-ui] Query result for tab ${tabId}: ${message.rows.length} rows`);
 
           // Calculate query duration
           const startTime = queryStartTimes.current.get(tabId);
@@ -415,7 +396,6 @@ function App() {
           const tabId = message.tabId || tabManager.activeTabId;
           if (!tabId) break;
 
-          console.log(`[dbview-ui] Received table metadata for tab ${tabId}: ${message.columns.length} columns`);
           const metadataUpdates: Partial<TableTab> = {
             metadata: message.columns
           };
@@ -430,13 +410,11 @@ function App() {
         }
 
         case "UPDATE_SUCCESS": {
-          console.log(`[dbview-ui] Cell update successful`);
           toast.success("Cell updated successfully");
           break;
         }
 
         case "UPDATE_ERROR": {
-          console.error(`[dbview-ui] Cell update failed:`, message.error);
           toast.error("Failed to update cell", {
             description: message.error
           });
@@ -444,27 +422,35 @@ function App() {
         }
 
         case "INSERT_SUCCESS": {
-          console.log(`[dbview-ui] Row inserted successfully`);
-          toast.success("Row inserted successfully");
+          // Note: Document databases (MongoDB, Elasticsearch, Cassandra) handle their own
+          // toast in DocumentDataView component with proper "Document" label.
+          // This handler is for SQL tables only.
+          const activeTab = tabManager.tabs.find(t => t.id === tabManager.activeTabId);
+          const isDocumentDb = activeTab?.dbType && ['mongodb', 'elasticsearch', 'cassandra'].includes(activeTab.dbType);
+          if (!isDocumentDb) {
+            toast.success("Row inserted successfully");
+          }
           break;
         }
 
         case "INSERT_ERROR": {
-          console.error(`[dbview-ui] Row insert failed:`, message.error);
-          toast.error("Failed to insert row", {
-            description: message.error
-          });
+          // Same as above - document DBs handle their own error toasts
+          const activeTabForError = tabManager.tabs.find(t => t.id === tabManager.activeTabId);
+          const isDocDb = activeTabForError?.dbType && ['mongodb', 'elasticsearch', 'cassandra'].includes(activeTabForError.dbType);
+          if (!isDocDb) {
+            toast.error("Failed to insert row", {
+              description: message.error
+            });
+          }
           break;
         }
 
         case "DELETE_SUCCESS": {
-          console.log(`[dbview-ui] ${message.deletedCount} row(s) deleted`);
           toast.success(`${message.deletedCount} row(s) deleted successfully`);
           break;
         }
 
         case "DELETE_ERROR": {
-          console.error(`[dbview-ui] Row delete failed:`, message.error);
           toast.error("Failed to delete row(s)", {
             description: message.error
           });
@@ -472,13 +458,11 @@ function App() {
         }
 
         case "COMMIT_SUCCESS": {
-          console.log(`[dbview-ui] ${message.successCount} change(s) committed`);
           toast.success(`${message.successCount} change(s) committed successfully`);
           break;
         }
 
         case "COMMIT_ERROR": {
-          console.error(`[dbview-ui] Commit failed:`, message.error);
           toast.error("Failed to commit changes", {
             description: message.error
           });
@@ -486,7 +470,6 @@ function App() {
         }
 
         case "AUTOCOMPLETE_DATA": {
-          console.log(`[dbview-ui] Received autocomplete data: ${message.schemas.length} schemas, ${message.tables.length} tables`);
           setAutocompleteData({
             schemas: message.schemas,
             tables: message.tables,
@@ -498,12 +481,10 @@ function App() {
         case "SQL_FORMATTED": {
           const tabId = message.tabId;
           if (message.error) {
-            console.error(`[dbview-ui] SQL formatting failed:`, message.error);
             toast.error("Failed to format SQL", {
               description: message.error
             });
           } else {
-            console.log(`[dbview-ui] SQL formatted successfully for tab ${tabId}`);
             tabManager.updateTab<QueryTab>(tabId, { sql: message.formattedSql });
             toast.success("SQL formatted successfully");
           }
@@ -512,7 +493,6 @@ function App() {
 
         case "EXPLAIN_RESULT": {
           const tabId = message.tabId;
-          console.log(`[dbview-ui] EXPLAIN result received for tab ${tabId}`);
           tabManager.updateTab<QueryTab>(tabId, {
             explainPlan: message.plan,
             explainLoading: false,
@@ -523,7 +503,6 @@ function App() {
 
         case "EXPLAIN_ERROR": {
           const tabId = message.tabId;
-          console.error(`[dbview-ui] EXPLAIN query failed for tab ${tabId}:`, message.error);
           tabManager.updateTab<QueryTab>(tabId, {
             explainLoading: false,
             explainError: message.error
@@ -536,7 +515,6 @@ function App() {
 
         case "DOCUMENT_QUERY_RESULT": {
           const tabId = message.tabId;
-          console.log(`[dbview-ui] Document query result for tab ${tabId}: ${message.rows.length} rows`);
 
           // Calculate query duration
           const startTime = queryStartTimes.current.get(tabId);
@@ -568,7 +546,6 @@ function App() {
 
         case "DOCUMENT_QUERY_ERROR": {
           const tabId = message.tabId;
-          console.error(`[dbview-ui] Document query error for tab ${tabId}:`, message.message);
 
           // Calculate query duration
           const startTime = queryStartTimes.current.get(tabId);
@@ -597,7 +574,6 @@ function App() {
 
         case "REDIS_COMMAND_RESULT": {
           const tabId = message.tabId;
-          console.log(`[dbview-ui] Redis command result for tab ${tabId}: ${message.rows.length} rows`);
 
           // Calculate query duration
           const startTime = queryStartTimes.current.get(tabId);
@@ -629,7 +605,6 @@ function App() {
 
         case "REDIS_COMMAND_ERROR": {
           const tabId = message.tabId;
-          console.error(`[dbview-ui] Redis command error for tab ${tabId}:`, message.message);
 
           // Calculate query duration
           const startTime = queryStartTimes.current.get(tabId);
@@ -657,7 +632,6 @@ function App() {
         }
 
         case "THEME_CHANGE": {
-          console.log(`[dbview-ui] Theme changed to: ${message.theme}`);
           // Update the data-theme attribute on the HTML element
           document.documentElement.setAttribute('data-theme', message.theme);
           // Update body class for VS Code theme detection
@@ -679,11 +653,24 @@ function App() {
 
   // Refresh handler for table tabs
   const handleRefreshTable = useCallback((tabId: string) => {
-    const tab = tabManager.getTab(tabId);
+    // Try to get the tab, fallback to active tab if not found
+    let tab = tabManager.getTab(tabId);
+
+    // Fallback: if tab not found by ID, try the active tab
+    if (!tab) {
+      tab = tabManager.getActiveTab();
+      if (tab) {
+        tabId = tab.id;
+      }
+    }
+
     if (tab?.type === 'table') {
-      console.log(`[dbview-ui] Refresh button clicked for tab ${tabId}: ${tab.schema}.${tab.table}`);
-      requestTableRows(tabId, tab.schema, tab.table, tab.limit, tab.offset);
-      requestRowCount(tabId, tab.schema, tab.table);
+      try {
+        requestTableRows(tabId, tab.schema, tab.table, tab.limit, tab.offset);
+        requestRowCount(tabId, tab.schema, tab.table);
+      } catch (error) {
+        console.error(`[dbview-ui] Error refreshing table:`, error);
+      }
     }
   }, [tabManager, requestTableRows, requestRowCount]);
 

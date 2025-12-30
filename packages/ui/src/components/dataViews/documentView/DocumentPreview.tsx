@@ -17,6 +17,8 @@ interface DocumentPreviewProps {
   isSelected: boolean;
   /** Callback when document is clicked */
   onClick: () => void;
+  /** Callback when document is double-clicked (for editing) */
+  onDoubleClick?: () => void;
   /** Optional highlight text for search matches */
   highlightText?: string;
   /** Database type for customizing display */
@@ -97,6 +99,7 @@ export const DocumentPreview: FC<DocumentPreviewProps> = ({
   document,
   isSelected,
   onClick,
+  onDoubleClick,
   highlightText,
   dbType: _dbType = 'mongodb',
 }) => {
@@ -113,12 +116,14 @@ export const DocumentPreview: FC<DocumentPreviewProps> = ({
   return (
     <button
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       className={clsx(
         'w-full h-full px-3 py-2 text-left transition-colors group overflow-hidden',
         isSelected
           ? 'bg-vscode-accent/10 border-l-2 border-vscode-accent'
           : 'hover:bg-vscode-bg-hover border-l-2 border-transparent'
       )}
+      title={onDoubleClick ? 'Double-click to edit' : undefined}
     >
       {/* Document ID row */}
       <div className="flex items-center gap-2 mb-1">

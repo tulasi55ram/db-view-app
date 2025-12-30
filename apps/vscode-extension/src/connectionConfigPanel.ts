@@ -76,9 +76,10 @@ export function showConnectionConfigPanel(
                 database: message.database,
                 user: message.user,
                 password,
-                authenticationType: 'sql',
-                encrypt: true,
-                trustServerCertificate: true,
+                instanceName: message.instanceName || undefined,
+                authenticationType: message.authType || 'sql',
+                encrypt: message.encrypt !== false,
+                trustServerCertificate: message.trustServerCert !== false,
                 readOnly: message.readOnly || false
               };
             } else if (dbType === 'sqlite') {
@@ -93,12 +94,15 @@ export function showConnectionConfigPanel(
               connection = {
                 dbType: 'mongodb',
                 name: message.name || undefined,
+                connectionString: message.connectionString || undefined,
                 host: message.host,
                 port: parseInt(message.port, 10) || 27017,
                 database: message.database,
                 user: message.user,
                 password,
                 authDatabase: message.authDatabase || 'admin',
+                replicaSet: message.replicaSet || undefined,
+                ssl: message.mongoSsl || false,
                 readOnly: message.readOnly || false
               };
             } else if (dbType === 'redis') {
@@ -116,6 +120,7 @@ export function showConnectionConfigPanel(
                 database: parseInt(message.redisDatabase, 10) || 0,
                 username: message.redisUsername || undefined,
                 password: redisPassword,
+                ssl: message.redisSsl || false,
                 readOnly: message.readOnly || false
               };
             } else if (dbType === 'elasticsearch') {
@@ -171,9 +176,12 @@ export function showConnectionConfigPanel(
                 localDatacenter: message.cassandraDatacenter || 'datacenter1',
                 username: message.cassandraUsername || undefined,
                 password: cassandraPassword,
+                consistency: message.cassandraConsistency || 'localQuorum',
+                ssl: message.cassandraSsl || false,
                 readOnly: message.readOnly || false
               };
             } else {
+              // PostgreSQL, MySQL, MariaDB
               connection = {
                 dbType,
                 name: message.name || undefined,
@@ -182,6 +190,8 @@ export function showConnectionConfigPanel(
                 database: message.database,
                 user: message.user,
                 password,
+                ssl: message.sslEnabled || false,
+                sslMode: message.sslMode || undefined,
                 readOnly: message.readOnly || false
               } as DatabaseConnectionConfig;
             }
@@ -196,14 +206,22 @@ export function showConnectionConfigPanel(
               console.log("[dbview] Skipping save (caller will handle it)");
             } else if (message.saveConnection) {
               console.log("[dbview] Saving connection...");
-              if (connection.name?.trim()) {
-                console.log("[dbview] Saving with name:", connection.name);
-                await saveConnectionWithName(context, connection);
-              } else {
-                console.log("[dbview] Saving without name (legacy mode)");
-                await saveConnection(context, connection);
+              try {
+                if (connection.name?.trim()) {
+                  const originalName = message.originalName || '';
+                  console.log("[dbview] Saving with name:", connection.name, "originalName:", originalName);
+                  await saveConnectionWithName(context, connection, originalName);
+                } else {
+                  console.log("[dbview] Saving without name (legacy mode)");
+                  await saveConnection(context, connection);
+                }
+                console.log("[dbview] Connection saved successfully");
+              } catch (saveError) {
+                console.error("[dbview] Error saving connection:", saveError);
+                vscode.window.showErrorMessage(`Failed to save connection: ${saveError instanceof Error ? saveError.message : String(saveError)}`);
+                // Don't close the panel on save error - let user fix the issue
+                return;
               }
-              console.log("[dbview] Connection saved successfully");
             } else {
               console.log("[dbview] Not saving connection (temporary connection)");
             }
@@ -252,21 +270,25 @@ export function showConnectionConfigPanel(
                   database: message.database,
                   user: message.user,
                   password: testPassword,
-                  authenticationType: 'sql',
-                  encrypt: true,
-                  trustServerCertificate: true,
+                  instanceName: message.instanceName || undefined,
+                  authenticationType: message.authType || 'sql',
+                  encrypt: message.encrypt !== false,
+                  trustServerCertificate: message.trustServerCert !== false,
                   readOnly: message.readOnly || false
                 };
               } else if (dbType === 'mongodb') {
                 testConfig = {
                   dbType: 'mongodb',
                   name: message.name || undefined,
+                  connectionString: message.connectionString || undefined,
                   host: message.host,
                   port: parseInt(message.port, 10) || 27017,
                   database: message.database,
                   user: message.user,
                   password: testPassword,
                   authDatabase: message.authDatabase || 'admin',
+                  replicaSet: message.replicaSet || undefined,
+                  ssl: message.mongoSsl || false,
                   readOnly: message.readOnly || false
                 };
               } else if (dbType === 'sqlite') {
@@ -292,6 +314,7 @@ export function showConnectionConfigPanel(
                   database: parseInt(message.redisDatabase, 10) || 0,
                   username: message.redisUsername || undefined,
                   password: redisTestPassword,
+                  ssl: message.redisSsl || false,
                   readOnly: message.readOnly || false
                 };
               } else if (dbType === 'elasticsearch') {
@@ -343,9 +366,12 @@ export function showConnectionConfigPanel(
                   localDatacenter: message.cassandraDatacenter || 'datacenter1',
                   username: message.cassandraUsername || undefined,
                   password: cassandraTestPassword,
+                  consistency: message.cassandraConsistency || 'localQuorum',
+                  ssl: message.cassandraSsl || false,
                   readOnly: message.readOnly || false
                 };
               } else {
+                // PostgreSQL, MySQL, MariaDB
                 testConfig = {
                   dbType,
                   name: message.name || undefined,
@@ -354,6 +380,8 @@ export function showConnectionConfigPanel(
                   database: message.database,
                   user: message.user,
                   password: testPassword,
+                  ssl: message.sslEnabled || false,
+                  sslMode: message.sslMode || undefined,
                   readOnly: message.readOnly || false
                 } as DatabaseConnectionConfig;
               }
@@ -444,6 +472,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
   const iconBaseUri = mediaUri || '';
   const dbType = (defaults && 'dbType' in defaults) ? defaults.dbType : 'postgres';
   const defaultName = escapeHtml(defaults?.name ?? "");
+  const originalName = escapeHtml(defaults?.name ?? ""); // Track original name for edit vs new detection
   const defaultHost = escapeHtml((defaults && 'host' in defaults ? defaults.host : undefined) ?? "localhost");
   const defaultPort = (defaults && 'port' in defaults ? defaults.port : undefined) ??
     (dbType === 'mysql' || dbType === 'mariadb' ? 3306 : dbType === 'sqlserver' ? 1433 : dbType === 'mongodb' ? 27017 : 5432);
@@ -466,6 +495,28 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
   const defaultCassandraContactPoints = escapeHtml((defaults && 'contactPoints' in defaults ? (defaults.contactPoints as string[]).join(', ') : undefined) ?? "localhost");
   const defaultCassandraKeyspace = escapeHtml((defaults && 'keyspace' in defaults ? defaults.keyspace : undefined) ?? "");
   const defaultCassandraDatacenter = escapeHtml((defaults && 'localDatacenter' in defaults ? defaults.localDatacenter : undefined) ?? "datacenter1");
+
+  // SSL defaults (PostgreSQL, MySQL, MariaDB)
+  const defaultSsl = defaults && 'ssl' in defaults ? Boolean(defaults.ssl) : false;
+  const defaultSslMode = escapeHtml((defaults && 'sslMode' in defaults ? defaults.sslMode : undefined) ?? "");
+
+  // SQL Server advanced defaults
+  const defaultInstanceName = escapeHtml((defaults && 'instanceName' in defaults ? defaults.instanceName : undefined) ?? "");
+  const defaultAuthType = (defaults && 'authenticationType' in defaults ? defaults.authenticationType : undefined) ?? "sql";
+  const defaultEncrypt = defaults && 'encrypt' in defaults ? Boolean(defaults.encrypt) : true;
+  const defaultTrustServerCert = defaults && 'trustServerCertificate' in defaults ? Boolean(defaults.trustServerCertificate) : true;
+
+  // MongoDB advanced defaults
+  const defaultConnectionString = escapeHtml((defaults && 'connectionString' in defaults ? defaults.connectionString : undefined) ?? "");
+  const defaultReplicaSet = escapeHtml((defaults && 'replicaSet' in defaults ? defaults.replicaSet : undefined) ?? "");
+  const defaultMongoSsl = defaults && 'ssl' in defaults ? Boolean(defaults.ssl) : false;
+
+  // Redis SSL default
+  const defaultRedisSsl = defaults && 'ssl' in defaults ? Boolean(defaults.ssl) : false;
+
+  // Cassandra advanced defaults
+  const defaultCassandraConsistency = escapeHtml((defaults && 'consistency' in defaults ? defaults.consistency : undefined) ?? "localQuorum");
+  const defaultCassandraSsl = defaults && 'ssl' in defaults ? Boolean(defaults.ssl) : false;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -990,14 +1041,15 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
 
             <form id="connectionForm">
                 <input type="hidden" id="dbType" name="dbType" value="${dbType}">
+                <input type="hidden" id="originalName" name="originalName" value="${originalName}">
 
                 <!-- Connection Identity Section -->
                 <div class="form-section">
                     <div class="form-section-title">Connection Identity</div>
 
                     <div class="form-group">
-                        <label for="name">Connection Name <span class="label-badge">Optional</span></label>
-                        <input type="text" id="name" name="name" value="${defaultName}" placeholder="e.g., Production DB, Local Dev">
+                        <label for="name">Connection Name <span class="required">*</span></label>
+                        <input type="text" id="name" name="name" value="${defaultName}" placeholder="e.g., Production DB, Local Dev" required>
                         <div class="help-text">A friendly name to identify this connection</div>
                     </div>
                 </div>
@@ -1182,6 +1234,133 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                     </div>
                 </div>
 
+                <!-- SSL/TLS Section (PostgreSQL, MySQL, MariaDB) -->
+                <div class="form-section ssl-fields hidden">
+                    <div class="form-section-title">Security / SSL <span class="label-badge">Optional</span></div>
+
+                    <div class="checkbox-group" onclick="document.getElementById('sslEnabled').click()">
+                        <input type="checkbox" id="sslEnabled" name="sslEnabled" ${defaultSsl ? 'checked' : ''} onclick="event.stopPropagation()">
+                        <label for="sslEnabled" onclick="event.stopPropagation()">
+                            <strong>Enable SSL/TLS</strong>
+                            <div class="help-text" style="margin-top: 2px;">Encrypt connection to database server</div>
+                        </label>
+                        <span class="checkbox-icon">🔐</span>
+                    </div>
+
+                    <div class="form-group ssl-mode-group" style="margin-top: 12px;">
+                        <label for="sslMode">SSL Mode <span class="label-badge">PostgreSQL</span></label>
+                        <select id="sslMode" name="sslMode">
+                            <option value="" ${defaultSslMode === '' ? 'selected' : ''}>Default</option>
+                            <option value="disable" ${defaultSslMode === 'disable' ? 'selected' : ''}>Disable</option>
+                            <option value="require" ${defaultSslMode === 'require' ? 'selected' : ''}>Require</option>
+                            <option value="verify-ca" ${defaultSslMode === 'verify-ca' ? 'selected' : ''}>Verify CA</option>
+                            <option value="verify-full" ${defaultSslMode === 'verify-full' ? 'selected' : ''}>Verify Full</option>
+                        </select>
+                        <div class="help-text">Connection security level</div>
+                    </div>
+                </div>
+
+                <!-- SQL Server Advanced Options -->
+                <div class="form-section sqlserver-advanced-fields hidden">
+                    <div class="form-section-title">Advanced Options <span class="label-badge">Optional</span></div>
+
+                    <div class="form-group">
+                        <label for="instanceName">Instance Name <span class="label-badge">Named Instance</span></label>
+                        <input type="text" id="instanceName" name="instanceName" value="${defaultInstanceName}" placeholder="SQLEXPRESS">
+                        <div class="help-text">Leave empty for default instance</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="authType">Authentication Type</label>
+                        <select id="authType" name="authType">
+                            <option value="sql" ${defaultAuthType === 'sql' ? 'selected' : ''}>SQL Server Authentication</option>
+                            <option value="windows" ${defaultAuthType === 'windows' ? 'selected' : ''}>Windows Authentication</option>
+                        </select>
+                    </div>
+
+                    <div class="checkbox-group" onclick="document.getElementById('encrypt').click()">
+                        <input type="checkbox" id="encrypt" name="encrypt" ${defaultEncrypt ? 'checked' : ''} onclick="event.stopPropagation()">
+                        <label for="encrypt" onclick="event.stopPropagation()">
+                            <strong>Encrypt Connection</strong>
+                        </label>
+                    </div>
+
+                    <div class="checkbox-group" onclick="document.getElementById('trustServerCert').click()">
+                        <input type="checkbox" id="trustServerCert" name="trustServerCert" ${defaultTrustServerCert ? 'checked' : ''} onclick="event.stopPropagation()">
+                        <label for="trustServerCert" onclick="event.stopPropagation()">
+                            <strong>Trust Server Certificate</strong>
+                            <div class="help-text" style="margin-top: 2px;">Skip certificate validation (for self-signed certs)</div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- MongoDB Advanced Options -->
+                <div class="form-section mongodb-advanced-fields hidden">
+                    <div class="form-section-title">Advanced Options <span class="label-badge">Optional</span></div>
+
+                    <div class="form-group">
+                        <label for="connectionString">Connection String <span class="label-badge">Alternative</span></label>
+                        <input type="text" id="connectionString" name="connectionString" value="${defaultConnectionString}" placeholder="mongodb://user:pass@host:27017/db">
+                        <div class="help-text">Full MongoDB URI (overrides host/port/database if provided)</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="replicaSet">Replica Set Name</label>
+                        <input type="text" id="replicaSet" name="replicaSet" value="${defaultReplicaSet}" placeholder="rs0">
+                        <div class="help-text">For replica set deployments</div>
+                    </div>
+
+                    <div class="checkbox-group" onclick="document.getElementById('mongoSsl').click()">
+                        <input type="checkbox" id="mongoSsl" name="mongoSsl" ${defaultMongoSsl ? 'checked' : ''} onclick="event.stopPropagation()">
+                        <label for="mongoSsl" onclick="event.stopPropagation()">
+                            <strong>Enable SSL/TLS</strong>
+                        </label>
+                        <span class="checkbox-icon">🔐</span>
+                    </div>
+                </div>
+
+                <!-- Redis Advanced Options -->
+                <div class="form-section redis-advanced-fields hidden">
+                    <div class="form-section-title">Security <span class="label-badge">Optional</span></div>
+
+                    <div class="checkbox-group" onclick="document.getElementById('redisSsl').click()">
+                        <input type="checkbox" id="redisSsl" name="redisSsl" ${defaultRedisSsl ? 'checked' : ''} onclick="event.stopPropagation()">
+                        <label for="redisSsl" onclick="event.stopPropagation()">
+                            <strong>Enable TLS/SSL</strong>
+                            <div class="help-text" style="margin-top: 2px;">Use encrypted connection (rediss://)</div>
+                        </label>
+                        <span class="checkbox-icon">🔐</span>
+                    </div>
+                </div>
+
+                <!-- Cassandra Advanced Options -->
+                <div class="form-section cassandra-advanced-fields hidden">
+                    <div class="form-section-title">Advanced Options <span class="label-badge">Optional</span></div>
+
+                    <div class="form-group">
+                        <label for="cassandraConsistency">Consistency Level</label>
+                        <select id="cassandraConsistency" name="cassandraConsistency">
+                            <option value="localQuorum" ${defaultCassandraConsistency === 'localQuorum' ? 'selected' : ''}>Local Quorum (Recommended)</option>
+                            <option value="one" ${defaultCassandraConsistency === 'one' ? 'selected' : ''}>One</option>
+                            <option value="two" ${defaultCassandraConsistency === 'two' ? 'selected' : ''}>Two</option>
+                            <option value="three" ${defaultCassandraConsistency === 'three' ? 'selected' : ''}>Three</option>
+                            <option value="quorum" ${defaultCassandraConsistency === 'quorum' ? 'selected' : ''}>Quorum</option>
+                            <option value="all" ${defaultCassandraConsistency === 'all' ? 'selected' : ''}>All</option>
+                            <option value="localOne" ${defaultCassandraConsistency === 'localOne' ? 'selected' : ''}>Local One</option>
+                        </select>
+                        <div class="help-text">Read/write consistency for distributed operations</div>
+                    </div>
+
+                    <div class="checkbox-group" onclick="document.getElementById('cassandraSsl').click()">
+                        <input type="checkbox" id="cassandraSsl" name="cassandraSsl" ${defaultCassandraSsl ? 'checked' : ''} onclick="event.stopPropagation()">
+                        <label for="cassandraSsl" onclick="event.stopPropagation()">
+                            <strong>Enable SSL/TLS</strong>
+                            <div class="help-text" style="margin-top: 2px;">Encrypt connection to Cassandra cluster</div>
+                        </label>
+                        <span class="checkbox-icon">🔐</span>
+                    </div>
+                </div>
+
                 <!-- Options Section -->
                 <div class="form-section">
                     <div class="form-section-title">Options</div>
@@ -1353,6 +1532,36 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 el.classList.toggle('hidden', !isCassandra);
             });
 
+            // Show/hide SSL fields (PostgreSQL, MySQL, MariaDB)
+            const showSslFields = type === 'postgres' || type === 'mysql' || type === 'mariadb';
+            document.querySelectorAll('.ssl-fields').forEach(el => {
+                el.classList.toggle('hidden', !showSslFields);
+            });
+            // Show/hide SSL mode option (PostgreSQL only)
+            document.querySelectorAll('.ssl-mode-group').forEach(el => {
+                el.classList.toggle('hidden', type !== 'postgres');
+            });
+
+            // Show/hide SQL Server advanced fields
+            document.querySelectorAll('.sqlserver-advanced-fields').forEach(el => {
+                el.classList.toggle('hidden', type !== 'sqlserver');
+            });
+
+            // Show/hide MongoDB advanced fields
+            document.querySelectorAll('.mongodb-advanced-fields').forEach(el => {
+                el.classList.toggle('hidden', !isMongoDB);
+            });
+
+            // Show/hide Redis advanced fields
+            document.querySelectorAll('.redis-advanced-fields').forEach(el => {
+                el.classList.toggle('hidden', !isRedis);
+            });
+
+            // Show/hide Cassandra advanced fields
+            document.querySelectorAll('.cassandra-advanced-fields').forEach(el => {
+                el.classList.toggle('hidden', !isCassandra);
+            });
+
             // Update default port when switching database types
             if (isStandardDB && config.defaultPort) {
                 portInput.value = config.defaultPort;
@@ -1402,6 +1611,13 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
         function submitForm() {
             const formData = new FormData(form);
             const dbType = formData.get('dbType') || 'postgres';
+
+            // Connection name is required for saving
+            const connectionName = (formData.get('name') || '').toString().trim();
+            if (!connectionName) {
+                showStatus('Please enter a connection name', 'error');
+                return;
+            }
 
             // Validation based on database type
             if (dbType === 'sqlite') {
@@ -1462,12 +1678,25 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 password: formData.get('password'),
                 filePath: formData.get('filePath'),
                 authDatabase: formData.get('authDatabase'),
+                // SSL fields (PostgreSQL, MySQL, MariaDB)
+                sslEnabled: formData.get('sslEnabled') === 'on',
+                sslMode: formData.get('sslMode'),
+                // SQL Server advanced fields
+                instanceName: formData.get('instanceName'),
+                authType: formData.get('authType'),
+                encrypt: formData.get('encrypt') === 'on',
+                trustServerCert: formData.get('trustServerCert') === 'on',
+                // MongoDB advanced fields
+                connectionString: formData.get('connectionString'),
+                replicaSet: formData.get('replicaSet'),
+                mongoSsl: formData.get('mongoSsl') === 'on',
                 // Redis fields
                 redisHost: formData.get('redisHost'),
                 redisPort: formData.get('redisPort'),
                 redisDatabase: formData.get('redisDatabase'),
                 redisUsername: formData.get('redisUsername'),
                 redisPassword: formData.get('redisPassword'),
+                redisSsl: formData.get('redisSsl') === 'on',
                 // Elasticsearch fields
                 esNode: formData.get('esNode'),
                 esCloudId: formData.get('esCloudId'),
@@ -1481,9 +1710,12 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 cassandraDatacenter: formData.get('cassandraDatacenter'),
                 cassandraUsername: formData.get('cassandraUsername'),
                 cassandraPassword: formData.get('cassandraPassword'),
+                cassandraConsistency: formData.get('cassandraConsistency'),
+                cassandraSsl: formData.get('cassandraSsl') === 'on',
                 // Common
                 readOnly: formData.get('readOnly') === 'on',
-                saveConnection: true
+                saveConnection: true,
+                originalName: formData.get('originalName') || '' // For duplicate detection
             });
         }
 
@@ -1546,12 +1778,25 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 password: formData.get('password'),
                 filePath: formData.get('filePath'),
                 authDatabase: formData.get('authDatabase'),
+                // SSL fields (PostgreSQL, MySQL, MariaDB)
+                sslEnabled: formData.get('sslEnabled') === 'on',
+                sslMode: formData.get('sslMode'),
+                // SQL Server advanced fields
+                instanceName: formData.get('instanceName'),
+                authType: formData.get('authType'),
+                encrypt: formData.get('encrypt') === 'on',
+                trustServerCert: formData.get('trustServerCert') === 'on',
+                // MongoDB advanced fields
+                connectionString: formData.get('connectionString'),
+                replicaSet: formData.get('replicaSet'),
+                mongoSsl: formData.get('mongoSsl') === 'on',
                 // Redis fields
                 redisHost: formData.get('redisHost'),
                 redisPort: formData.get('redisPort'),
                 redisDatabase: formData.get('redisDatabase'),
                 redisUsername: formData.get('redisUsername'),
                 redisPassword: formData.get('redisPassword'),
+                redisSsl: formData.get('redisSsl') === 'on',
                 // Elasticsearch fields
                 esNode: formData.get('esNode'),
                 esCloudId: formData.get('esCloudId'),
@@ -1565,6 +1810,8 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 cassandraDatacenter: formData.get('cassandraDatacenter'),
                 cassandraUsername: formData.get('cassandraUsername'),
                 cassandraPassword: formData.get('cassandraPassword'),
+                cassandraConsistency: formData.get('cassandraConsistency'),
+                cassandraSsl: formData.get('cassandraSsl') === 'on',
                 // Common
                 readOnly: formData.get('readOnly') === 'on'
             });
