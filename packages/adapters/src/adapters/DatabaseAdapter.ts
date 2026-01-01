@@ -690,9 +690,10 @@ export interface DatabaseAdapter extends EventEmitter {
   /**
    * Execute a raw SQL query
    * @param sql SQL query string
+   * @param queryId Optional unique identifier for query tracking and cancellation
    * @returns Query result set
    */
-  runQuery(sql: string): Promise<QueryResultSet>;
+  runQuery(sql: string, queryId?: string): Promise<QueryResultSet>;
 
   /**
    * Get EXPLAIN plan for a query (if supported)
@@ -700,6 +701,14 @@ export interface DatabaseAdapter extends EventEmitter {
    * @returns EXPLAIN plan result
    */
   explainQuery?(sql: string): Promise<ExplainPlan>;
+
+  /**
+   * Cancel a running query by its ID (if supported)
+   * @param queryId Unique identifier for the query to cancel
+   * @returns Promise that resolves when cancellation is complete
+   * @throws Error if query not found or cancellation not supported
+   */
+  cancelQuery?(queryId: string): Promise<void>;
 
   // ==================== CRUD Operations ====================
 

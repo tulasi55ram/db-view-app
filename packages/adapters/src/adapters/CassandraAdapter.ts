@@ -87,6 +87,9 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
   private healthCheckInterval: NodeJS.Timeout | undefined;
   private preparedStatements: Map<string, unknown> = new Map();
 
+  // Track running queries for cancellation (limited support)
+  private runningQueries = new Set<string>(); // queryId
+
   readonly capabilities: DatabaseCapabilities = {
     // Hierarchy
     supportsSchemas: false, // Cassandra uses keyspaces, not schemas
@@ -673,38 +676,69 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Query Execution ====================
 
-  async runQuery(cql: string): Promise<QueryResultSet> {
+  async runQuery(cql: string, queryId?: string): Promise<QueryResultSet> {
     if (!this.client) {
       throw new Error('Not connected to Cassandra');
     }
 
-    // Check for read-only mode
-    if (this.connectionConfig.readOnly) {
-      const upperCql = cql.trim().toUpperCase();
-      if (upperCql.startsWith('INSERT') ||
-          upperCql.startsWith('UPDATE') ||
-          upperCql.startsWith('DELETE') ||
-          upperCql.startsWith('DROP') ||
-          upperCql.startsWith('TRUNCATE') ||
-          upperCql.startsWith('ALTER') ||
-          upperCql.startsWith('CREATE')) {
-        throw new Error('Cannot execute write operations in read-only mode');
+    // Track query if queryId provided
+    if (queryId) {
+      this.runningQueries.add(queryId);
+    }
+
+    try {
+      // Check for read-only mode
+      if (this.connectionConfig.readOnly) {
+        const upperCql = cql.trim().toUpperCase();
+        if (upperCql.startsWith('INSERT') ||
+            upperCql.startsWith('UPDATE') ||
+            upperCql.startsWith('DELETE') ||
+            upperCql.startsWith('DROP') ||
+            upperCql.startsWith('TRUNCATE') ||
+            upperCql.startsWith('ALTER') ||
+            upperCql.startsWith('CREATE')) {
+          throw new Error('Cannot execute write operations in read-only mode');
+        }
+      }
+
+      const result = await this.client.execute(cql, [], { prepare: false });
+
+      if (!result.rows || result.rows.length === 0) {
+        return {
+          columns: result.columns?.map((c: { name: string }) => c.name) || [],
+          rows: [],
+        };
+      }
+
+      const rows = result.rows.map((row: CassandraRow) => this.convertRow(row));
+      const columns = Object.keys(rows[0]);
+
+      return { columns, rows };
+    } finally {
+      // Clean up tracking
+      if (queryId) {
+        this.runningQueries.delete(queryId);
       }
     }
+  }
 
-    const result = await this.client.execute(cql, [], { prepare: false });
+  async cancelQuery(queryId: string): Promise<void> {
+    // Cassandra driver (cassandra-driver) has limited query cancellation support
+    // Queries cannot be truly cancelled mid-execution on the server
+    // We can only track and clean up on the client side
 
-    if (!result.rows || result.rows.length === 0) {
-      return {
-        columns: result.columns?.map((c: { name: string }) => c.name) || [],
-        rows: [],
-      };
+    if (!this.runningQueries.has(queryId)) {
+      // Query already completed or not found
+      return;
     }
 
-    const rows = result.rows.map((row: CassandraRow) => this.convertRow(row));
-    const columns = Object.keys(rows[0]);
+    // Clean up tracking
+    this.runningQueries.delete(queryId);
 
-    return { columns, rows };
+    console.log(`[CassandraAdapter] Query tracking cleared for ${queryId}. Note: Cassandra does not support true query cancellation - the query will continue on the server until completion.`);
+
+    // Throw error to inform the user of the limitation
+    throw new Error('Cassandra does not support query cancellation. The query will continue executing on the server until completion.');
   }
 
   async explainQuery(cql: string): Promise<any> {

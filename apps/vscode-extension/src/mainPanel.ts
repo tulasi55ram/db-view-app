@@ -24,6 +24,14 @@ const panelClients: Map<string, DatabaseAdapter> = new Map();
 const panelReadyState: Map<string, boolean> = new Map();
 const panelMessageQueues: Map<string, any[]> = new Map();
 
+// Query tracking for cancellation
+interface RunningQuery {
+  queryId: string;
+  startTime: number;
+  sql: string;
+}
+const runningQueries = new Map<string, RunningQuery>();
+
 // Helper to get connection key - MUST match schemaExplorer.ts implementation exactly
 function getConnectionKey(config: DatabaseConnectionConfig): string {
   const dbType = config.dbType || 'postgres';
@@ -1580,8 +1588,19 @@ export async function getOrCreateMainPanel(
 
         case "RUN_QUERY": {
           console.log(`[dbview] Running query for tab ${tabId}`);
+
+          // Generate unique query ID
+          const queryId = `query-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+
+          // Track the running query
+          runningQueries.set(tabId, {
+            queryId,
+            startTime: Date.now(),
+            sql: message.sql
+          });
+
           try {
-            const result = await currentClient.runQuery(message.sql);
+            const result = await currentClient.runQuery(message.sql, queryId);
             panel.webview.postMessage({
               type: "QUERY_RESULT",
               tabId,
@@ -1595,30 +1614,61 @@ export async function getOrCreateMainPanel(
               tabId,
               message: error instanceof Error ? error.message : String(error)
             });
+          } finally {
+            // Clean up tracking
+            runningQueries.delete(tabId);
           }
           break;
         }
 
         case "CANCEL_QUERY": {
           console.log(`[dbview] Cancel query requested for tab ${tabId}`);
-          // Note: Query cancellation implementation depends on the database adapter
-          // For now, we acknowledge the cancellation request
-          // In production, this would need to:
-          // 1. Track running queries with AbortControllers or query handles
-          // 2. Call database-specific cancellation methods (e.g., pg_cancel_backend for PostgreSQL)
-          // 3. Clean up connection state properly
 
-          // Send acknowledgment back to webview (frontend already updates state)
-          panel.webview.postMessage({
-            type: "QUERY_CANCELLED",
-            tabId
-          });
+          // Get the running query info
+          const runningQuery = runningQueries.get(tabId);
 
-          // TODO: Implement actual query cancellation based on database type
-          // For PostgreSQL: Use client.cancel() or pg_cancel_backend()
-          // For MySQL: Use KILL QUERY <connection_id>
-          // For MongoDB: Use cursor.close() or AbortController
-          // For SQLite: Limited support - may need to close connection
+          if (!runningQuery) {
+            console.log(`[dbview] No running query found for tab ${tabId}`);
+            panel.webview.postMessage({
+              type: "QUERY_CANCELLED",
+              tabId
+            });
+            break;
+          }
+
+          // Check if the adapter supports query cancellation
+          if (!currentClient.cancelQuery) {
+            console.log(`[dbview] Query cancellation not supported for ${currentClient.type}`);
+            runningQueries.delete(tabId);
+            panel.webview.postMessage({
+              type: "QUERY_ERROR",
+              tabId,
+              message: `Query cancellation is not supported for ${currentClient.type} databases`
+            });
+            break;
+          }
+
+          try {
+            console.log(`[dbview] Cancelling query ${runningQuery.queryId} for tab ${tabId}`);
+            await currentClient.cancelQuery(runningQuery.queryId);
+
+            panel.webview.postMessage({
+              type: "QUERY_CANCELLED",
+              tabId
+            });
+
+            vscode.window.showInformationMessage('Query cancelled successfully');
+          } catch (error) {
+            console.error(`[dbview] Error cancelling query:`, error);
+            panel.webview.postMessage({
+              type: "QUERY_ERROR",
+              tabId,
+              message: `Failed to cancel query: ${error instanceof Error ? error.message : String(error)}`
+            });
+          } finally {
+            // Clean up tracking
+            runningQueries.delete(tabId);
+          }
           break;
         }
 

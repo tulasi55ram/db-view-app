@@ -74,6 +74,9 @@ export class MariaDBAdapter extends EventEmitter implements DatabaseAdapter {
   private readonly maxReconnectAttempts = 3;
   private readonly baseReconnectDelayMs = 1000;
 
+  // Track running queries for cancellation
+  private runningQueries = new Map<string, number>(); // queryId -> connectionId
+
   constructor(config: MariaDBConnectionConfig) {
     super();
 
@@ -638,7 +641,7 @@ export class MariaDBAdapter extends EventEmitter implements DatabaseAdapter {
     return /^(select|with)\b/.test(normalized);
   }
 
-  async runQuery(sql: string): Promise<QueryResultSet> {
+  async runQuery(sql: string, queryId?: string): Promise<QueryResultSet> {
     const DEFAULT_LIMIT = 1000;
     let executedSql = sql;
     let limitApplied = false;
@@ -650,33 +653,110 @@ export class MariaDBAdapter extends EventEmitter implements DatabaseAdapter {
       limitApplied = true;
     }
 
-    const [rows] = await this.execute<any[]>(executedSql);
+    if (queryId) {
+      // Get a dedicated connection for cancellation support
+      if (!this.pool) {
+        throw new Error('Not connected to MariaDB database');
+      }
+      const connection = await this.pool.getConnection();
 
-    // Check if this is a command result (INSERT/UPDATE/DELETE)
-    const isCommandResult = rows && typeof (rows as any).affectedRows === 'number';
+      try {
+        // Get the connection ID for cancellation
+        const [connInfo] = await connection.query<any[]>('SELECT CONNECTION_ID() as id');
+        const connectionId = connInfo[0].id;
 
-    const resultSet: QueryResultSet = isCommandResult
-      ? {
-          columns: ['command', 'affected_rows', 'insert_id'],
-          rows: [{
-            command: 'COMMAND',
-            affected_rows: (rows as any).affectedRows || 0,
-            insert_id: (rows as any).insertId || null
-          }]
+        // Track this query
+        this.runningQueries.set(queryId, connectionId);
+
+        // Execute the query
+        const [rows] = await connection.query<any[]>(executedSql);
+
+        // Check if this is a command result (INSERT/UPDATE/DELETE)
+        const isCommandResult = rows && typeof (rows as any).affectedRows === 'number';
+
+        const resultSet: QueryResultSet = isCommandResult
+          ? {
+              columns: ['command', 'affected_rows', 'insert_id'],
+              rows: [{
+                command: 'COMMAND',
+                affected_rows: (rows as any).affectedRows || 0,
+                insert_id: (rows as any).insertId || null
+              }]
+            }
+          : {
+              columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+              rows: rows,
+            };
+
+        // Add metadata about limiting
+        if (limitApplied) {
+          resultSet.limitApplied = true;
+          resultSet.limit = DEFAULT_LIMIT;
+          resultSet.hasMore = rows.length === DEFAULT_LIMIT;
         }
-      : {
-          columns: rows.length > 0 ? Object.keys(rows[0]) : [],
-          rows: rows,
-        };
 
-    // Add metadata about limiting
-    if (limitApplied) {
-      resultSet.limitApplied = true;
-      resultSet.limit = DEFAULT_LIMIT;
-      resultSet.hasMore = rows.length === DEFAULT_LIMIT;
+        return resultSet;
+      } finally {
+        // Clean up tracking and release connection
+        if (queryId) {
+          this.runningQueries.delete(queryId);
+        }
+        connection.release();
+      }
+    } else {
+      // No tracking needed, use execute helper
+      const [rows] = await this.execute<any[]>(executedSql);
+
+      // Check if this is a command result (INSERT/UPDATE/DELETE)
+      const isCommandResult = rows && typeof (rows as any).affectedRows === 'number';
+
+      const resultSet: QueryResultSet = isCommandResult
+        ? {
+            columns: ['command', 'affected_rows', 'insert_id'],
+            rows: [{
+              command: 'COMMAND',
+              affected_rows: (rows as any).affectedRows || 0,
+              insert_id: (rows as any).insertId || null
+            }]
+          }
+        : {
+            columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+            rows: rows,
+          };
+
+      // Add metadata about limiting
+      if (limitApplied) {
+        resultSet.limitApplied = true;
+        resultSet.limit = DEFAULT_LIMIT;
+        resultSet.hasMore = rows.length === DEFAULT_LIMIT;
+      }
+
+      return resultSet;
+    }
+  }
+
+  async cancelQuery(queryId: string): Promise<void> {
+    const connectionId = this.runningQueries.get(queryId);
+    if (!connectionId) {
+      // Query already completed or not found
+      return;
     }
 
-    return resultSet;
+    try {
+      // Use a separate connection to kill the query
+      if (!this.pool) {
+        throw new Error('Not connected to MariaDB database');
+      }
+      await this.pool.query('KILL QUERY ?', [connectionId]);
+
+      console.log(`[MariaDBAdapter] Successfully cancelled query ${queryId} (Connection ID: ${connectionId})`);
+    } catch (error) {
+      console.error(`[MariaDBAdapter] Failed to cancel query ${queryId}:`, error);
+      throw new Error(`Failed to cancel query: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      // Always clean up tracking
+      this.runningQueries.delete(queryId);
+    }
   }
 
   async getTableStatistics(schema: string, table: string): Promise<TableStatistics> {

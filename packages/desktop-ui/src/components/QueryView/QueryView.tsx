@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Play, Wand2, History, Activity, BookOpen, Save, Bookmark } from "lucide-react";
+import { Play, Wand2, History, Activity, BookOpen, Save, Bookmark, X } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SqlEditor } from "./SqlEditor";
 import { QueryResultsGrid } from "./QueryResultsGrid";
@@ -394,6 +394,35 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     }
   }, [tab, onTabUpdate, api, addQueryToHistory]);
 
+  // Handle cancel query
+  const handleCancelQuery = useCallback(async () => {
+    if (!tab.connectionKey || !api) {
+      return;
+    }
+
+    try {
+      await api.cancelQuery(tab.connectionKey);
+
+      // Update UI state
+      onTabUpdate(tab.id, {
+        loading: false,
+        error: "Query cancelled by user",
+      });
+
+      toast.info("Query cancelled");
+    } catch (error: any) {
+      console.error("Failed to cancel query:", error);
+
+      // Even if cancellation failed, update UI state
+      onTabUpdate(tab.id, {
+        loading: false,
+        error: "Query cancellation failed, but query may have completed",
+      });
+
+      toast.error(`Failed to cancel query: ${error.message}`);
+    }
+  }, [tab.connectionKey, tab.id, onTabUpdate, api]);
+
   // Handle format SQL
   const handleFormatSql = useCallback(async () => {
     if (!tab.sql || !api) return;
@@ -518,15 +547,25 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
       {/* Toolbar - Compact, always visible */}
       <div className="h-10 px-4 flex items-center justify-between border-b border-border bg-bg-secondary">
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleRunQuery}
-            disabled={tab.loading || !tab.sql?.trim()}
-            className="h-7 px-3 rounded flex items-center gap-1.5 bg-accent hover:bg-accent/90 text-white text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Play className="w-3 h-3" />
-            Run
-            <span className="opacity-70">(Cmd+Enter)</span>
-          </button>
+          {tab.loading ? (
+            <button
+              onClick={handleCancelQuery}
+              className="h-7 px-3 rounded flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium transition-colors"
+            >
+              <X className="w-3 h-3" />
+              Cancel
+            </button>
+          ) : (
+            <button
+              onClick={handleRunQuery}
+              disabled={!tab.sql?.trim()}
+              className="h-7 px-3 rounded flex items-center gap-1.5 bg-accent hover:bg-accent/90 text-white text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Play className="w-3 h-3" />
+              Run
+              <span className="opacity-70">(Cmd+Enter)</span>
+            </button>
+          )}
           <button
             onClick={handleFormatSql}
             disabled={tab.loading || !tab.sql?.trim()}

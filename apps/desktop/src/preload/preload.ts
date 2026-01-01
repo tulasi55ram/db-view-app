@@ -39,6 +39,7 @@ const electronAPI: ElectronAPI = {
   runQuery: (params) => ipcRenderer.invoke("query:run", params),
   formatSql: (sql) => ipcRenderer.invoke("query:format", sql),
   explainQuery: (params) => ipcRenderer.invoke("query:explain", params),
+  cancelQuery: (connectionKey) => ipcRenderer.invoke("query:cancel", connectionKey),
 
   // Saved views
   getViews: (params) => ipcRenderer.invoke("views:getAll", params),
