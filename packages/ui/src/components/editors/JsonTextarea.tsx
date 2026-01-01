@@ -90,10 +90,10 @@ export const JsonTextarea: FC<JsonTextareaProps> = ({
   };
 
   return (
-    <div className="absolute inset-0 z-10 bg-vscode-bg-light border-2 border-vscode-accent p-2 shadow-lg">
+    <div className="absolute top-0 left-0 z-50 bg-vscode-bg-lighter border-2 border-vscode-accent p-2 shadow-xl rounded" style={{ width: '400px', minHeight: '250px' }}>
       <div className="flex items-center justify-between mb-1 text-xs">
-        <span className={isValid ? "text-vscode-text-muted" : "text-red-500"}>
-          {isValid ? "JSON Editor" : "Invalid JSON"}
+        <span className={isValid ? "text-vscode-text-muted" : "text-red-500 font-semibold"}>
+          {isValid ? "JSON Editor" : "⚠️ Invalid JSON"}
         </span>
         <span className="text-vscode-text-muted">
           Ctrl+Enter to save, Esc to cancel
@@ -104,9 +104,11 @@ export const JsonTextarea: FC<JsonTextareaProps> = ({
         value={editValue}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        className={`w-full h-[calc(100%-24px)] px-2 py-1 bg-vscode-bg border ${
+        onBlur={handleSave}
+        className={`w-full px-2 py-1 bg-vscode-bg border ${
           isValid ? "border-vscode-border" : "border-red-500"
         } outline-none text-sm font-mono resize-none`}
+        style={{ height: '200px' }}
         placeholder='{"key": "value"}'
       />
     </div>

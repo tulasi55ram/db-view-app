@@ -443,7 +443,7 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
   }
 
   async fetchTableRows(schema: string, table: string, options: FetchOptions = {}): Promise<QueryResultSet> {
-    const { limit = 100, offset = 0, filters = [], filterLogic = 'AND', orderBy = [], sortColumn, sortDirection = 'ASC' } = options;
+    const { limit = 100, offset = 0, filters = [], filterLogic = 'AND', orderBy = [], sortColumn, sortDirection = 'ASC', sorting } = options;
     const qualified = `${this.quoteIdentifier(schema)}.${this.quoteIdentifier(table)}`;
 
     const { whereClause, params } = this.buildWhereClause(filters, filterLogic);
@@ -453,8 +453,13 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
       sql += ` WHERE ${whereClause}`;
     }
 
-    // Add ORDER BY clause - sortColumn takes precedence over orderBy
-    if (sortColumn) {
+    // Add ORDER BY clause - sorting array takes precedence, then sortColumn, then orderBy
+    if (sorting && sorting.length > 0) {
+      const orderByClause = sorting.map(sort =>
+        `${this.quoteIdentifier(sort.columnName)} ${sort.direction.toUpperCase()}`
+      ).join(', ');
+      sql += ` ORDER BY ${orderByClause}`;
+    } else if (sortColumn) {
       sql += ` ORDER BY ${this.quoteIdentifier(sortColumn)} ${sortDirection}`;
     } else if (orderBy.length > 0) {
       const orderByClause = orderBy.map(col => this.quoteIdentifier(col)).join(', ');

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo, useLayoutEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { RefreshCw, Plus, Trash2, Info, Save, X, Check, Copy, ArrowUp, ArrowDown, ArrowUpDown, Download, Upload, Lock, Bookmark } from "lucide-react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { RefreshCw, Plus, Trash2, Info, Save, X, Copy, ArrowUp, ArrowDown, ArrowUpDown, Download, Upload, Lock, Bookmark } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { getElectronAPI } from "@/electron";
 import { toast } from "sonner";
@@ -15,9 +16,9 @@ import { ScrollButtons } from "./ScrollButtons";
 import { JumpToRowDialog } from "./JumpToRowDialog";
 import { FilterPresets } from "./FilterPresets";
 import { SavedViewsPanel } from "./SavedViewsPanel";
-import { DateTimePopover } from "../editors/DateTimePopover";
-import { JSONEditor } from "../editors/JSONEditor";
+import { InsertRowPanel, JsonEditorPanel, QuickAccessBar, type PanelType } from "../panels";
 import { CassandraValueCell } from "./CassandraValueCell";
+import { BooleanEditor } from "./BooleanEditor";
 import { formatAsCSV, formatAsJSON, formatAsSQL } from "@/utils/exportFormatters";
 import { parseCSV, parseJSON } from "@/utils/importParsers";
 
@@ -58,8 +59,9 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
   // Undo stack for cell edits (stores cell keys in order of editing)
   const [undoStack, setUndoStack] = useState<string[]>([]);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
-  const [insertingRow, setInsertingRow] = useState<Record<string, string> | null>(null);
-  const [insertingRowNullColumns, setInsertingRowNullColumns] = useState<Set<string>>(new Set());
+  const [showInsertPanel, setShowInsertPanel] = useState(false);
+  const [insertPanelInitialValues, setInsertPanelInitialValues] = useState<Record<string, string>>({});
+  const [insertPanelInitialNullColumns, setInsertPanelInitialNullColumns] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState<FilterCondition[]>([]);
   const [filterLogic, setFilterLogic] = useState<"AND" | "OR">("AND");
   const [showMetadataPanel, setShowMetadataPanel] = useState(false);
@@ -152,16 +154,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     };
   }, [resizingColumn]);
 
-  // Advanced type editor state
-  const [dateTimeEditor, setDateTimeEditor] = useState<{
-    open: boolean;
-    rowIndex: number;
-    column: string;
-    value: string;
-    columnType: string;
-    anchorRect: DOMRect | null;
-  } | null>(null);
-
+  // JSON editor panel state
   const [jsonEditor, setJsonEditor] = useState<{
     open: boolean;
     rowIndex: number;
@@ -172,7 +165,11 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
 
   const api = getElectronAPI();
 
-  // Fetch connection config to check read-only status
+  // Connection status state
+  const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "connecting" | "error">("disconnected");
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  // Fetch connection config to check read-only status and connection status
   useEffect(() => {
     const fetchConnectionConfig = async () => {
       if (!api) return;
@@ -186,8 +183,14 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
             : `${c.config.dbType}:${JSON.stringify(c.config)}`;
           return key === connectionKey;
         });
-        if (connection?.config && 'readOnly' in connection.config) {
-          setIsReadOnly(Boolean(connection.config.readOnly));
+        if (connection) {
+          // Update connection status
+          setConnectionStatus(connection.status);
+
+          // Check read-only status
+          if ('readOnly' in connection.config) {
+            setIsReadOnly(Boolean(connection.config.readOnly));
+          }
         }
       } catch (error) {
         console.error("Failed to fetch connection config:", error);
@@ -196,9 +199,52 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     fetchConnectionConfig();
   }, [api, connectionKey]);
 
+  // Auto-connect if needed when component mounts or connection changes
+  useEffect(() => {
+    const autoConnect = async () => {
+      if (!api || isConnecting) return;
+
+      // Check if we need to connect
+      if (connectionStatus === "disconnected") {
+        try {
+          setIsConnecting(true);
+          await api.connectToDatabase(connectionKey);
+          setConnectionStatus("connected");
+        } catch (error) {
+          console.error("Failed to auto-connect:", error);
+          setConnectionStatus("error");
+          toast.error("Failed to connect to database. Please check the connection settings.");
+        } finally {
+          setIsConnecting(false);
+        }
+      }
+    };
+
+    autoConnect();
+  }, [api, connectionKey, connectionStatus, isConnecting]);
+
+  // Listen to connection status changes
+  useEffect(() => {
+    if (!api?.onConnectionStatusChange) return;
+
+    const unsubscribe = api.onConnectionStatusChange((data: any) => {
+      if (data.connectionKey === connectionKey) {
+        setConnectionStatus(data.status);
+      }
+    });
+
+    return () => unsubscribe?.();
+  }, [api, connectionKey]);
+
   const loadData = useCallback(async () => {
     if (!api) {
       toast.error("Electron API not available");
+      setLoading(false);
+      return;
+    }
+
+    // Don't load data if not connected
+    if (connectionStatus !== "connected") {
       setLoading(false);
       return;
     }
@@ -255,7 +301,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     } finally {
       setLoading(false);
     }
-  }, [api, connectionKey, schema, table, limit, offset, filters, filterLogic, sortColumn, sortDirection]);
+  }, [api, connectionKey, schema, table, limit, offset, filters, filterLogic, sortColumn, sortDirection, connectionStatus]);
 
   // Reset state when table changes to prevent data overlap
   useEffect(() => {
@@ -270,8 +316,9 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     setPendingEdits(new Map());
     setUndoStack([]);
     setEditingCell(null);
-    setInsertingRow(null);
-    setInsertingRowNullColumns(new Set());
+    setShowInsertPanel(false);
+    setInsertPanelInitialValues({});
+    setInsertPanelInitialNullColumns(new Set());
     setFilters([]);
     setFilterLogic("AND");
     setSortColumn(null);
@@ -429,9 +476,45 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     columnType: string;
   } | null>(null);
 
+  // Compute active side panel for the resizable panel system
+  const activePanel: PanelType | null = useMemo(() => {
+    if (showInsertPanel) return "insert";
+    if (jsonEditor?.open) return "json-editor";
+    if (documentEditor?.open) return "document-editor";
+    if (cassandraEditor?.open) return "cassandra-editor";
+    if (showMetadataPanel) return "metadata";
+    if (showSavedViewsPanel) return "saved-views";
+    return null;
+  }, [showInsertPanel, jsonEditor?.open, documentEditor?.open, cassandraEditor?.open, showMetadataPanel, showSavedViewsPanel]);
+
+  // Handler to open panels from QuickAccessBar
+  const handleOpenPanel = useCallback((type: PanelType) => {
+    // Close all panels first
+    setShowInsertPanel(false);
+    setJsonEditor(null);
+    setDocumentEditor(null);
+    setCassandraEditor(null);
+    setShowMetadataPanel(false);
+    setShowSavedViewsPanel(false);
+
+    // Open the requested panel
+    switch (type) {
+      case "insert":
+        setShowInsertPanel(true);
+        break;
+      case "metadata":
+        setShowMetadataPanel(true);
+        break;
+      case "saved-views":
+        setShowSavedViewsPanel(true);
+        break;
+      // json-editor, document-editor, cassandra-editor require data, opened from cell interaction
+    }
+  }, []);
+
   // Handle cell double-click
   const handleCellDoubleClick = useCallback((
-    event: React.MouseEvent<HTMLTableCellElement>,
+    _event: React.MouseEvent<HTMLTableCellElement>,
     rowIndex: number,
     column: string,
     currentValue: unknown
@@ -440,9 +523,6 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
       toast.error("Read-only connection", { description: "This connection is in read-only mode" });
       return;
     }
-
-    // Get the cell's bounding rect for popover positioning
-    const cellRect = event.currentTarget.getBoundingClientRect();
 
     // Get column metadata to determine the type
     const colMetadata = metadata.find((m) => m.name === column);
@@ -513,10 +593,11 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
       return;
     }
 
-    // For SQL databases, use JSON editor only for json/jsonb types
+    // For SQL databases, use JSON editor for json/jsonb types OR if the value is an array/object
     const isJsonType = type.includes("json") || type.includes("jsonb");
+    const isJsonValue = typeof currentValue === "object" && currentValue !== null && !type.includes("timestamp") && !type.includes("date");
 
-    if (isJsonType) {
+    if (isJsonType || isJsonValue) {
       setJsonEditor({
         open: true,
         rowIndex,
@@ -527,25 +608,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
       return;
     }
 
-    // Check for date/time types - open DateTime popover anchored to cell
-    if (
-      type.includes("timestamp") ||
-      type.includes("date") ||
-      type.includes("time") ||
-      type.includes("datetime")
-    ) {
-      setDateTimeEditor({
-        open: true,
-        rowIndex,
-        column,
-        value: formatCellValueForEdit(currentValue),
-        columnType: colMetadata?.type || "DateTime",
-        anchorRect: cellRect,
-      });
-      return;
-    }
-
-    // Default: use inline editing for other types
+    // Default: use inline editing for all other types (including date/time - show raw database values)
     setEditingCell({
       rowIndex,
       column,
@@ -573,14 +636,6 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
   const handleEditCancel = useCallback(() => {
     setEditingCell(null);
   }, []);
-
-  // Handle DateTime editor save
-  const handleDateTimeEditorSave = useCallback((value: string) => {
-    if (!dateTimeEditor) return;
-    const { rowIndex, column } = dateTimeEditor;
-    handleCellUpdate(rowIndex, column, value);
-    setDateTimeEditor(null);
-  }, [dateTimeEditor, handleCellUpdate]);
 
   // Handle JSON editor save
   const handleJsonEditorSave = useCallback(async (value: string) => {
@@ -873,7 +928,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     toast.info("All changes discarded");
   }, []);
 
-  // Start inline row insertion
+  // Start row insertion - opens panel
   const handleStartInsert = useCallback(() => {
     // For document databases (MongoDB, Elasticsearch), use the document JSON editor
     if (isDocumentDB) {
@@ -898,200 +953,37 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
       return;
     }
 
-    // For SQL databases, use inline row insertion
-    const initialValues: Record<string, string> = {};
-    metadata.forEach((col) => {
-      const type = col.type.toLowerCase();
-      const isAutoIncrement = type.includes("serial") || type.includes("identity");
-      const isNonEditable = col.editable === false || col.isGenerated === true;
-      // Skip auto-increment, generated, and non-editable columns
-      if (!isAutoIncrement && !isNonEditable) {
-        initialValues[col.name] = "";
-      }
-    });
-    setInsertingRow(initialValues);
-    setInsertingRowNullColumns(new Set());
+    // For SQL databases, open the insert panel
+    setInsertPanelInitialValues({});
+    setInsertPanelInitialNullColumns(new Set());
+    setShowInsertPanel(true);
   }, [metadata, isDocumentDB]);
 
-  // Handle inserting row value change
-  const handleInsertingRowChange = useCallback((column: string, value: string) => {
-    setInsertingRow((prev) => {
-      if (!prev) return prev;
-      return { ...prev, [column]: value };
-    });
-  }, []);
-
-  // Toggle NULL for inserting row column
-  const handleInsertingRowToggleNull = useCallback((column: string) => {
-    setInsertingRowNullColumns((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(column)) {
-        newSet.delete(column);
-      } else {
-        newSet.add(column);
-        // Clear the input value when NULL is checked
-        setInsertingRow((prevRow) => {
-          if (!prevRow) return prevRow;
-          return { ...prevRow, [column]: "" };
-        });
-      }
-      return newSet;
-    });
-  }, []);
-
-  // Generate UUID for a column
-  const handleGenerateUUID = useCallback((column: string) => {
-    // Generate a random UUID v4
-    const uuid = crypto.randomUUID();
-    setInsertingRow((prev) => {
-      if (!prev) return prev;
-      return { ...prev, [column]: uuid };
-    });
-    // Uncheck NULL if it was checked
-    setInsertingRowNullColumns((prev) => {
-      const newSet = new Set(prev);
-      newSet.delete(column);
-      return newSet;
-    });
-  }, []);
-
-  // Generate MongoDB ObjectId
-  const handleGenerateObjectId = useCallback((column: string) => {
-    // Generate a MongoDB ObjectId (24 hex characters)
-    const timestamp = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
-    const randomValue = Math.floor(Math.random() * 16777216).toString(16).padStart(6, '0');
-    const counter = Math.floor(Math.random() * 16777216).toString(16).padStart(6, '0');
-    const machineId = Math.floor(Math.random() * 16777216).toString(16).padStart(6, '0');
-    const objectId = timestamp + machineId + randomValue + counter;
-
-    setInsertingRow((prev) => {
-      if (!prev) return prev;
-      return { ...prev, [column]: objectId };
-    });
-    // Uncheck NULL if it was checked
-    setInsertingRowNullColumns((prev) => {
-      const newSet = new Set(prev);
-      newSet.delete(column);
-      return newSet;
-    });
-  }, []);
-
-  // Detect document database type based on metadata
-  const detectDocumentDBType = useCallback((): { isMongo: boolean; isRedis: boolean; isElastic: boolean } => {
-    const hasObjectId = metadata.some(col => col.type.toLowerCase().includes('objectid'));
-    const hasKey = metadata.some(col => col.name === '_key');
-    const hasKeywordId = metadata.some(col => col.name === '_id' && col.type.toLowerCase() === 'keyword');
-    return {
-      isMongo: hasObjectId || metadata.some(col => col.name === '_id' && col.type === 'ObjectId'),
-      isRedis: hasKey,
-      isElastic: hasKeywordId || isElasticsearch
-    };
-  }, [metadata, isElasticsearch]);
-
-  // Save the inserting row
-  const handleSaveInsertingRow = useCallback(async () => {
-    if (!api || !insertingRow) return;
+  // Handle insert from panel
+  const handleInsertFromPanel = useCallback(async (values: Record<string, unknown>) => {
+    if (!api) return;
 
     try {
-      const insertValues: Record<string, unknown> = {};
-
-      // Get editable columns - skip auto-increment, generated, and non-editable columns
-      const editableColumns = metadata.filter((col) => {
-        const type = col.type.toLowerCase();
-        const isAutoIncrement = type.includes("serial") || type.includes("identity");
-        // Check if column is explicitly marked as non-editable or generated
-        const isNonEditable = col.editable === false || col.isGenerated === true;
-        return !isAutoIncrement && !isNonEditable;
-      });
-
-      for (const col of editableColumns) {
-        // Skip if null is selected
-        if (insertingRowNullColumns.has(col.name)) {
-          insertValues[col.name] = null;
-          continue;
-        }
-
-        const value = insertingRow[col.name] || "";
-        const type = col.type.toLowerCase();
-
-        // Convert based on type
-        if (value === "") {
-          if (col.nullable) {
-            insertValues[col.name] = null;
-          } else if (col.defaultValue) {
-            // Skip - let database use default
-            continue;
-          } else {
-            toast.error(`${col.name} is required`);
-            return;
-          }
-        } else if (type.includes("int") || type.includes("serial")) {
-          const intValue = parseInt(value, 10);
-          if (isNaN(intValue)) {
-            toast.error(`${col.name} must be an integer`);
-            return;
-          }
-          insertValues[col.name] = intValue;
-        } else if (type.includes("float") || type.includes("double") || type.includes("decimal") || type.includes("numeric")) {
-          const numValue = parseFloat(value);
-          if (isNaN(numValue)) {
-            toast.error(`${col.name} must be a number`);
-            return;
-          }
-          insertValues[col.name] = numValue;
-        } else if (type.includes("bool")) {
-          const lowerValue = value.toLowerCase();
-          if (lowerValue === "true" || lowerValue === "1" || lowerValue === "yes") {
-            insertValues[col.name] = true;
-          } else if (lowerValue === "false" || lowerValue === "0" || lowerValue === "no") {
-            insertValues[col.name] = false;
-          } else {
-            toast.error(`${col.name} must be true or false`);
-            return;
-          }
-        } else if (type.includes("json") || type.includes("jsonb")) {
-          try {
-            insertValues[col.name] = JSON.parse(value);
-          } catch (e) {
-            toast.error(`${col.name} must be valid JSON`);
-            return;
-          }
-        } else {
-          // String or date
-          insertValues[col.name] = value;
-        }
-      }
-
       await api.insertRow({
         connectionKey,
         schema,
         table,
-        values: insertValues,
+        values,
       });
 
-      // Clear inserting state
-      setInsertingRow(null);
-      setInsertingRowNullColumns(new Set());
-
-      // Reset to first page and reload data
-      if (offset !== 0) {
-        setOffset(0); // This will trigger loadData via useEffect
+      // Reload data
+      if (offset > 0) {
+        setOffset(0);
       } else {
-        await loadData(); // Already on first page, just reload
+        await loadData();
       }
 
       toast.success("Row inserted successfully");
     } catch (err) {
       console.error("Failed to insert row:", err);
-      toast.error(err instanceof Error ? err.message : "Failed to insert row");
+      throw err; // Re-throw so panel can show error
     }
-  }, [api, insertingRow, insertingRowNullColumns, metadata, connectionKey, schema, table, offset, loadData]);
-
-  // Cancel inline row insertion
-  const handleCancelInsert = useCallback(() => {
-    setInsertingRow(null);
-    setInsertingRowNullColumns(new Set());
-  }, []);
+  }, [api, connectionKey, schema, table, offset, loadData]);
 
   // Duplicate selected row
   const handleDuplicateRow = useCallback(() => {
@@ -1132,7 +1024,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
       return;
     }
 
-    // For SQL databases, use inline row insertion
+    // For SQL databases, open insert panel with duplicated values
     const duplicatedValues: Record<string, string> = {};
     const nullColumns = new Set<string>();
 
@@ -1162,10 +1054,10 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
       }
     });
 
-    setInsertingRow(duplicatedValues);
-    setInsertingRowNullColumns(nullColumns);
+    setInsertPanelInitialValues(duplicatedValues);
+    setInsertPanelInitialNullColumns(nullColumns);
+    setShowInsertPanel(true);
     setSelectedRows(new Set()); // Clear selection
-    toast.info("Row duplicated. Edit and save to insert.");
   }, [selectedRows, rows, metadata, isDocumentDB]);
 
   // Handle row deletion
@@ -1691,36 +1583,16 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
               </button>
             </>
           )}
-          {insertingRow && (
-            <>
-              <button
-                onClick={handleSaveInsertingRow}
-                className="px-2 py-1.5 rounded bg-accent hover:bg-accent/90 transition-colors flex items-center gap-1.5 text-sm text-white font-medium"
-                title="Save new row"
-              >
-                <Check className="w-4 h-4" />
-                <span>Save Row</span>
-              </button>
-              <button
-                onClick={handleCancelInsert}
-                className="p-1.5 rounded hover:bg-bg-hover transition-colors flex items-center gap-1 text-sm text-text-secondary"
-                title="Cancel insert"
-              >
-                <X className="w-4 h-4" />
-                <span className="hidden sm:inline">Cancel</span>
-              </button>
-            </>
-          )}
           <button
             onClick={handleStartInsert}
-            disabled={insertingRow !== null || isReadOnly}
+            disabled={isReadOnly}
             className={cn(
               "p-1.5 rounded transition-colors flex items-center gap-1 text-sm",
-              insertingRow === null && !isReadOnly
+              !isReadOnly
                 ? "hover:bg-bg-hover text-text-primary"
                 : "opacity-50 cursor-not-allowed text-text-tertiary"
             )}
-            title={isReadOnly ? "Read-only connection" : insertingRow === null ? "Insert Row" : "Already inserting a row"}
+            title={isReadOnly ? "Read-only connection" : "Insert Row"}
           >
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">Insert</span>
@@ -1735,7 +1607,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
               <span className="hidden sm:inline">Copy</span>
             </button>
           )}
-          {selectedRows.size === 1 && !insertingRow && !isReadOnly && (
+          {selectedRows.size === 1 && !isReadOnly && (
             <button
               onClick={handleDuplicateRow}
               className="p-1.5 rounded hover:bg-bg-hover transition-colors flex items-center gap-1 text-sm text-text-primary"
@@ -1846,8 +1718,12 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
       {/* Scroll Progress Bar */}
       <ScrollProgressBar progress={scrollProgress} />
 
-      {/* Table Container */}
-      <div className="flex-1 flex flex-col overflow-hidden relative">
+      {/* Main Content Area with PanelGroup for resizable side panel */}
+      <div className="flex-1 flex overflow-hidden">
+        <PanelGroup direction="horizontal" autoSaveId={`tableview-panels-${schema}-${table}`}>
+          {/* Main Table Panel */}
+          <Panel id="main" minSize={40}>
+            <div className="h-full flex flex-col overflow-hidden relative">
         {/* Table with scroll */}
         <div
           key={`scroll-${connectionKey}-${schema}-${table}`}
@@ -1856,11 +1732,19 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           onScroll={handleScroll}
           tabIndex={0}
         >
-        {loading ? (
+        {loading || connectionStatus !== "connected" ? (
           <div className="flex items-center justify-center h-full">
             <div className="flex items-center gap-2 text-text-secondary">
               <RefreshCw className="w-5 h-5 animate-spin" />
-              <span>Loading table data...</span>
+              <span>
+                {connectionStatus === "connecting" || isConnecting
+                  ? "Connecting to database..."
+                  : connectionStatus === "disconnected"
+                  ? "Establishing connection..."
+                  : connectionStatus === "error"
+                  ? "Connection error. Please check your connection settings."
+                  : "Loading table data..."}
+              </span>
             </div>
           </div>
         ) : rows.length === 0 ? (
@@ -1923,196 +1807,14 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
             <tbody
               key={`tbody-${visibilityKey}`}
               style={{
-                height: `${rowVirtualizer.getTotalSize() + (insertingRow ? ROW_HEIGHT : 0)}px`,
+                height: `${rowVirtualizer.getTotalSize()}px`,
                 position: "relative",
               }}
             >
-              {/* Inline inserting row - always at top, not virtualized */}
-              {insertingRow && (
-                <tr
-                  className="border-b-2 border-accent bg-accent/5"
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
-                    height: `${ROW_HEIGHT}px`,
-                    display: "flex",
-                  }}
-                >
-                  <td className="px-3 py-2" style={{ width: 40, flexShrink: 0 }}>
-                    <div className="flex items-center justify-center">
-                      <span className="text-xs text-accent font-medium">New</span>
-                    </div>
-                  </td>
-                  {columns.map((column) => {
-                    const colMetadata = metadata.find((m) => m.name === column);
-                    if (!colMetadata) return <td key={column} className="px-3 py-2" style={{ width: columnWidths[column] || 150 }}></td>;
-
-                    const type = colMetadata.type.toLowerCase();
-                    const isAutoIncrement = type.includes("serial") || type.includes("identity");
-                    const isNonEditable = colMetadata.editable === false || colMetadata.isGenerated === true;
-                    const isNull = insertingRowNullColumns.has(column);
-                    const isRequired = !colMetadata.nullable && !colMetadata.defaultValue;
-
-                    // Skip auto-increment, generated, and non-editable columns
-                    if (isAutoIncrement || isNonEditable) {
-                      return (
-                        <td key={column} className="px-3 py-2 text-text-tertiary italic text-xs" style={{ width: columnWidths[column] || 150 }}>
-                          {isAutoIncrement ? "Auto" : colMetadata.isGenerated ? "Generated" : "N/A"}
-                        </td>
-                      );
-                    }
-
-                    const isUUID = type.includes("uuid") || type.includes("guid") || type.includes("uniqueidentifier");
-                    const isObjectId = type.toLowerCase().includes("objectid");
-                    const { isMongo } = detectDocumentDBType();
-
-                    return (
-                      <td key={column} className="px-3 py-2" style={{ width: columnWidths[column] || 150 }}>
-                        <div className="flex items-center gap-1">
-                          {/* Input field */}
-                          <div className="flex-1 min-w-0">
-                            {type.includes("bool") ? (
-                              <select
-                                value={insertingRow[column] || ""}
-                                onChange={(e) => handleInsertingRowChange(column, e.target.value)}
-                                disabled={isNull}
-                                className="w-full px-2 py-1 bg-bg-primary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50"
-                              >
-                                <option value="">--</option>
-                                <option value="true">true</option>
-                                <option value="false">false</option>
-                              </select>
-                            ) : type.includes("json") || type.includes("jsonb") || (isMongo && type.includes("object")) ? (
-                              <textarea
-                                value={insertingRow[column] || ""}
-                                onChange={(e) => handleInsertingRowChange(column, e.target.value)}
-                                disabled={isNull}
-                                placeholder="{}"
-                                rows={1}
-                                className="w-full px-2 py-1 bg-bg-primary border border-border rounded text-text-primary font-mono text-xs focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 resize-none"
-                              />
-                            ) : type.includes("date") || type.includes("time") || type.includes("timestamp") ? (
-                              <div className="flex items-center gap-1 w-full">
-                                <input
-                                  type="text"
-                                  value={insertingRow[column] || ""}
-                                  onChange={(e) => handleInsertingRowChange(column, e.target.value)}
-                                  disabled={isNull}
-                                  placeholder={
-                                    type === "date"
-                                      ? "yyyy-MM-dd"
-                                      : type.includes("time") && !type.includes("timestamp")
-                                      ? "HH:mm:ss"
-                                      : "yyyy-MM-dd HH:mm:ss"
-                                  }
-                                  className={cn(
-                                    "flex-1 px-2 py-1 bg-bg-primary border border-border rounded text-text-primary text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50",
-                                    isRequired && "border-orange-500"
-                                  )}
-                                />
-                                <button
-                                  onClick={() => {
-                                    const now = new Date();
-                                    let formatted: string;
-                                    if (type === "date") {
-                                      formatted = now.toISOString().split("T")[0];
-                                    } else if (type.includes("time") && !type.includes("timestamp")) {
-                                      formatted = now.toTimeString().split(" ")[0];
-                                    } else {
-                                      formatted = now.toISOString().replace("Z", "").split(".")[0];
-                                    }
-                                    handleInsertingRowChange(column, formatted);
-                                  }}
-                                  disabled={isNull}
-                                  className="px-1.5 py-1 bg-accent/10 hover:bg-accent/20 text-accent text-[10px] rounded transition-colors disabled:opacity-50"
-                                  title="Set to current time"
-                                >
-                                  Now
-                                </button>
-                              </div>
-                            ) : (
-                              <input
-                                type={
-                                  type.includes("int") || type.includes("float") || type.includes("decimal") || type.includes("numeric")
-                                    ? "number"
-                                    : "text"
-                                }
-                                value={insertingRow[column] || ""}
-                                onChange={(e) => handleInsertingRowChange(column, e.target.value)}
-                                disabled={isNull}
-                                placeholder={
-                                  isRequired
-                                    ? "Required"
-                                    : colMetadata.defaultValue
-                                    ? `Default: ${colMetadata.defaultValue}`
-                                    : isUUID
-                                    ? "UUID (click Gen)"
-                                    : isObjectId
-                                    ? "ObjectId (click Gen)"
-                                    : ""
-                                }
-                                className={cn(
-                                  "w-full px-2 py-1 bg-bg-primary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50",
-                                  isRequired && "border-orange-500"
-                                )}
-                              />
-                            )}
-                          </div>
-
-                          {/* UUID Generate button */}
-                          {isUUID && !isNull && (
-                            <button
-                              onClick={() => handleGenerateUUID(column)}
-                              className="px-2 py-1 bg-accent/10 hover:bg-accent/20 text-accent text-xs rounded transition-colors whitespace-nowrap"
-                              title="Generate UUID v4"
-                            >
-                              Gen
-                            </button>
-                          )}
-
-                          {/* MongoDB ObjectId Generate button */}
-                          {isObjectId && !isNull && (
-                            <button
-                              onClick={() => handleGenerateObjectId(column)}
-                              className="px-2 py-1 bg-accent/10 hover:bg-accent/20 text-accent text-xs rounded transition-colors whitespace-nowrap"
-                              title="Generate MongoDB ObjectId"
-                            >
-                              Gen
-                            </button>
-                          )}
-
-                          {/* NULL checkbox for nullable columns */}
-                          {colMetadata.nullable && (
-                            <label
-                              className={cn(
-                                "flex items-center gap-0.5 text-xs whitespace-nowrap cursor-pointer transition-colors",
-                                isNull ? "text-accent font-medium" : "text-text-tertiary hover:text-text-secondary"
-                              )}
-                              title={isNull ? "Uncheck to enter a value" : "Check to set NULL"}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isNull}
-                                onChange={() => handleInsertingRowToggleNull(column)}
-                                className="rounded w-3 h-3"
-                              />
-                              <span className="hidden xl:inline text-[10px]">NULL</span>
-                            </label>
-                          )}
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              )}
-
               {/* Virtualized rows - only renders visible rows in the DOM */}
               {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                 const rowIndex = virtualRow.index;
                 const row = rowData[rowIndex];
-                const topOffset = insertingRow ? ROW_HEIGHT : 0;
 
                 return (
                   <tr
@@ -2129,7 +1831,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                       left: 0,
                       width: "100%",
                       height: `${virtualRow.size}px`,
-                      transform: `translateY(${virtualRow.start + topOffset}px)`,
+                      transform: `translateY(${virtualRow.start}px)`,
                       display: "flex",
                     }}
                   >
@@ -2174,23 +1876,45 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                           title={hasPendingEdit ? "Pending change - Click Save to commit" : "Click to select, double-click to edit, Ctrl+C to copy"}
                         >
                           {isEditing ? (
-                            <input
-                              type="text"
-                              value={editingCell.value}
-                              onChange={(e) =>
-                                setEditingCell({ ...editingCell, value: e.target.value })
+                            (() => {
+                              // Check if column is boolean type
+                              const colMetadata = metadata.find(m => m.name === column);
+                              const isBooleanType = colMetadata?.type.toLowerCase().includes("bool");
+
+                              if (isBooleanType) {
+                                return (
+                                  <BooleanEditor
+                                    value={editingCell.value}
+                                    nullable={colMetadata?.nullable}
+                                    onSave={(value) => {
+                                      setEditingCell({ ...editingCell, value });
+                                    }}
+                                    onCancel={handleEditCommit}
+                                  />
+                                );
                               }
-                              onBlur={handleEditCommit}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  handleEditCommit();
-                                } else if (e.key === "Escape") {
-                                  handleEditCancel();
-                                }
-                              }}
-                              autoFocus
-                              className="w-full min-w-[100px] px-2 py-1 bg-bg-primary border border-accent rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-                            />
+
+                              // Default text input for non-boolean columns
+                              return (
+                                <input
+                                  type="text"
+                                  value={editingCell.value}
+                                  onChange={(e) =>
+                                    setEditingCell({ ...editingCell, value: e.target.value })
+                                  }
+                                  onBlur={handleEditCommit}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      handleEditCommit();
+                                    } else if (e.key === "Escape") {
+                                      handleEditCancel();
+                                    }
+                                  }}
+                                  autoFocus
+                                  className="w-full min-w-[100px] px-2 py-1 bg-bg-primary border border-accent rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                                />
+                              );
+                            })()
                           ) : isCassandra ? (
                             // Use rich Cassandra value cell for Cassandra connections
                             <CassandraValueCell
@@ -2342,17 +2066,123 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           </div>
         </div>
       )}
+          </Panel>
 
-      {/* Table Metadata Panel */}
-      <TableMetadataPanel
-        connectionKey={connectionKey}
-        schema={schema}
-        table={table}
-        open={showMetadataPanel}
-        onClose={() => setShowMetadataPanel(false)}
-      />
+          {/* Resize Handle - only when panel is open */}
+          {activePanel && (
+            <PanelResizeHandle className="w-1 bg-border hover:bg-accent transition-colors cursor-col-resize group">
+              <div className="w-1 h-full group-hover:bg-accent/30 transition-colors" />
+            </PanelResizeHandle>
+          )}
 
-      {/* Export Data Dialog */}
+          {/* Side Panel - conditional based on activePanel */}
+          {activePanel && (
+            <Panel id="side" defaultSize={30} minSize={20} maxSize={50}>
+              {/* Insert Row Panel */}
+              {showInsertPanel && (
+                <InsertRowPanel
+                  open={showInsertPanel}
+                  onClose={() => setShowInsertPanel(false)}
+                  onInsert={handleInsertFromPanel}
+                  columns={metadata}
+                  tableName={table}
+                  initialValues={insertPanelInitialValues}
+                  initialNullColumns={insertPanelInitialNullColumns}
+                  variant="inline"
+                />
+              )}
+
+              {/* JSON Editor Panel */}
+              {jsonEditor?.open && (
+                <JsonEditorPanel
+                  open={jsonEditor.open}
+                  onClose={() => setJsonEditor(null)}
+                  value={jsonEditor.value}
+                  onChange={handleJsonEditorSave}
+                  columnName={jsonEditor.column}
+                  columnType={jsonEditor.columnType}
+                  variant="inline"
+                />
+              )}
+
+              {/* MongoDB Document Editor */}
+              {documentEditor?.open && (
+                <JsonEditorPanel
+                  open={documentEditor.open}
+                  onClose={() => setDocumentEditor(null)}
+                  value={documentEditor.value}
+                  onChange={handleDocumentEditorSave}
+                  columnName={documentEditor.isClone ? "Clone Document" : "New Document"}
+                  columnType="MongoDB Document"
+                  variant="inline"
+                />
+              )}
+
+              {/* Cassandra Collection/UDT Editor */}
+              {cassandraEditor?.open && (
+                <JsonEditorPanel
+                  open={cassandraEditor.open}
+                  onClose={() => setCassandraEditor(null)}
+                  value={cassandraEditor.value}
+                  onChange={handleCassandraEditorSave}
+                  columnName={cassandraEditor.column}
+                  columnType={cassandraEditor.columnType}
+                  variant="inline"
+                />
+              )}
+
+              {/* Table Metadata Panel */}
+              {showMetadataPanel && (
+                <TableMetadataPanel
+                  connectionKey={connectionKey}
+                  schema={schema}
+                  table={table}
+                  open={showMetadataPanel}
+                  onClose={() => setShowMetadataPanel(false)}
+                  variant="inline"
+                />
+              )}
+
+              {/* Saved Views Panel */}
+              {showSavedViewsPanel && (
+                <SavedViewsPanel
+                  open={showSavedViewsPanel}
+                  onClose={() => setShowSavedViewsPanel(false)}
+                  schema={schema}
+                  table={table}
+                  currentFilters={filters}
+                  currentFilterLogic={filterLogic}
+                  currentSortColumn={sortColumn}
+                  currentSortDirection={sortDirection}
+                  onLoadView={(view) => {
+                    setFilters(view.state.filters);
+                    setFilterLogic(view.state.filterLogic);
+                    if (view.state.sorting.length > 0) {
+                      setSortColumn(view.state.sorting[0].columnName);
+                      setSortDirection(view.state.sorting[0].direction.toUpperCase() as "ASC" | "DESC");
+                    }
+                    setOffset(0);
+                    toast.success(`Loaded view "${view.name}"`);
+                  }}
+                  variant="inline"
+                />
+              )}
+            </Panel>
+          )}
+
+          {/* Quick Access Bar - shown when no panel is open */}
+          {!activePanel && (
+            <QuickAccessBar
+              onOpenPanel={handleOpenPanel}
+              activePanel={activePanel}
+              hasUnsavedChanges={pendingEdits.size > 0}
+              hasSelectedCell={!!editingCell}
+            />
+          )}
+        </PanelGroup>
+      </div>
+
+      {/* Modal Dialogs (remain as overlays - not side panels) */}
       <ExportDataDialog
         open={showExportDialog}
         onClose={() => setShowExportDialog(false)}
@@ -2362,14 +2192,12 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
         onExport={handleExport}
       />
 
-      {/* Import Data Dialog */}
       <ImportDataDialog
         open={showImportDialog}
         onClose={() => setShowImportDialog(false)}
         onImport={handleImport}
       />
 
-      {/* Jump to Row Dialog */}
       <JumpToRowDialog
         open={showJumpToRowDialog}
         onClose={() => setShowJumpToRowDialog(false)}
@@ -2380,80 +2208,12 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
         onChangePage={handleChangePage}
       />
 
-      {/* Saved Views Panel */}
-      <SavedViewsPanel
-        open={showSavedViewsPanel}
-        onClose={() => setShowSavedViewsPanel(false)}
-        schema={schema}
-        table={table}
-        currentFilters={filters}
-        currentFilterLogic={filterLogic}
-        currentSortColumn={sortColumn}
-        currentSortDirection={sortDirection}
-        onLoadView={(view) => {
-          setFilters(view.state.filters);
-          setFilterLogic(view.state.filterLogic);
-          if (view.state.sorting.length > 0) {
-            setSortColumn(view.state.sorting[0].columnName);
-            setSortDirection(view.state.sorting[0].direction.toUpperCase() as "ASC" | "DESC");
-          }
-          setOffset(0);
-          toast.success(`Loaded view "${view.name}"`);
-        }}
-      />
-
-      {/* DateTime Popover - anchored to cell */}
-      {dateTimeEditor && (
-        <DateTimePopover
-          open={dateTimeEditor.open}
-          onClose={() => setDateTimeEditor(null)}
-          value={dateTimeEditor.value}
-          onChange={handleDateTimeEditorSave}
-          columnName={dateTimeEditor.column}
-          columnType={dateTimeEditor.columnType}
-          anchorRect={dateTimeEditor.anchorRect}
-        />
-      )}
-
-      {/* JSON Editor Modal */}
-      {jsonEditor && (
-        <JSONEditor
-          open={jsonEditor.open}
-          onClose={() => setJsonEditor(null)}
-          value={jsonEditor.value}
-          onChange={handleJsonEditorSave}
-          columnName={jsonEditor.column}
-          columnType={jsonEditor.columnType}
-        />
-      )}
-
-      {/* MongoDB Document Editor Modal (for insert/clone) */}
-      {documentEditor && (
-        <JSONEditor
-          open={documentEditor.open}
-          onClose={() => setDocumentEditor(null)}
-          value={documentEditor.value}
-          onChange={handleDocumentEditorSave}
-          columnName={documentEditor.isClone ? "Clone Document" : "New Document"}
-          columnType="MongoDB Document"
-        />
-      )}
-
-      {/* Cassandra Collection/UDT Editor - uses JSONEditor since collections are JSON */}
-      {cassandraEditor && (
-        <JSONEditor
-          open={cassandraEditor.open}
-          onClose={() => setCassandraEditor(null)}
-          value={cassandraEditor.value}
-          onChange={handleCassandraEditorSave}
-          columnName={cassandraEditor.column}
-          columnType={cassandraEditor.columnType}
-        />
-      )}
+      {/* NOTE: All panels are now rendered inline within the PanelGroup above. */}
     </div>
   );
 }
 
+// Legacy: Keeping function signatures for backward compatibility
 function formatCellValue(value: unknown): string {
   if (value === null) {
     return "NULL";

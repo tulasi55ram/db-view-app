@@ -31,6 +31,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     `img-src ${webview.cspSource} https: data:`,
     `font-src ${webview.cspSource}`,
     `script-src 'nonce-${nonce}'`,
+    `connect-src ${webview.cspSource}`, // Allow loading source maps for debugging
     `worker-src blob:`,
     `child-src blob:`
   ].join("; ");

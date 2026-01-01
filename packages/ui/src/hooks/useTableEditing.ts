@@ -64,10 +64,12 @@ export function useTableEditing(
     });
   }, []);
 
-  const discardAllEdits = useCallback(() => {
+  const discardAllEdits = useCallback((silent = false) => {
     setPendingEdits(new Map());
     setErrors(new Map());
-    toast.info('All changes discarded');
+    if (!silent) {
+      toast.info('All changes discarded');
+    }
   }, []);
 
   const toggleRowSelection = useCallback((rowIndex: number) => {

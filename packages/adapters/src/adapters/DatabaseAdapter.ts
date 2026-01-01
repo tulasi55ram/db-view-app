@@ -234,6 +234,7 @@ export interface FetchOptions {
   orderBy?: string[]; // Column names to order by (defaults to primary key if not provided)
   sortColumn?: string; // Single column to sort by (takes precedence over orderBy)
   sortDirection?: 'ASC' | 'DESC'; // Sort direction (defaults to ASC)
+  sorting?: Array<{ columnName: string; direction: 'asc' | 'desc' }>; // Multi-column sorting (takes precedence over sortColumn/sortDirection)
   // Cursor-based pagination (more efficient for large datasets)
   cursor?: CursorPosition; // Start from this cursor position
   useCursor?: boolean; // Enable cursor-based pagination instead of offset

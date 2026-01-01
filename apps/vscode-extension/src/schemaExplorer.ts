@@ -62,6 +62,8 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
   private clientStatuses: Map<string, ConnectionStatus> = new Map();
   // Track connections that have already shown error notifications (to avoid continuous popups)
   private errorNotificationShown: Set<string> = new Set();
+  // Suppress error notifications during initial activation
+  private suppressErrorNotifications: boolean = true;
 
   constructor(
     private client: DatabaseAdapter | undefined,
@@ -369,9 +371,12 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       const errorKey = `${connKey}:statusError`;
 
       // Show notification for connection errors (only once until recovered)
+      // Skip showing errors during initial activation to avoid popups for stale connections
       if (event.status === 'error' && event.error && !this.errorNotificationShown.has(errorKey)) {
         this.errorNotificationShown.add(errorKey);
-        this.showConnectionErrorNotification(event.error.message);
+        if (!this.suppressErrorNotifications) {
+          this.showConnectionErrorNotification(event.error.message);
+        }
       } else if (event.status === 'connected') {
         // Connection restored - clear error tracking
         this.errorNotificationShown.delete(errorKey);
@@ -396,6 +401,14 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
         vscode.commands.executeCommand('dbview.reconnectConnection');
       }
     });
+  }
+
+  /**
+   * Enable error notifications after initial activation
+   * Should be called after the extension finishes its initial setup
+   */
+  enableErrorNotifications(): void {
+    this.suppressErrorNotifications = false;
   }
 
   updateClient(client: DatabaseAdapter | undefined, connection: ConnectionConfig | DatabaseConnectionConfig | null = null): void {
