@@ -615,8 +615,8 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-bg-primary">
-      {/* Toolbar */}
-      <div className="h-10 px-4 flex items-center justify-between border-b border-border bg-bg-secondary">
+      {/* Toolbar - z-10 ensures it stays above content */}
+      <div className="h-10 px-4 flex items-center justify-between border-b border-border bg-bg-secondary relative z-10">
         <div className="flex items-center gap-2">
           <div className={`flex items-center gap-1.5 ${config.color}`}>
             <span>{config.icon}</span>
@@ -720,7 +720,7 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
                 <div className={`absolute inset-0 pointer-events-none border-2 ${config.borderColor}/50 rounded`} />
               )}
               {tab.loading && (
-                <div className="absolute inset-0 bg-bg-primary/50 backdrop-blur-[1px] flex items-center justify-center">
+                <div className="absolute inset-0 bg-bg-primary/50 backdrop-blur-[1px] flex items-center justify-center pointer-events-none">
                   <div className="flex items-center gap-2 text-sm text-text-secondary">
                     <div className={`h-4 w-4 animate-spin rounded-full border-2 ${config.borderColor} border-t-transparent`} />
                     <span>Executing query...</span>

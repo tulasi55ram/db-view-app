@@ -544,8 +544,8 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-bg-primary">
-      {/* Toolbar - Compact, always visible */}
-      <div className="h-10 px-4 flex items-center justify-between border-b border-border bg-bg-secondary">
+      {/* Toolbar - Compact, always visible, z-10 ensures it stays above content */}
+      <div className="h-10 px-4 flex items-center justify-between border-b border-border bg-bg-secondary relative z-10">
         <div className="flex items-center gap-2">
           {tab.loading ? (
             <button

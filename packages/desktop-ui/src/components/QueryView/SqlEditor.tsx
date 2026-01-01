@@ -453,9 +453,9 @@ export const SqlEditor: FC<SqlEditorProps> = ({
       {/* Error indicator border */}
       {error && <div className="absolute inset-0 pointer-events-none border-2 border-error/50 rounded" />}
 
-      {/* Loading overlay */}
+      {/* Loading overlay - pointer-events-none to prevent blocking other UI elements */}
       {loading && (
-        <div className="absolute inset-0 bg-bg-primary/50 backdrop-blur-[1px] flex items-center justify-center rounded">
+        <div className="absolute inset-0 bg-bg-primary/50 backdrop-blur-[1px] flex items-center justify-center rounded pointer-events-none">
           <div className="flex items-center gap-2 text-sm text-text-secondary">
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
             <span>Executing query...</span>

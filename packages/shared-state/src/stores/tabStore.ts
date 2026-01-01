@@ -298,6 +298,17 @@ export const useTabStore = create<TabState & TabActions>()(
           tabs: state.tabs,
           activeTabId: state.activeTabId,
         }),
+        // Reset loading states when rehydrating from storage
+        // This prevents tabs from being stuck in loading state after app restart
+        onRehydrateStorage: () => (state) => {
+          if (state?.tabs) {
+            state.tabs = state.tabs.map((tab) => ({
+              ...tab,
+              loading: false, // Reset loading state on app restart
+              error: undefined, // Clear any previous errors
+            }));
+          }
+        },
       }
     ),
     { name: 'TabStore' }
