@@ -98,10 +98,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // Force refresh after ping to update status indicator
       console.log("[dbview] Refreshing tree after initial ping, status:", client?.status);
       schemaExplorer.refresh();
+      // Enable error notifications after initial setup
+      schemaExplorer.enableErrorNotifications();
     }).catch((err: Error) => {
       console.error("[dbview] Initial ping failed:", err);
       schemaExplorer.refresh();
+      // Enable error notifications even if ping fails
+      schemaExplorer.enableErrorNotifications();
     });
+  } else {
+    // No initial connection, enable error notifications immediately
+    schemaExplorer.enableErrorNotifications();
   }
 
   // Helper to safely switch to a new client

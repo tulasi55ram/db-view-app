@@ -450,7 +450,10 @@ export interface BaseTab {
   type: TabType;
   title: string;
   createdAt: number;
-  connectionName?: string; // Which connection this tab belongs to
+  connectionName?: string; // Display name for the connection
+  connectionKey?: string; // Unique identifier for the connection
+  connectionColor?: string; // Custom color for the connection (Desktop only)
+  isDirty?: boolean; // Whether the tab has unsaved changes
 }
 
 export interface TableTab extends BaseTab {
@@ -468,6 +471,8 @@ export interface TableTab extends BaseTab {
   dbType?: DatabaseType;
   /** Whether the connection is read-only */
   readOnly?: boolean;
+  /** Sorting state for server-side sorting */
+  sorting?: Array<{ columnName: string; direction: 'asc' | 'desc' }>;
   /** MongoDB-specific: view mode */
   mongoViewMode?: 'table' | 'json';
   /** MongoDB-specific: expanded document IDs */
@@ -588,6 +593,15 @@ export interface QueryHistoryEntry {
 export interface QueryHistoryState {
   entries: QueryHistoryEntry[];
   maxEntries: number; // Limit stored history (e.g., 100)
+}
+
+export interface SavedQuery {
+  id: string;
+  name: string;
+  sql: string;
+  description?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // ============================================

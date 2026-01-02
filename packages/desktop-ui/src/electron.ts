@@ -73,6 +73,7 @@ export interface ElectronAPI {
   runQuery(params: RunQueryParams): Promise<QueryResult>;
   formatSql(sql: string): Promise<string>;
   explainQuery(params: ExplainQueryParams): Promise<ExplainPlan>;
+  cancelQuery(connectionKey: string): Promise<void>;
 
   // Saved views
   getViews(params: GetViewsParams): Promise<SavedView[]>;

@@ -25,12 +25,12 @@ function filterToMongoCondition(filter: FilterCondition): Record<string, unknown
       return { [columnName]: { $ne: value } };
 
     case 'contains':
-      // Case-insensitive regex for contains
-      return { [columnName]: { $regex: String(value), $options: 'i' } };
+      // Case-insensitive regex for contains (escaped to prevent regex injection)
+      return { [columnName]: { $regex: escapeRegex(String(value)), $options: 'i' } };
 
     case 'not_contains':
-      // Negated regex
-      return { [columnName]: { $not: { $regex: String(value), $options: 'i' } } };
+      // Negated regex (escaped to prevent regex injection)
+      return { [columnName]: { $not: { $regex: escapeRegex(String(value)), $options: 'i' } } };
 
     case 'starts_with':
       return { [columnName]: { $regex: `^${escapeRegex(String(value))}`, $options: 'i' } };
@@ -57,15 +57,16 @@ function filterToMongoCondition(filter: FilterCondition): Record<string, unknown
       return { [columnName]: { $ne: null } };
 
     case 'between':
-      if (value2 !== undefined) {
-        return { [columnName]: { $gte: value, $lte: value2 } };
+      if (value2 === undefined || value2 === null) {
+        throw new Error(
+          `BETWEEN operator on column "${columnName}" requires both value and value2. ` +
+          'Provide value2 or use a different operator.'
+        );
       }
-      return null;
+      return { [columnName]: { $gte: value, $lte: value2 } };
 
     case 'in': {
-      const values = Array.isArray(value)
-        ? value
-        : String(value).split(',').map(v => v.trim()).filter(v => v !== '');
+      const values = parseInValues(value);
       return { [columnName]: { $in: values } };
     }
 
@@ -79,6 +80,26 @@ function filterToMongoCondition(filter: FilterCondition): Record<string, unknown
  */
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Parses IN operator values, preserving original types.
+ * Arrays keep their element types (only trim strings).
+ * String input is split by comma and kept as strings to preserve leading zeros
+ * and ensure consistent string matching behavior.
+ */
+function parseInValues(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    // Preserve types exactly, only trim strings, filter empty/null values
+    return value
+      .map(v => typeof v === 'string' ? v.trim() : v)
+      .filter(v => v !== '' && v !== null && v !== undefined);
+  }
+  // String input: split and keep as strings (preserves leading zeros, etc.)
+  return String(value ?? '')
+    .split(',')
+    .map(v => v.trim())
+    .filter(v => v !== '');
 }
 
 /**

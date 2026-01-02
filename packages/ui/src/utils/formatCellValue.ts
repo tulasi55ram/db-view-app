@@ -22,8 +22,8 @@ export function formatCellValue(value: unknown): FormattedValue {
   }
 
   if (typeof value === "number") {
-    const formatted = Number.isInteger(value) ? String(value) : value.toFixed(2);
-    return { display: formatted, className: "cell-number", title: String(value) };
+    // Display full precision - no rounding or truncation
+    return { display: String(value), className: "cell-number", title: String(value) };
   }
 
   if (value instanceof Date) {
@@ -32,27 +32,30 @@ export function formatCellValue(value: unknown): FormattedValue {
   }
 
   if (Array.isArray(value)) {
+    // Display actual array content as JSON (no data hiding)
     const json = JSON.stringify(value);
     return {
-      display: `[${value.length}]`,
+      display: json,
       className: "cell-json",
       title: json
     };
   }
 
   if (typeof value === "object") {
-    const json = JSON.stringify(value, null, 2);
+    // Display actual object content as JSON (no data hiding)
+    // Use compact format for display (no pretty-printing with indents)
+    const json = JSON.stringify(value);
     return {
-      display: "{...}",
+      display: json,
       className: "cell-json",
       title: json
     };
   }
 
+  // Display full string value - no truncation
   const str = String(value);
-  const isLong = str.length > 100;
   return {
-    display: isLong ? str.slice(0, 100) + "…" : str,
+    display: str,
     className: "text-vscode-text",
     title: str
   };

@@ -36,10 +36,23 @@ function loadPreferences(): ViewModePreferences {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      return JSON.parse(stored) as ViewModePreferences;
+      const parsed = JSON.parse(stored);
+      // Validate the structure
+      if (typeof parsed === 'object' && parsed !== null) {
+        return parsed as ViewModePreferences;
+      }
+      // Invalid structure - clear corrupted data
+      console.warn('Invalid view mode preferences structure, resetting to defaults');
+      localStorage.removeItem(STORAGE_KEY);
     }
-  } catch {
-    // Ignore parse errors
+  } catch (error) {
+    // Clear corrupted data on parse error
+    console.warn('Failed to parse view mode preferences, resetting to defaults:', error);
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // Ignore removal errors
+    }
   }
   return { default: DEFAULT_VIEW_MODE };
 }

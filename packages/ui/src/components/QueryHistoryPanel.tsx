@@ -152,7 +152,7 @@ export const QueryHistoryPanel: FC<QueryHistoryPanelProps> = ({
                         </DropdownMenu.Item>
                         <DropdownMenu.Separator className="h-px bg-vscode-border" />
                         <DropdownMenu.Item
-                          className="flex items-center gap-2 px-3 py-2 text-xs text-red-500 hover:bg-red-500/10 cursor-pointer outline-none"
+                          className="flex items-center gap-2 px-3 py-2 text-xs text-vscode-error hover:bg-vscode-error/10 cursor-pointer outline-none"
                           onClick={() => setDeleteDialogOpen(true)}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -178,6 +178,8 @@ export const QueryHistoryPanel: FC<QueryHistoryPanelProps> = ({
                   <button
                     onClick={() => onSearchChange('')}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-vscode-text-muted hover:text-vscode-text"
+                    title="Clear search"
+                    aria-label="Clear search"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -256,7 +258,7 @@ export const QueryHistoryPanel: FC<QueryHistoryPanelProps> = ({
                           </button>
                           <button
                             onClick={() => onDeleteEntry(entry.id)}
-                            className="rounded p-1 text-vscode-text-muted hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                            className="rounded p-1 text-vscode-text-muted hover:bg-vscode-error/10 hover:text-vscode-error transition-colors"
                             title="Delete"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -335,7 +337,7 @@ export const QueryHistoryPanel: FC<QueryHistoryPanelProps> = ({
                     setDeleteDialogOpen(false);
                     setOpen(false);
                   }}
-                  className="px-4 py-2 text-sm font-medium bg-red-500 text-white hover:bg-red-600 rounded transition-colors"
+                  className="px-4 py-2 text-sm font-medium bg-vscode-error text-white hover:bg-vscode-error/90 rounded transition-colors"
                 >
                   Clear All
                 </button>

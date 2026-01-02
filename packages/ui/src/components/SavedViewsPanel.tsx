@@ -213,6 +213,8 @@ const ViewItem: FC<ViewItemProps> = ({ view, isActive, onApply, onExport, onDele
           <button
             className="shrink-0 rounded p-1 opacity-0 group-hover:opacity-100 hover:bg-vscode-bg text-vscode-text-muted transition-all"
             onClick={(e) => e.stopPropagation()}
+            title="View actions"
+            aria-label="View actions"
           >
             <MoreVertical className="h-4 w-4" />
           </button>
@@ -251,7 +253,7 @@ const ViewItem: FC<ViewItemProps> = ({ view, isActive, onApply, onExport, onDele
             <DropdownMenu.Separator className="h-px bg-vscode-border" />
 
             <DropdownMenu.Item
-              className="flex items-center gap-2 px-3 py-2 text-sm text-red-500 hover:bg-red-500/10 cursor-pointer outline-none"
+              className="flex items-center gap-2 px-3 py-2 text-sm text-vscode-error hover:bg-vscode-error/10 cursor-pointer outline-none"
               onClick={(e) => {
                 e.stopPropagation();
                 setDeleteDialogOpen(true);
@@ -286,7 +288,7 @@ const ViewItem: FC<ViewItemProps> = ({ view, isActive, onApply, onExport, onDele
             <AlertDialog.Action asChild>
               <button
                 onClick={onDelete}
-                className="px-4 py-2 text-sm rounded bg-red-500 text-white hover:bg-red-600 transition-colors"
+                className="px-4 py-2 text-sm rounded bg-vscode-error text-white hover:bg-vscode-error/90 transition-colors"
               >
                 Delete
               </button>

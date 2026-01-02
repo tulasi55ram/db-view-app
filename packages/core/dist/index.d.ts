@@ -1153,6 +1153,14 @@ interface CassandraFilterResult {
     whereClause: string;
     /** Parameter values */
     params: unknown[];
+    /** Filters that were skipped due to CQL limitations (require client-side filtering) */
+    skippedFilters?: Array<{
+        columnName: string;
+        operator: string;
+        reason: string;
+    }>;
+    /** Error message if the query cannot be built (e.g., OR logic with multiple filters) */
+    error?: string;
 }
 /**
  * Placeholder style for SQL databases
@@ -1591,7 +1599,7 @@ interface JsonExportOptions {
  */
 interface SqlExportOptions {
     /** Database type for syntax variations */
-    dbType?: 'postgres' | 'mysql' | 'sqlite' | 'sqlserver';
+    dbType?: 'postgres' | 'mysql' | 'mariadb' | 'sqlite' | 'sqlserver';
     /** Schema name (optional, some DBs don't use schemas) */
     schema?: string;
     /** Table name (required) */

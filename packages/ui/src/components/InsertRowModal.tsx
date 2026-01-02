@@ -333,7 +333,10 @@ export const InsertRowModal: FC<InsertRowModalProps> = ({
             <Dialog.Title className="text-lg font-semibold text-vscode-text-bright">
               Insert New Row
             </Dialog.Title>
-            <Dialog.Close className="rounded-sm opacity-70 ring-offset-vscode-bg transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-vscode-accent focus:ring-offset-2 disabled:pointer-events-none">
+            <Dialog.Close
+              className="rounded-sm opacity-70 ring-offset-vscode-bg transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-vscode-accent focus:ring-offset-2 disabled:pointer-events-none"
+              title="Close dialog"
+            >
               <X className="h-4 w-4" />
               <span className="sr-only">Close</span>
             </Dialog.Close>

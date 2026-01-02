@@ -58,6 +58,9 @@ export class RedisAdapter extends EventEmitter implements DatabaseAdapter {
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private readonly connectionConfig: RedisConnectionConfig;
 
+  // Track running queries for cancellation (Redis commands are typically very fast)
+  private runningQueries = new Set<string>(); // queryId
+
   readonly capabilities: DatabaseCapabilities = {
     // Hierarchy
     supportsSchemas: false,
@@ -801,8 +804,13 @@ export class RedisAdapter extends EventEmitter implements DatabaseAdapter {
   // Query Methods
   // ============================================
 
-  async runQuery(command: string): Promise<QueryResultSet> {
+  async runQuery(command: string, queryId?: string): Promise<QueryResultSet> {
     if (!this.client) throw new Error("Not connected");
+
+    // Track query if queryId provided (though Redis commands are typically very fast)
+    if (queryId) {
+      this.runningQueries.add(queryId);
+    }
 
     try {
       // Parse the Redis command - handle quoted strings properly
@@ -863,7 +871,31 @@ export class RedisAdapter extends EventEmitter implements DatabaseAdapter {
       }
 
       throw new Error(`Redis command failed: ${errorMsg}`);
+    } finally {
+      // Clean up tracking
+      if (queryId) {
+        this.runningQueries.delete(queryId);
+      }
     }
+  }
+
+  async cancelQuery(queryId: string): Promise<void> {
+    // Redis commands are typically very fast (microseconds to milliseconds)
+    // and the ioredis library doesn't provide a way to cancel in-flight commands
+    // We can only clean up tracking on the client side
+
+    if (!this.runningQueries.has(queryId)) {
+      // Query already completed or not found
+      return;
+    }
+
+    // Clean up tracking
+    this.runningQueries.delete(queryId);
+
+    console.log(`[RedisAdapter] Query tracking cleared for ${queryId}. Note: Redis commands are typically very fast and cannot be cancelled mid-execution.`);
+
+    // Inform the user that Redis doesn't support cancellation
+    throw new Error('Redis does not support query cancellation. Most Redis commands complete in microseconds and cannot be interrupted.');
   }
 
   /**

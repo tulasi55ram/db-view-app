@@ -197,7 +197,12 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-vscode-widget-border">
           <h2 className="text-lg font-medium">Add Connection</h2>
-          <button onClick={onClose} className="p-1 rounded hover:bg-vscode-toolbar-hoverBackground">
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-vscode-toolbar-hoverBackground"
+            title="Close dialog"
+            aria-label="Close dialog"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -215,7 +220,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
                   className={clsx(
                     "px-3 py-2 rounded border text-sm flex items-center gap-2 transition-colors",
                     dbType === db.value
-                      ? "border-blue-500 bg-blue-500/10 text-blue-400"
+                      ? "border-vscode-accent bg-vscode-accent/10 text-vscode-accent"
                       : "border-vscode-widget-border hover:border-gray-500"
                   )}
                 >
@@ -234,7 +239,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="My Database"
-              className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-blue-500 focus:outline-none"
+              className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-vscode-accent focus:outline-none"
             />
           </div>
 
@@ -248,7 +253,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
                   value={host}
                   onChange={(e) => setHost(e.target.value)}
                   placeholder="localhost"
-                  className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-blue-500 focus:outline-none"
+                  className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-vscode-accent focus:outline-none"
                 />
               </div>
               <div>
@@ -258,7 +263,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
                   value={port}
                   onChange={(e) => setPort(e.target.value)}
                   placeholder={getDefaultPort(dbType)}
-                  className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-blue-500 focus:outline-none"
+                  className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-vscode-accent focus:outline-none"
                 />
               </div>
             </div>
@@ -273,7 +278,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
                 value={database}
                 onChange={(e) => setDatabase(e.target.value)}
                 placeholder="my_database"
-                className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-blue-500 focus:outline-none"
+                className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-vscode-accent focus:outline-none"
               />
             </div>
           )}
@@ -289,7 +294,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
                 value={database}
                 onChange={(e) => setDatabase(e.target.value)}
                 placeholder="0"
-                className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-blue-500 focus:outline-none"
+                className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-vscode-accent focus:outline-none"
               />
             </div>
           )}
@@ -304,7 +309,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
                   value={user}
                   onChange={(e) => setUser(e.target.value)}
                   placeholder="postgres"
-                  className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-blue-500 focus:outline-none"
+                  className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-vscode-accent focus:outline-none"
                 />
               </div>
               <div>
@@ -314,7 +319,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-blue-500 focus:outline-none"
+                  className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-vscode-accent focus:outline-none"
                 />
               </div>
             </div>
@@ -329,7 +334,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-blue-500 focus:outline-none"
+                className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-vscode-accent focus:outline-none"
               />
             </div>
           )}
@@ -344,7 +349,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
                   value={filePath}
                   onChange={(e) => setFilePath(e.target.value)}
                   placeholder="/path/to/database.db"
-                  className="flex-1 px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-blue-500 focus:outline-none"
+                  className="flex-1 px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-vscode-accent focus:outline-none"
                 />
                 <button
                   onClick={handleBrowseSqlite}
@@ -365,7 +370,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
                 value={connectionString}
                 onChange={(e) => setConnectionString(e.target.value)}
                 placeholder="mongodb://localhost:27017/mydb"
-                className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-blue-500 focus:outline-none"
+                className="w-full px-3 py-2 rounded border border-vscode-input-border bg-vscode-input-background text-vscode-input-foreground focus:border-vscode-accent focus:outline-none"
               />
             </div>
           )}
@@ -396,7 +401,7 @@ export function AddConnectionDialog({ isOpen, onClose, onSave }: AddConnectionDi
           <button
             onClick={handleSave}
             disabled={isSaving}
-            className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 flex items-center gap-2"
+            className="px-4 py-2 rounded bg-vscode-accent hover:bg-vscode-accent/90 text-white disabled:opacity-50 flex items-center gap-2"
           >
             {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
             Save

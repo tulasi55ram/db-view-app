@@ -15,6 +15,8 @@ import {
   XCircle
 } from "lucide-react";
 import clsx from "clsx";
+import { MetadataSkeleton } from "./Skeleton";
+import { SidePanel } from "./panels/SidePanel";
 
 export interface TableMetadataPanelProps {
   schema: string;
@@ -25,6 +27,7 @@ export interface TableMetadataPanelProps {
   isOpen: boolean;
   onClose: () => void;
   loading?: boolean;
+  variant?: "inline" | "overlay";
 }
 
 export const TableMetadataPanel: FC<TableMetadataPanelProps> = ({
@@ -35,7 +38,8 @@ export const TableMetadataPanel: FC<TableMetadataPanelProps> = ({
   statistics,
   isOpen,
   onClose,
-  loading = false
+  loading = false,
+  variant = "inline",
 }) => {
   console.log('[TableMetadataPanel] ========== RENDER ==========');
   console.log('[TableMetadataPanel] isOpen:', isOpen);
@@ -58,56 +62,15 @@ export const TableMetadataPanel: FC<TableMetadataPanelProps> = ({
   console.log('[TableMetadataPanel] primaryKeyColumns:', primaryKeyColumns.length);
   console.log('[TableMetadataPanel] foreignKeyColumns:', foreignKeyColumns.length);
 
-  return (
+  if (!isOpen) return null;
+
+  // Content component (shared between modes)
+  const content = (
     <>
-      {/* Backdrop */}
-      {isOpen && (
-        <div
-          className="fixed inset-0 bg-black/30 z-40"
-          onClick={onClose}
-        />
-      )}
-
-      {/* Slide-out Panel */}
-      <div
-        className={clsx(
-          "fixed top-0 right-0 h-full w-[480px] bg-vscode-bg-light border-l border-vscode-border z-50 shadow-2xl transition-transform duration-300 ease-in-out",
-          isOpen ? "translate-x-0" : "translate-x-full"
-        )}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-vscode-border px-4 py-3 bg-vscode-bg">
-          <div className="flex items-center gap-2 min-w-0">
-            <Database className="h-4 w-4 text-vscode-accent flex-shrink-0" />
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-vscode-text truncate">
-                {table}
-              </h2>
-              <p className="text-xs text-vscode-text-muted truncate">
-                {schema}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-vscode-bg-hover text-vscode-text-muted hover:text-vscode-text transition-colors"
-            title="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="h-[calc(100%-57px)] overflow-y-auto">
-          {loading ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-vscode-accent border-r-transparent mb-3" />
-                <p className="text-sm text-vscode-text-muted">Loading metadata...</p>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-6 p-4">
+      {loading ? (
+        <MetadataSkeleton />
+      ) : (
+        <div className="space-y-6 p-4">
               {/* Statistics */}
               {statistics && (
                 <section>
@@ -315,6 +278,58 @@ export const TableMetadataPanel: FC<TableMetadataPanelProps> = ({
               </section>
             </div>
           )}
+    </>
+  );
+
+  // Inline mode - use SidePanel wrapper
+  if (variant === "inline") {
+    return (
+      <SidePanel
+        title={`Table Metadata: ${schema}.${table}`}
+        icon={<Database className="h-4 w-4" />}
+        onClose={onClose}
+      >
+        {content}
+      </SidePanel>
+    );
+  }
+
+  // Overlay mode - original fixed positioning with backdrop
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/20 z-40"
+        onClick={onClose}
+      />
+
+      {/* Side panel */}
+      <div className="absolute top-0 right-0 bottom-0 w-[480px] bg-vscode-bg border-l border-vscode-border shadow-2xl z-50 flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-vscode-border px-4 py-3 bg-vscode-bg">
+          <div className="flex items-center gap-2 min-w-0">
+            <Database className="h-4 w-4 text-vscode-accent flex-shrink-0" />
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-vscode-text truncate">
+                {table}
+              </h2>
+              <p className="text-xs text-vscode-text-muted truncate">
+                {schema}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-vscode-bg-hover text-vscode-text-muted hover:text-vscode-text transition-colors"
+            title="Close (Esc)"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto">
+          {content}
         </div>
       </div>
     </>

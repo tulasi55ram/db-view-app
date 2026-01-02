@@ -24,6 +24,14 @@ const panelClients: Map<string, DatabaseAdapter> = new Map();
 const panelReadyState: Map<string, boolean> = new Map();
 const panelMessageQueues: Map<string, any[]> = new Map();
 
+// Query tracking for cancellation
+interface RunningQuery {
+  queryId: string;
+  startTime: number;
+  sql: string;
+}
+const runningQueries = new Map<string, RunningQuery>();
+
 // Helper to get connection key - MUST match schemaExplorer.ts implementation exactly
 function getConnectionKey(config: DatabaseConnectionConfig): string {
   const dbType = config.dbType || 'postgres';
@@ -290,11 +298,12 @@ export async function getOrCreateMainPanel(
           const offset = typeof message.offset === "number" ? message.offset : 0;
           const filters = message.filters as FilterCondition[] | undefined;
           const filterLogic = (message.filterLogic as 'AND' | 'OR') ?? 'AND';
+          const sorting = message.sorting as Array<{ columnName: string; direction: 'asc' | 'desc' }> | undefined;
 
-          console.log(`[dbview] Loading table rows for tab ${tabId}: ${schema}.${table} (limit: ${limit}, offset: ${offset}, filters: ${filters?.length ?? 0})`);
+          console.log(`[dbview] Loading table rows for tab ${tabId}: ${schema}.${table} (limit: ${limit}, offset: ${offset}, filters: ${filters?.length ?? 0}, sorting: ${sorting?.length ?? 0})`);
 
           try {
-            const result = await currentClient.fetchTableRows(schema, table, { limit, offset, filters, filterLogic });
+            const result = await currentClient.fetchTableRows(schema, table, { limit, offset, filters, filterLogic, sorting });
             panel.webview.postMessage({
               type: "LOAD_TABLE_ROWS",
               tabId,
@@ -508,6 +517,236 @@ export async function getOrCreateMainPanel(
             });
             console.log(`[dbview] INSERT_ERROR message sent to webview`);
           }
+          break;
+        }
+
+        case "CONFIRM_DELETE": {
+          // Show VS Code native confirmation dialog for delete operations
+          const rowCount = message.rowCount || 1;
+          const rowWord = rowCount === 1 ? 'row' : 'rows';
+          const confirmMessage = `Are you sure you want to delete ${rowCount} ${rowWord}? This action cannot be undone.`;
+
+          const result = await vscode.window.showWarningMessage(
+            confirmMessage,
+            { modal: true },
+            'Delete'
+          );
+
+          panel.webview.postMessage({
+            type: "CONFIRM_DELETE_RESULT",
+            tabId,
+            confirmed: result === 'Delete'
+          });
+          break;
+        }
+
+        case "SHOW_JUMP_TO_ROW": {
+          // Show VS Code native InputBox for Jump to Row
+          const { totalRows: jumpTotalRows, pageSize: jumpPageSize, offset: jumpOffset } = message;
+          const pageStartRow = jumpOffset + 1;
+          const pageEndRow = Math.min(jumpOffset + jumpPageSize, jumpTotalRows ?? jumpOffset + jumpPageSize);
+
+          const rowNumberStr = await vscode.window.showInputBox({
+            title: 'Jump to Row',
+            prompt: `Enter row number (current view: ${pageStartRow.toLocaleString()}-${pageEndRow.toLocaleString()}${jumpTotalRows !== null ? ` of ${jumpTotalRows.toLocaleString()}` : ''})`,
+            placeHolder: `1-${jumpTotalRows?.toLocaleString() ?? '...'}`,
+            validateInput: (value) => {
+              const num = parseInt(value, 10);
+              if (isNaN(num) || num < 1) {
+                return 'Please enter a valid row number';
+              }
+              if (jumpTotalRows !== null && num > jumpTotalRows) {
+                return `Row number must be between 1 and ${jumpTotalRows.toLocaleString()}`;
+              }
+              // Check if row is on current page
+              if (num < pageStartRow || num > pageEndRow) {
+                return `Row ${num} is on page ${Math.ceil(num / jumpPageSize)}. Navigate to that page first.`;
+              }
+              return null;
+            }
+          });
+
+          if (rowNumberStr !== undefined) {
+            const rowNumber = parseInt(rowNumberStr, 10);
+            const localRowIndex = rowNumber - pageStartRow;
+            panel.webview.postMessage({
+              type: "JUMP_TO_ROW_RESULT",
+              tabId,
+              rowIndex: localRowIndex,
+              rowNumber
+            });
+          }
+          break;
+        }
+
+        case "SHOW_SAVE_VIEW": {
+          // Show VS Code native InputBox for Save View - multi-step flow
+          const { currentState: viewState } = message;
+
+          // Build summary of what will be saved
+          const hasFilters = viewState?.filters?.length > 0;
+          const hasSorting = viewState?.sorting?.length > 0;
+          const hasVisibleColumns = viewState?.visibleColumns?.length > 0;
+
+          const summaryParts: string[] = [];
+          if (hasFilters) summaryParts.push(`${viewState.filters.length} filter(s)`);
+          if (hasSorting) summaryParts.push(`${viewState.sorting.length} sort(s)`);
+          if (hasVisibleColumns) summaryParts.push(`${viewState.visibleColumns.length} column(s)`);
+          if (viewState?.pageSize) summaryParts.push(`${viewState.pageSize} rows/page`);
+
+          const summaryText = summaryParts.length > 0
+            ? `Saving: ${summaryParts.join(', ')}`
+            : 'Saving current view configuration';
+
+          // Step 1: Get view name
+          const viewName = await vscode.window.showInputBox({
+            title: 'Save View - Name',
+            prompt: summaryText,
+            placeHolder: 'e.g., Active Users, Recent Orders',
+            validateInput: (value) => {
+              if (!value || !value.trim()) {
+                return 'View name is required';
+              }
+              return null;
+            }
+          });
+
+          if (viewName === undefined) {
+            break; // User cancelled
+          }
+
+          // Step 2: Get optional description
+          const viewDescription = await vscode.window.showInputBox({
+            title: 'Save View - Description (Optional)',
+            prompt: `Saving view "${viewName}"`,
+            placeHolder: 'Brief description of this view (press Enter to skip)'
+          });
+
+          if (viewDescription === undefined) {
+            break; // User cancelled
+          }
+
+          // Step 3: Ask if this should be the default view
+          const defaultChoice = await vscode.window.showQuickPick(
+            [
+              { label: 'No', description: 'Use default table view when opening', value: false },
+              { label: 'Yes', description: 'Automatically apply this view when opening the table', value: true }
+            ],
+            {
+              title: 'Save View - Set as Default?',
+              placeHolder: 'Set as default view for this table?'
+            }
+          );
+
+          if (defaultChoice === undefined) {
+            break; // User cancelled
+          }
+
+          // Send the result back to the webview
+          panel.webview.postMessage({
+            type: "SAVE_VIEW_RESULT",
+            tabId,
+            name: viewName.trim(),
+            description: viewDescription?.trim() || '',
+            isDefault: defaultChoice.value
+          });
+          break;
+        }
+
+        case "SHOW_EXPORT_DIALOG": {
+          // Show VS Code native QuickPick for Export - multi-step flow
+          const { selectedRowCount = 0, hasFilters = false } = message;
+
+          // Step 1: Select format
+          const formatChoice = await vscode.window.showQuickPick(
+            [
+              { label: '$(file-text) CSV', description: 'Comma-separated values', value: 'csv' },
+              { label: '$(json) JSON', description: 'JavaScript Object Notation', value: 'json' },
+              { label: '$(database) SQL', description: 'SQL INSERT statements', value: 'sql' }
+            ],
+            {
+              title: 'Export Data - Select Format',
+              placeHolder: 'Choose export format'
+            }
+          );
+
+          if (!formatChoice) {
+            break; // User cancelled
+          }
+
+          const format = formatChoice.value;
+
+          // Step 2: Build options list based on context
+          const optionItems: { label: string; description: string; picked: boolean; id: string }[] = [];
+
+          // Include headers option (only for CSV)
+          if (format === 'csv') {
+            optionItems.push({
+              label: 'Include headers',
+              description: 'Add column names as first row',
+              picked: true,
+              id: 'includeHeaders'
+            });
+          }
+
+          // Selected rows only option (if rows are selected)
+          if (selectedRowCount > 0) {
+            optionItems.push({
+              label: `Selected rows only (${selectedRowCount})`,
+              description: 'Export only the selected rows',
+              picked: false,
+              id: 'selectedRowsOnly'
+            });
+          }
+
+          // Apply filters option (if filters active)
+          if (hasFilters) {
+            optionItems.push({
+              label: 'Apply current filters',
+              description: 'Only export rows matching active filters',
+              picked: false,
+              id: 'applyCurrentFilters'
+            });
+          }
+
+          // If there are options to choose from, show multi-select
+          let includeHeaders = true;
+          let selectedRowsOnly = false;
+          let applyCurrentFilters = false;
+
+          if (optionItems.length > 0) {
+            const selectedOptions = await vscode.window.showQuickPick(
+              optionItems,
+              {
+                title: 'Export Data - Options',
+                placeHolder: 'Select export options (optional)',
+                canPickMany: true
+              }
+            );
+
+            if (selectedOptions === undefined) {
+              break; // User cancelled
+            }
+
+            // Process selected options
+            const selectedIds = new Set(selectedOptions.map(opt => opt.id));
+            includeHeaders = format === 'csv' ? selectedIds.has('includeHeaders') : true;
+            selectedRowsOnly = selectedIds.has('selectedRowsOnly');
+            applyCurrentFilters = selectedIds.has('applyCurrentFilters');
+          }
+
+          // Send the result back to the webview
+          panel.webview.postMessage({
+            type: "EXPORT_RESULT",
+            tabId,
+            options: {
+              format,
+              includeHeaders: format === 'csv' ? includeHeaders : undefined,
+              selectedRowsOnly,
+              applyCurrentFilters,
+              encoding: 'UTF-8'
+            }
+          });
           break;
         }
 
@@ -1349,8 +1588,19 @@ export async function getOrCreateMainPanel(
 
         case "RUN_QUERY": {
           console.log(`[dbview] Running query for tab ${tabId}`);
+
+          // Generate unique query ID
+          const queryId = `query-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+
+          // Track the running query
+          runningQueries.set(tabId, {
+            queryId,
+            startTime: Date.now(),
+            sql: message.sql
+          });
+
           try {
-            const result = await currentClient.runQuery(message.sql);
+            const result = await currentClient.runQuery(message.sql, queryId);
             panel.webview.postMessage({
               type: "QUERY_RESULT",
               tabId,
@@ -1364,6 +1614,60 @@ export async function getOrCreateMainPanel(
               tabId,
               message: error instanceof Error ? error.message : String(error)
             });
+          } finally {
+            // Clean up tracking
+            runningQueries.delete(tabId);
+          }
+          break;
+        }
+
+        case "CANCEL_QUERY": {
+          console.log(`[dbview] Cancel query requested for tab ${tabId}`);
+
+          // Get the running query info
+          const runningQuery = runningQueries.get(tabId);
+
+          if (!runningQuery) {
+            console.log(`[dbview] No running query found for tab ${tabId}`);
+            panel.webview.postMessage({
+              type: "QUERY_CANCELLED",
+              tabId
+            });
+            break;
+          }
+
+          // Check if the adapter supports query cancellation
+          if (!currentClient.cancelQuery) {
+            console.log(`[dbview] Query cancellation not supported for ${currentClient.type}`);
+            runningQueries.delete(tabId);
+            panel.webview.postMessage({
+              type: "QUERY_ERROR",
+              tabId,
+              message: `Query cancellation is not supported for ${currentClient.type} databases`
+            });
+            break;
+          }
+
+          try {
+            console.log(`[dbview] Cancelling query ${runningQuery.queryId} for tab ${tabId}`);
+            await currentClient.cancelQuery(runningQuery.queryId);
+
+            panel.webview.postMessage({
+              type: "QUERY_CANCELLED",
+              tabId
+            });
+
+            vscode.window.showInformationMessage('Query cancelled successfully');
+          } catch (error) {
+            console.error(`[dbview] Error cancelling query:`, error);
+            panel.webview.postMessage({
+              type: "QUERY_ERROR",
+              tabId,
+              message: `Failed to cancel query: ${error instanceof Error ? error.message : String(error)}`
+            });
+          } finally {
+            // Clean up tracking
+            runningQueries.delete(tabId);
           }
           break;
         }

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import { Play, Wand2, History, Activity, BookOpen, Save, Bookmark } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Play, Wand2, History, Activity, BookOpen, Save, Bookmark, X } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SqlEditor } from "./SqlEditor";
 import { QueryResultsGrid } from "./QueryResultsGrid";
@@ -7,9 +7,20 @@ import { QueryHistoryPanel } from "./QueryHistoryPanel";
 import { ExplainPlanPanel } from "./ExplainPlanPanel";
 import { SavedQueriesPanel } from "./SavedQueriesPanel";
 import { SaveQueryModal } from "./SaveQueryModal";
-import { getElectronAPI, type QueryHistoryEntry, type SavedQuery } from "@/electron";
+import { getElectronAPI } from "@/electron";
 import { toast } from "sonner";
-import type { TableInfo, ColumnMetadata, ExplainPlan } from "@dbview/types";
+import type { TableInfo, ColumnMetadata, ExplainPlan, SavedQuery, QueryHistoryEntry } from "@dbview/types";
+import { useQueryHistoryStore, useSavedQueriesStore } from "@dbview/shared-state";
+import type { SqlDatabaseType, ForeignKeyRelation } from "@/utils/sqlAutocomplete";
+
+/**
+ * Extract error message from unknown error type
+ */
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return 'Unknown error';
+}
 
 // Comprehensive SQL commands organized by category
 const SQL_COMMANDS = {
@@ -290,6 +301,78 @@ export interface QueryViewProps {
   ) => void;
 }
 
+/**
+ * Extract database type from connection key
+ * Connection keys have format: "dbtype:identifier"
+ */
+function getDbTypeFromConnectionKey(connectionKey?: string): SqlDatabaseType {
+  if (!connectionKey) return "postgres";
+  const [dbType] = connectionKey.split(":");
+  const validTypes: SqlDatabaseType[] = ["postgres", "mysql", "mariadb", "sqlserver", "sqlite"];
+  return validTypes.includes(dbType as SqlDatabaseType) ? (dbType as SqlDatabaseType) : "postgres";
+}
+
+/**
+ * Extract FK relationships from column metadata
+ */
+function extractForeignKeys(columns: Record<string, ColumnMetadata[]>): ForeignKeyRelation[] {
+  const foreignKeys: ForeignKeyRelation[] = [];
+
+  for (const [tableKey, cols] of Object.entries(columns)) {
+    // Validate tableKey format
+    if (!tableKey || typeof tableKey !== 'string') continue;
+
+    const tableParts = tableKey.split(".");
+    const sourceSchema = tableParts[0] || "public";
+    const sourceTable = tableParts[1] || tableParts[0] || "";
+
+    // Validate cols is an array
+    if (!Array.isArray(cols)) continue;
+
+    for (const col of cols) {
+      // Validate column structure
+      if (!col || typeof col !== 'object') continue;
+      if (!col.isForeignKey || !col.foreignKeyRef) continue;
+
+      // Validate foreignKeyRef is a non-empty string
+      const fkRef = col.foreignKeyRef;
+      if (typeof fkRef !== 'string' || !fkRef.trim()) continue;
+
+      // foreignKeyRef format: "schema.table.column" or "table.column"
+      const parts = fkRef.split(".");
+
+      // Skip malformed references (need at least table.column)
+      if (parts.length < 2 || parts.some(p => !p.trim())) {
+        console.warn(`Skipping malformed foreign key reference: "${fkRef}"`);
+        continue;
+      }
+
+      if (parts.length >= 3) {
+        foreignKeys.push({
+          sourceSchema,
+          sourceTable,
+          sourceColumn: col.name,
+          targetSchema: parts[0],
+          targetTable: parts[1],
+          targetColumn: parts.slice(2).join("."), // Handle column names with dots
+        });
+      } else if (parts.length === 2) {
+        // "table.column" format (no schema)
+        foreignKeys.push({
+          sourceSchema,
+          sourceTable,
+          sourceColumn: col.name,
+          targetSchema: sourceSchema,
+          targetTable: parts[0],
+          targetColumn: parts[1],
+        });
+      }
+    }
+  }
+
+  return foreignKeys;
+}
+
 export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
   const [autocompleteData, setAutocompleteData] = useState<{
     schemas: string[];
@@ -304,8 +387,6 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
   const [showReference, setShowReference] = useState(false);
   const [showSavedQueries, setShowSavedQueries] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
-  const [persistedHistory, setPersistedHistory] = useState<QueryHistoryEntry[]>([]);
-  const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([]);
   const [showExplainPanel, setShowExplainPanel] = useState(false);
   const [explainPlan, setExplainPlan] = useState<ExplainPlan | null>(null);
   const [explainLoading, setExplainLoading] = useState(false);
@@ -313,43 +394,64 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
 
   const api = getElectronAPI();
 
-  // Load autocomplete data and persisted history on mount
+  // Use shared stores for query history and saved queries
+  const {
+    entries: queryHistory,
+    addQuery: addQueryToHistory,
+    toggleFavorite,
+    clearHistory,
+  } = useQueryHistoryStore();
+  const {
+    queries: savedQueries,
+    addQuery: addSavedQuery,
+    updateQuery: updateSavedQuery,
+    deleteQuery: deleteSavedQuery,
+  } = useSavedQueriesStore();
+
+  // Extract database type from connection key
+  const dbType = useMemo(
+    () => getDbTypeFromConnectionKey(tab.connectionKey),
+    [tab.connectionKey]
+  );
+
+  // Extract FK relationships from column metadata
+  const foreignKeys = useMemo(
+    () => extractForeignKeys(autocompleteData.columns),
+    [autocompleteData.columns]
+  );
+
+  // Load autocomplete data on mount
   useEffect(() => {
-    if (tab.connectionKey && api) {
-      // Load autocomplete data
-      api
-        .getAutocompleteData(tab.connectionKey)
-        .then((data) => {
+    if (!tab.connectionKey || !api) {
+      return;
+    }
+
+    // Track if effect is still active (prevents state updates after unmount/change)
+    let isActive = true;
+
+    api
+      .getAutocompleteData(tab.connectionKey)
+      .then((data) => {
+        // Only update state if this effect is still active
+        if (isActive) {
           setAutocompleteData({
             schemas: data.schemas || [],
             tables: data.tables || [],
             columns: data.columns || {},
           });
-        })
-        .catch((err) => {
+        }
+      })
+      .catch((err) => {
+        // Only log if effect is still active (avoid logging after unmount)
+        if (isActive) {
           console.error("Failed to load autocomplete data:", err);
-        });
+        }
+      });
 
-      // Load persisted query history
-      api
-        .getQueryHistory(tab.connectionKey)
-        .then((history) => {
-          setPersistedHistory(history);
-        })
-        .catch((err) => {
-          console.error("Failed to load query history:", err);
-        });
-
-      // Load saved queries
-      api
-        .getSavedQueries(tab.connectionKey)
-        .then((queries) => {
-          setSavedQueries(queries);
-        })
-        .catch((err) => {
-          console.error("Failed to load saved queries:", err);
-        });
-    }
+    // Cleanup: mark effect as inactive
+    return () => {
+      isActive = false;
+    };
   }, [tab.connectionKey, api]);
 
   // Handle run query
@@ -372,21 +474,8 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
 
       const duration = Date.now() - startTime;
 
-      // Add to persistent history
-      const historyEntry: QueryHistoryEntry = {
-        id: Date.now().toString(),
-        sql: tab.sql,
-        executedAt: Date.now(),
-        duration,
-        rowCount: result.rows.length,
-        success: true,
-      };
-
-      // Save to persistent storage
-      await api.addQueryHistoryEntry(tab.connectionKey, historyEntry);
-
-      // Update local state
-      setPersistedHistory((prev) => [...prev, historyEntry].slice(-10));
+      // Add to shared query history store
+      addQueryToHistory(tab.sql, true, duration, result.rows.length);
 
       onTabUpdate(tab.id, {
         columns: result.columns,
@@ -399,33 +488,50 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
       });
 
       toast.success(`Query executed successfully (${result.rows.length} rows, ${duration}ms)`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       const duration = Date.now() - startTime;
+      const errorMessage = getErrorMessage(error);
 
-      // Add failed query to persistent history
-      const historyEntry: QueryHistoryEntry = {
-        id: Date.now().toString(),
-        sql: tab.sql,
-        executedAt: Date.now(),
-        duration,
-        success: false,
-        error: error.message || "Unknown error",
-      };
-
-      // Save to persistent storage
-      await api.addQueryHistoryEntry(tab.connectionKey, historyEntry);
-
-      // Update local state
-      setPersistedHistory((prev) => [...prev, historyEntry].slice(-10));
+      // Add failed query to shared history store
+      addQueryToHistory(tab.sql, false, duration, undefined, errorMessage);
 
       onTabUpdate(tab.id, {
         loading: false,
-        error: error.message || "Failed to execute query",
+        error: errorMessage,
       });
 
-      toast.error(`Query failed: ${error.message}`);
+      toast.error(`Query failed: ${errorMessage}`);
     }
-  }, [tab, onTabUpdate, api]);
+  }, [tab, onTabUpdate, api, addQueryToHistory]);
+
+  // Handle cancel query
+  const handleCancelQuery = useCallback(async () => {
+    if (!tab.connectionKey || !api) {
+      return;
+    }
+
+    try {
+      await api.cancelQuery(tab.connectionKey);
+
+      // Update UI state
+      onTabUpdate(tab.id, {
+        loading: false,
+        error: "Query cancelled by user",
+      });
+
+      toast.info("Query cancelled");
+    } catch (error: unknown) {
+      console.error("Failed to cancel query:", error);
+
+      // Even if cancellation failed, update UI state
+      onTabUpdate(tab.id, {
+        loading: false,
+        error: "Query cancellation failed, but query may have completed",
+      });
+
+      toast.error(`Failed to cancel query: ${getErrorMessage(error)}`);
+    }
+  }, [tab.connectionKey, tab.id, onTabUpdate, api]);
 
   // Handle format SQL
   const handleFormatSql = useCallback(async () => {
@@ -435,8 +541,8 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
       const formatted = await api.formatSql(tab.sql);
       onTabUpdate(tab.id, { sql: formatted, isDirty: true });
       toast.success("SQL formatted successfully");
-    } catch (error: any) {
-      toast.error(`Failed to format SQL: ${error.message}`);
+    } catch (error: unknown) {
+      toast.error(`Failed to format SQL: ${getErrorMessage(error)}`);
     }
   }, [tab.sql, tab.id, onTabUpdate, api]);
 
@@ -456,45 +562,16 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     [tab.id, onTabUpdate]
   );
 
-  // Handle clear history
-  const handleClearHistory = useCallback(async () => {
-    if (!tab.connectionKey || !api) return;
+  // Handle clear history - use shared store
+  const handleClearHistory = useCallback(() => {
+    clearHistory();
+    toast.success("Query history cleared");
+  }, [clearHistory]);
 
-    try {
-      await api.clearQueryHistory(tab.connectionKey);
-      setPersistedHistory([]);
-      toast.success("Query history cleared");
-    } catch (error: any) {
-      toast.error(`Failed to clear history: ${error.message}`);
-    }
-  }, [tab.connectionKey, api]);
-
-  // Handle toggle star for query history
-  const handleToggleStar = useCallback(async (entryId: string) => {
-    if (!tab.connectionKey || !api) return;
-
-    try {
-      // Find the entry and toggle its starred status
-      const entry = persistedHistory.find((e) => e.id === entryId);
-      if (!entry) return;
-
-      const newStarredValue = !entry.starred;
-
-      // Update the local state optimistically
-      setPersistedHistory((prev) =>
-        prev.map((e) => (e.id === entryId ? { ...e, starred: newStarredValue } : e))
-      );
-
-      // Persist to backend
-      await api.toggleQueryHistoryStar(tab.connectionKey, entryId, newStarredValue);
-    } catch (error: any) {
-      toast.error(`Failed to update star: ${error.message}`);
-      // Revert on error
-      setPersistedHistory((prev) =>
-        prev.map((e) => (e.id === entryId ? { ...e, starred: !e.starred } : e))
-      );
-    }
-  }, [tab.connectionKey, api, persistedHistory]);
+  // Handle toggle favorite for query history - use shared store
+  const handleToggleFavorite = useCallback((entryId: string) => {
+    toggleFavorite(entryId);
+  }, [toggleFavorite]);
 
   // Handle save current query - opens modal
   const handleSaveQuery = useCallback(() => {
@@ -505,29 +582,15 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     setShowSaveModal(true);
   }, [tab.sql]);
 
-  // Handle actual save from modal
-  const handleSaveQueryConfirm = useCallback(async (name: string, description: string) => {
-    if (!tab.sql?.trim() || !tab.connectionKey || !api) {
+  // Handle actual save from modal - use shared store
+  const handleSaveQueryConfirm = useCallback((name: string, description: string) => {
+    if (!tab.sql?.trim()) {
       return;
     }
 
-    const newQuery: SavedQuery = {
-      id: Date.now().toString(),
-      name,
-      sql: tab.sql.trim(),
-      description: description || undefined,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    try {
-      await api.addSavedQuery(tab.connectionKey, newQuery);
-      setSavedQueries((prev) => [...prev, newQuery]);
-      toast.success(`Query "${name}" saved successfully`);
-    } catch (error: any) {
-      toast.error(`Failed to save query: ${error.message}`);
-    }
-  }, [tab.sql, tab.connectionKey, api]);
+    addSavedQuery(name, tab.sql.trim(), description || undefined);
+    toast.success(`Query "${name}" saved successfully`);
+  }, [tab.sql, addSavedQuery]);
 
   // Handle select saved query
   const handleSelectSavedQuery = useCallback(
@@ -537,35 +600,19 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     [tab.id, onTabUpdate]
   );
 
-  // Handle update saved query
-  const handleUpdateSavedQuery = useCallback(async (queryId: string, updates: Partial<SavedQuery>) => {
-    if (!tab.connectionKey || !api) return;
+  // Handle update saved query - use shared store
+  const handleUpdateSavedQuery = useCallback((queryId: string, updates: Partial<SavedQuery>) => {
+    updateSavedQuery(queryId, updates);
+    toast.success("Query updated");
+  }, [updateSavedQuery]);
 
-    try {
-      await api.updateSavedQuery(tab.connectionKey, queryId, updates);
-      setSavedQueries((prev) =>
-        prev.map((q) => (q.id === queryId ? { ...q, ...updates, updatedAt: Date.now() } : q))
-      );
-      toast.success("Query updated");
-    } catch (error: any) {
-      toast.error(`Failed to update query: ${error.message}`);
-    }
-  }, [tab.connectionKey, api]);
-
-  // Handle delete saved query
-  const handleDeleteSavedQuery = useCallback(async (queryId: string) => {
-    if (!tab.connectionKey || !api) return;
-
+  // Handle delete saved query - use shared store
+  const handleDeleteSavedQuery = useCallback((queryId: string) => {
     if (!confirm("Are you sure you want to delete this saved query?")) return;
 
-    try {
-      await api.deleteSavedQuery(tab.connectionKey, queryId);
-      setSavedQueries((prev) => prev.filter((q) => q.id !== queryId));
-      toast.success("Query deleted");
-    } catch (error: any) {
-      toast.error(`Failed to delete query: ${error.message}`);
-    }
-  }, [tab.connectionKey, api]);
+    deleteSavedQuery(queryId);
+    toast.success("Query deleted");
+  }, [deleteSavedQuery]);
 
   // Handle insert example from reference panel
   const handleInsertExample = useCallback(
@@ -597,9 +644,10 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
       });
       setExplainPlan(result);
       toast.success("Query analyzed successfully");
-    } catch (error: any) {
-      setExplainError(error.message || "Failed to analyze query");
-      toast.error(`Failed to analyze query: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error);
+      setExplainError(errorMessage);
+      toast.error(`Failed to analyze query: ${errorMessage}`);
     } finally {
       setExplainLoading(false);
     }
@@ -607,18 +655,28 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-bg-primary">
-      {/* Toolbar - Compact, always visible */}
-      <div className="h-10 px-4 flex items-center justify-between border-b border-border bg-bg-secondary">
+      {/* Toolbar - Compact, always visible, z-10 ensures it stays above content */}
+      <div className="h-10 px-4 flex items-center justify-between border-b border-border bg-bg-secondary relative z-10">
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleRunQuery}
-            disabled={tab.loading || !tab.sql?.trim()}
-            className="h-7 px-3 rounded flex items-center gap-1.5 bg-accent hover:bg-accent/90 text-white text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Play className="w-3 h-3" />
-            Run
-            <span className="opacity-70">(Cmd+Enter)</span>
-          </button>
+          {tab.loading ? (
+            <button
+              onClick={handleCancelQuery}
+              className="h-7 px-3 rounded flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium transition-colors"
+            >
+              <X className="w-3 h-3" />
+              Cancel
+            </button>
+          ) : (
+            <button
+              onClick={handleRunQuery}
+              disabled={!tab.sql?.trim()}
+              className="h-7 px-3 rounded flex items-center gap-1.5 bg-accent hover:bg-accent/90 text-white text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Play className="w-3 h-3" />
+              Run
+              <span className="opacity-70">(Cmd+Enter)</span>
+            </button>
+          )}
           <button
             onClick={handleFormatSql}
             disabled={tab.loading || !tab.sql?.trim()}
@@ -728,9 +786,11 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
                 onRunQuery={handleRunQuery}
                 loading={tab.loading || false}
                 error={tab.error}
+                dbType={dbType}
                 schemas={autocompleteData.schemas}
                 tables={autocompleteData.tables}
                 columns={autocompleteData.columns}
+                foreignKeys={foreignKeys}
                 height="100%"
               />
             </div>
@@ -757,7 +817,11 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
                       onClick={() => {
                         if (!tab.sql) return;
                         // Reload query with higher limit
-                        const newLimit = (tab.limit || 1000) + 1000;
+                        // Validate and sanitize the limit value to prevent injection
+                        const currentLimit = typeof tab.limit === 'number' && Number.isInteger(tab.limit) && tab.limit > 0
+                          ? tab.limit
+                          : 1000;
+                        const newLimit = Math.min(currentLimit + 1000, 100000); // Cap at 100k for safety
                         const modifiedSql = `${tab.sql.trim()}\nLIMIT ${newLimit}`;
                         onTabUpdate(tab.id, { sql: modifiedSql, isDirty: true });
                         handleRunQuery();
@@ -814,10 +878,10 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
                     <PanelResizeHandle className="h-1 bg-border hover:bg-accent transition-colors cursor-row-resize" />
                     <Panel defaultSize={50} minSize={30}>
                       <QueryHistoryPanel
-                        history={persistedHistory}
+                        history={queryHistory}
                         onSelectQuery={handleSelectFromHistory}
                         onClearHistory={handleClearHistory}
-                        onToggleStar={handleToggleStar}
+                        onToggleFavorite={handleToggleFavorite}
                       />
                     </Panel>
                   </PanelGroup>
@@ -831,10 +895,10 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
                   />
                 ) : (
                   <QueryHistoryPanel
-                    history={persistedHistory}
+                    history={queryHistory}
                     onSelectQuery={handleSelectFromHistory}
                     onClearHistory={handleClearHistory}
-                    onToggleStar={handleToggleStar}
+                    onToggleFavorite={handleToggleFavorite}
                   />
                 )}
               </Panel>

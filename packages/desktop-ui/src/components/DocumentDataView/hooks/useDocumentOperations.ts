@@ -50,6 +50,36 @@ export interface UseDocumentOperationsResult {
 }
 
 /**
+ * Validate array index is valid
+ */
+function validateArrayIndex(index: number, arr: unknown[], path: string): void {
+  if (!Number.isInteger(index) || index < 0) {
+    throw new Error(`Invalid array index "${index}" in path "${path}"`);
+  }
+  if (index >= arr.length) {
+    throw new Error(`Array index ${index} out of bounds (length: ${arr.length}) in path "${path}"`);
+  }
+}
+
+/**
+ * Check if a value is a plain object (not null, not an array, not a primitive)
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Ensure value is a plain object, throw descriptive error if not
+ */
+function ensureObject(value: unknown, context: string): Record<string, unknown> {
+  if (!isPlainObject(value)) {
+    const type = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+    throw new Error(`Expected object at ${context}, but found ${type}`);
+  }
+  return value;
+}
+
+/**
  * Set a value at a path in an object (immutably)
  */
 function setAtPath(
@@ -75,13 +105,28 @@ function setAtPath(
     const arrayMatch = part.match(/^(\w+)\[(\d+)\]$/);
 
     if (arrayMatch) {
-      const [, key, index] = arrayMatch;
-      const arr = [...(current[key] as unknown[])];
-      arr[parseInt(index, 10)] = { ...(arr[parseInt(index, 10)] as Record<string, unknown>) };
-      current[key] = arr;
-      current = arr[parseInt(index, 10)] as Record<string, unknown>;
+      const [, key, indexStr] = arrayMatch;
+      const index = parseInt(indexStr, 10);
+      const arr = current[key];
+
+      if (!Array.isArray(arr)) {
+        throw new Error(`Expected array at "${key}" in path "${path}"`);
+      }
+
+      validateArrayIndex(index, arr, path);
+      const newArr = [...arr];
+      // Validate that array element is an object before spreading
+      const elementObj = ensureObject(newArr[index], `"${key}[${index}]" in path "${path}"`);
+      newArr[index] = { ...elementObj };
+      current[key] = newArr;
+      current = newArr[index] as Record<string, unknown>;
     } else {
-      current[part] = { ...(current[part] as Record<string, unknown>) };
+      if (current[part] === undefined || current[part] === null) {
+        current[part] = {};
+      }
+      // Validate that current[part] is an object before spreading
+      const partObj = ensureObject(current[part], `"${part}" in path "${path}"`);
+      current[part] = { ...partObj };
       current = current[part] as Record<string, unknown>;
     }
   }
@@ -90,10 +135,22 @@ function setAtPath(
   const arrayMatch = lastPart.match(/^(\w+)\[(\d+)\]$/);
 
   if (arrayMatch) {
-    const [, key, index] = arrayMatch;
-    const arr = [...(current[key] as unknown[])];
-    arr[parseInt(index, 10)] = value;
-    current[key] = arr;
+    const [, key, indexStr] = arrayMatch;
+    const index = parseInt(indexStr, 10);
+    const arr = current[key];
+
+    if (!Array.isArray(arr)) {
+      throw new Error(`Expected array at "${key}" in path "${path}"`);
+    }
+
+    // For setting, allow index === arr.length to append
+    if (index > arr.length) {
+      throw new Error(`Array index ${index} out of bounds (length: ${arr.length}) in path "${path}"`);
+    }
+
+    const newArr = [...arr];
+    newArr[index] = value;
+    current[key] = newArr;
   } else {
     current[lastPart] = value;
   }
@@ -123,12 +180,54 @@ function deleteAtPath(
 
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i];
-    current[part] = { ...(current[part] as Record<string, unknown>) };
-    current = current[part] as Record<string, unknown>;
+    const arrayMatch = part.match(/^(\w+)\[(\d+)\]$/);
+
+    if (arrayMatch) {
+      const [, key, indexStr] = arrayMatch;
+      const index = parseInt(indexStr, 10);
+      const arr = current[key];
+
+      if (!Array.isArray(arr)) {
+        throw new Error(`Expected array at "${key}" in path "${path}"`);
+      }
+
+      validateArrayIndex(index, arr, path);
+      const newArr = [...arr];
+      // Validate that array element is an object before spreading
+      const elementObj = ensureObject(newArr[index], `"${key}[${index}]" in path "${path}"`);
+      newArr[index] = { ...elementObj };
+      current[key] = newArr;
+      current = newArr[index] as Record<string, unknown>;
+    } else {
+      if (current[part] === undefined || current[part] === null) {
+        throw new Error(`Path "${part}" does not exist in document`);
+      }
+      // Validate that current[part] is an object before spreading
+      const partObj = ensureObject(current[part], `"${part}" in path "${path}"`);
+      current[part] = { ...partObj };
+      current = current[part] as Record<string, unknown>;
+    }
   }
 
   const lastPart = parts[parts.length - 1];
-  delete current[lastPart];
+  const arrayMatch = lastPart.match(/^(\w+)\[(\d+)\]$/);
+
+  if (arrayMatch) {
+    const [, key, indexStr] = arrayMatch;
+    const index = parseInt(indexStr, 10);
+    const arr = current[key];
+
+    if (!Array.isArray(arr)) {
+      throw new Error(`Expected array at "${key}" in path "${path}"`);
+    }
+
+    validateArrayIndex(index, arr, path);
+    const newArr = [...arr];
+    newArr.splice(index, 1);
+    current[key] = newArr;
+  } else {
+    delete current[lastPart];
+  }
 
   return result;
 }
@@ -198,8 +297,13 @@ export function useDocumentOperations({
           filters: [{ id: 'docId', columnName: getIdFieldName(dbType), operator: 'equals' as const, value: docId }],
         });
 
+        // Validate API response structure
+        if (!result || !Array.isArray(result.rows)) {
+          throw new Error(`Invalid API response while updating field "${fieldPath}"`);
+        }
+
         if (result.rows.length === 0) {
-          throw new Error('Document not found');
+          throw new Error(`Document not found (id: ${docId})`);
         }
 
         const currentDoc = result.rows[0] as Record<string, unknown>;
@@ -259,8 +363,13 @@ export function useDocumentOperations({
           filters: [{ id: 'docId', columnName: getIdFieldName(dbType), operator: 'equals' as const, value: docId }],
         });
 
+        // Validate API response structure
+        if (!result || !Array.isArray(result.rows)) {
+          throw new Error(`Invalid API response while deleting field "${fieldPath}"`);
+        }
+
         if (result.rows.length === 0) {
-          throw new Error('Document not found');
+          throw new Error(`Document not found (id: ${docId})`);
         }
 
         const currentDoc = result.rows[0] as Record<string, unknown>;
@@ -329,8 +438,13 @@ export function useDocumentOperations({
           filters: [{ id: 'docId', columnName: getIdFieldName(dbType), operator: 'equals' as const, value: docId }],
         });
 
+        // Validate API response structure
+        if (!result || !Array.isArray(result.rows)) {
+          throw new Error(`Invalid API response while adding field "${fullPath}"`);
+        }
+
         if (result.rows.length === 0) {
-          throw new Error('Document not found');
+          throw new Error(`Document not found (id: ${docId})`);
         }
 
         const currentDoc = result.rows[0] as Record<string, unknown>;

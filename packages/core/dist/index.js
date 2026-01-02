@@ -1269,10 +1269,31 @@ function getNotLikeOperator(dbType) {
       return "NOT LIKE";
   }
 }
+function escapeLikePattern(value, dbType) {
+  const strValue = String(value ?? "");
+  if (dbType === "sqlserver") {
+    return strValue.replace(/\[/g, "[[]").replace(/%/g, "[%]").replace(/_/g, "[_]");
+  }
+  return strValue.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+function getLikeEscapeClause(dbType) {
+  if (dbType === "sqlserver") {
+    return "";
+  }
+  return " ESCAPE '\\'";
+}
+function parseInValues(value) {
+  if (Array.isArray(value)) {
+    return value.map((v) => typeof v === "string" ? v.trim() : v).filter((v) => v !== "" && v !== null && v !== void 0);
+  }
+  return String(value ?? "").split(",").map((v) => v.trim()).filter((v) => v !== "");
+}
 function buildSqlFilter(filters, logic, options) {
-  const { dbType, startIndex = 1 } = options;
+  const { dbType } = options;
   const quoteIdentifier2 = options.quoteIdentifier ?? getQuoteFunction(dbType);
   const placeholderStyle = getPlaceholderStyle(dbType);
+  const defaultStartIndex = placeholderStyle === "positional" ? 1 : 0;
+  const startIndex = options.startIndex ?? defaultStartIndex;
   if (!filters || filters.length === 0) {
     return { whereClause: "", params: [] };
   }
@@ -1287,7 +1308,7 @@ function buildSqlFilter(filters, logic, options) {
         paramIndex++;
         return "?";
       case "named":
-        return `@p${paramIndex++ - 1}`;
+        return `@p${paramIndex++}`;
     }
   }
   for (const filter of filters) {
@@ -1307,22 +1328,34 @@ function buildSqlFilter(filters, logic, options) {
         conditions.push(`${columnName} != ${getPlaceholder()}`);
         params.push(filter.value);
         break;
-      case "contains":
-        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}`);
-        params.push(`%${filter.value}%`);
+      case "contains": {
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}${escapeClause}`);
+        params.push(`%${escaped}%`);
         break;
-      case "not_contains":
-        conditions.push(`${textColumn} ${notLikeOp} ${getPlaceholder()}`);
-        params.push(`%${filter.value}%`);
+      }
+      case "not_contains": {
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} ${notLikeOp} ${getPlaceholder()}${escapeClause}`);
+        params.push(`%${escaped}%`);
         break;
-      case "starts_with":
-        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}`);
-        params.push(`${filter.value}%`);
+      }
+      case "starts_with": {
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}${escapeClause}`);
+        params.push(`${escaped}%`);
         break;
-      case "ends_with":
-        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}`);
-        params.push(`%${filter.value}`);
+      }
+      case "ends_with": {
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}${escapeClause}`);
+        params.push(`%${escaped}`);
         break;
+      }
       case "greater_than":
         conditions.push(`${columnName} > ${getPlaceholder()}`);
         params.push(filter.value);
@@ -1346,7 +1379,12 @@ function buildSqlFilter(filters, logic, options) {
         conditions.push(`${columnName} IS NOT NULL`);
         break;
       case "between":
-        if (filter.value2 !== void 0) {
+        if (filter.value2 === void 0 || filter.value2 === null) {
+          throw new Error(
+            `BETWEEN operator on column "${filter.columnName}" requires both value and value2. Provide value2 or use a different operator.`
+          );
+        }
+        {
           const p1 = getPlaceholder();
           const p2 = getPlaceholder();
           conditions.push(`${columnName} BETWEEN ${p1} AND ${p2}`);
@@ -1354,7 +1392,7 @@ function buildSqlFilter(filters, logic, options) {
         }
         break;
       case "in": {
-        const values = (Array.isArray(filter.value) ? filter.value.map((v) => String(v).trim()) : String(filter.value).split(",").map((v) => v.trim())).filter((v) => v !== "");
+        const values = parseInValues(filter.value);
         if (values.length > 0) {
           const placeholders = values.map(() => getPlaceholder()).join(", ");
           conditions.push(`${columnName} IN (${placeholders})`);
@@ -1404,26 +1442,34 @@ function buildSqlFilterNamed(filters, logic, options) {
       }
       case "contains": {
         const name = getParamName();
-        conditions.push(`${textColumn} LIKE @${name}`);
-        params[name] = `%${filter.value}%`;
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} LIKE @${name}${escapeClause}`);
+        params[name] = `%${escaped}%`;
         break;
       }
       case "not_contains": {
         const name = getParamName();
-        conditions.push(`${textColumn} NOT LIKE @${name}`);
-        params[name] = `%${filter.value}%`;
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} NOT LIKE @${name}${escapeClause}`);
+        params[name] = `%${escaped}%`;
         break;
       }
       case "starts_with": {
         const name = getParamName();
-        conditions.push(`${textColumn} LIKE @${name}`);
-        params[name] = `${filter.value}%`;
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} LIKE @${name}${escapeClause}`);
+        params[name] = `${escaped}%`;
         break;
       }
       case "ends_with": {
         const name = getParamName();
-        conditions.push(`${textColumn} LIKE @${name}`);
-        params[name] = `%${filter.value}`;
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} LIKE @${name}${escapeClause}`);
+        params[name] = `%${escaped}`;
         break;
       }
       case "greater_than": {
@@ -1457,17 +1503,20 @@ function buildSqlFilterNamed(filters, logic, options) {
         conditions.push(`${columnName} IS NOT NULL`);
         break;
       case "between": {
-        if (filter.value2 !== void 0) {
-          const name1 = getParamName();
-          const name2 = getParamName();
-          conditions.push(`${columnName} BETWEEN @${name1} AND @${name2}`);
-          params[name1] = filter.value;
-          params[name2] = filter.value2;
+        if (filter.value2 === void 0 || filter.value2 === null) {
+          throw new Error(
+            `BETWEEN operator on column "${filter.columnName}" requires both value and value2. Provide value2 or use a different operator.`
+          );
         }
+        const name1 = getParamName();
+        const name2 = getParamName();
+        conditions.push(`${columnName} BETWEEN @${name1} AND @${name2}`);
+        params[name1] = filter.value;
+        params[name2] = filter.value2;
         break;
       }
       case "in": {
-        const values = (Array.isArray(filter.value) ? filter.value.map((v) => String(v).trim()) : String(filter.value).split(",").map((v) => v.trim())).filter((v) => v !== "");
+        const values = parseInValues(filter.value);
         if (values.length > 0) {
           const paramNames = [];
           for (const val of values) {
@@ -1503,9 +1552,9 @@ function filterToMongoCondition(filter) {
     case "not_equals":
       return { [columnName]: { $ne: value } };
     case "contains":
-      return { [columnName]: { $regex: String(value), $options: "i" } };
+      return { [columnName]: { $regex: escapeRegex(String(value)), $options: "i" } };
     case "not_contains":
-      return { [columnName]: { $not: { $regex: String(value), $options: "i" } } };
+      return { [columnName]: { $not: { $regex: escapeRegex(String(value)), $options: "i" } } };
     case "starts_with":
       return { [columnName]: { $regex: `^${escapeRegex(String(value))}`, $options: "i" } };
     case "ends_with":
@@ -1523,12 +1572,14 @@ function filterToMongoCondition(filter) {
     case "is_not_null":
       return { [columnName]: { $ne: null } };
     case "between":
-      if (value2 !== void 0) {
-        return { [columnName]: { $gte: value, $lte: value2 } };
+      if (value2 === void 0 || value2 === null) {
+        throw new Error(
+          `BETWEEN operator on column "${columnName}" requires both value and value2. Provide value2 or use a different operator.`
+        );
       }
-      return null;
+      return { [columnName]: { $gte: value, $lte: value2 } };
     case "in": {
-      const values = Array.isArray(value) ? value : String(value).split(",").map((v) => v.trim()).filter((v) => v !== "");
+      const values = parseInValues2(value);
       return { [columnName]: { $in: values } };
     }
     default:
@@ -1537,6 +1588,12 @@ function filterToMongoCondition(filter) {
 }
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function parseInValues2(value) {
+  if (Array.isArray(value)) {
+    return value.map((v) => typeof v === "string" ? v.trim() : v).filter((v) => v !== "" && v !== null && v !== void 0);
+  }
+  return String(value ?? "").split(",").map((v) => v.trim()).filter((v) => v !== "");
 }
 function buildMongoFilter(filters, logic = "AND") {
   if (!filters || filters.length === 0) {
@@ -1564,6 +1621,15 @@ function buildMongoMatchStage(filters, logic = "AND") {
 }
 
 // src/filters/buildElasticsearchFilter.ts
+function escapeWildcard(str) {
+  return str.replace(/\\/g, "\\\\").replace(/\*/g, "\\*").replace(/\?/g, "\\?");
+}
+function parseInValues3(value) {
+  if (Array.isArray(value)) {
+    return value.map((v) => typeof v === "string" ? v.trim() : v).filter((v) => v !== "" && v !== null && v !== void 0);
+  }
+  return String(value ?? "").split(",").map((v) => v.trim()).filter((v) => v !== "");
+}
 function filterToEsClause(filter) {
   const { columnName, operator, value, value2 } = filter;
   if (!columnName || !operator) {
@@ -1575,13 +1641,13 @@ function filterToEsClause(filter) {
     case "not_equals":
       return { bool: { must_not: { term: { [columnName]: value } } } };
     case "contains":
-      return { wildcard: { [columnName]: { value: `*${value}*`, case_insensitive: true } } };
+      return { wildcard: { [columnName]: { value: `*${escapeWildcard(String(value))}*`, case_insensitive: true } } };
     case "not_contains":
-      return { bool: { must_not: { wildcard: { [columnName]: { value: `*${value}*`, case_insensitive: true } } } } };
+      return { bool: { must_not: { wildcard: { [columnName]: { value: `*${escapeWildcard(String(value))}*`, case_insensitive: true } } } } };
     case "starts_with":
-      return { prefix: { [columnName]: { value: String(value).toLowerCase(), case_insensitive: true } } };
+      return { wildcard: { [columnName]: { value: `${escapeWildcard(String(value))}*`, case_insensitive: true } } };
     case "ends_with":
-      return { wildcard: { [columnName]: { value: `*${value}`, case_insensitive: true } } };
+      return { wildcard: { [columnName]: { value: `*${escapeWildcard(String(value))}`, case_insensitive: true } } };
     case "greater_than":
       return { range: { [columnName]: { gt: value } } };
     case "less_than":
@@ -1595,12 +1661,14 @@ function filterToEsClause(filter) {
     case "is_not_null":
       return { exists: { field: columnName } };
     case "between":
-      if (value2 !== void 0) {
-        return { range: { [columnName]: { gte: value, lte: value2 } } };
+      if (value2 === void 0 || value2 === null) {
+        throw new Error(
+          `BETWEEN operator on column "${columnName}" requires both value and value2. Provide value2 or use a different operator.`
+        );
       }
-      return null;
+      return { range: { [columnName]: { gte: value, lte: value2 } } };
     case "in": {
-      const values = Array.isArray(value) ? value : String(value).split(",").map((v) => v.trim()).filter((v) => v !== "");
+      const values = parseInValues3(value);
       return { terms: { [columnName]: values } };
     }
     default:
@@ -1642,23 +1710,75 @@ function buildElasticsearchSearchBody(filters, logic = "AND", options = {}) {
 }
 
 // src/filters/buildCassandraFilter.ts
+var UNSUPPORTED_OPERATOR_REASONS = {
+  not_contains: "Cassandra does not support NOT CONTAINS. Filter results client-side.",
+  is_null: "Cassandra does not support IS NULL. Filter results client-side.",
+  is_not_null: "Cassandra does not support IS NOT NULL. Filter results client-side."
+};
+var SUPPORTED_OPERATORS = /* @__PURE__ */ new Set([
+  "equals",
+  "not_equals",
+  "contains",
+  "starts_with",
+  "ends_with",
+  "greater_than",
+  "less_than",
+  "greater_or_equal",
+  "less_or_equal",
+  "between",
+  "in"
+]);
+function isOperatorSupported(operator) {
+  return SUPPORTED_OPERATORS.has(operator);
+}
+function getUnsupportedReason(operator) {
+  return UNSUPPORTED_OPERATOR_REASONS[operator] ?? `Operator '${operator}' is not supported by Cassandra.`;
+}
 function quoteIdentifier(name) {
   return `"${name.replace(/"/g, '""')}"`;
+}
+function escapeLikePattern2(value) {
+  const strValue = String(value ?? "");
+  return strValue.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+function parseInValues4(value) {
+  if (Array.isArray(value)) {
+    return value.map((v) => typeof v === "string" ? v.trim() : v).filter((v) => v !== "" && v !== null && v !== void 0);
+  }
+  return String(value ?? "").split(",").map((v) => v.trim()).filter((v) => v !== "");
 }
 function buildCassandraFilter(filters, logic = "AND") {
   if (!filters || filters.length === 0) {
     return { whereClause: "", params: [] };
   }
-  if (logic === "OR") {
-    console.warn("Cassandra does not natively support OR in WHERE clauses. Results may require ALLOW FILTERING or multiple queries.");
-  }
   const conditions = [];
   const params = [];
+  const skippedFilters = [];
+  if (logic === "OR" && filters.length > 1) {
+    return {
+      whereClause: "",
+      params: [],
+      error: "Cassandra does not support OR logic in WHERE clauses. Use multiple queries or filter results client-side.",
+      skippedFilters: filters.map((f) => ({
+        columnName: f.columnName,
+        operator: f.operator,
+        reason: "Cannot apply filter: OR logic not supported."
+      }))
+    };
+  }
   for (const filter of filters) {
     if (!filter.columnName || !filter.operator) {
       continue;
     }
     const columnName = quoteIdentifier(filter.columnName);
+    if (!isOperatorSupported(filter.operator)) {
+      skippedFilters.push({
+        columnName: filter.columnName,
+        operator: filter.operator,
+        reason: getUnsupportedReason(filter.operator)
+      });
+      continue;
+    }
     switch (filter.operator) {
       case "equals":
         conditions.push(`${columnName} = ?`);
@@ -1672,16 +1792,13 @@ function buildCassandraFilter(filters, logic = "AND") {
         conditions.push(`${columnName} CONTAINS ?`);
         params.push(filter.value);
         break;
-      case "not_contains":
-        console.warn("Cassandra does not support NOT CONTAINS. Filter will be applied client-side.");
-        break;
       case "starts_with":
         conditions.push(`${columnName} LIKE ?`);
-        params.push(`${filter.value}%`);
+        params.push(`${escapeLikePattern2(filter.value)}%`);
         break;
       case "ends_with":
         conditions.push(`${columnName} LIKE ?`);
-        params.push(`%${filter.value}`);
+        params.push(`%${escapeLikePattern2(filter.value)}`);
         break;
       case "greater_than":
         conditions.push(`${columnName} > ?`);
@@ -1699,20 +1816,20 @@ function buildCassandraFilter(filters, logic = "AND") {
         conditions.push(`${columnName} <= ?`);
         params.push(filter.value);
         break;
-      case "is_null":
-        conditions.push(`${columnName} = NULL`);
-        break;
-      case "is_not_null":
-        conditions.push(`${columnName} != NULL`);
-        break;
       case "between":
-        if (filter.value2 !== void 0) {
-          conditions.push(`${columnName} >= ? AND ${columnName} <= ?`);
-          params.push(filter.value, filter.value2);
+        if (filter.value2 === void 0 || filter.value2 === null) {
+          skippedFilters.push({
+            columnName: filter.columnName,
+            operator: filter.operator,
+            reason: "BETWEEN operator requires both value and value2. Provide value2 or use a different operator."
+          });
+          continue;
         }
+        conditions.push(`${columnName} >= ? AND ${columnName} <= ?`);
+        params.push(filter.value, filter.value2);
         break;
       case "in": {
-        const values = Array.isArray(filter.value) ? filter.value : String(filter.value).split(",").map((v) => v.trim()).filter((v) => v !== "");
+        const values = parseInValues4(filter.value);
         if (values.length > 0) {
           const placeholders = values.map(() => "?").join(", ");
           conditions.push(`${columnName} IN (${placeholders})`);
@@ -1722,11 +1839,12 @@ function buildCassandraFilter(filters, logic = "AND") {
       }
     }
   }
-  if (conditions.length === 0) {
-    return { whereClause: "", params: [] };
-  }
-  const whereClause = conditions.join(" AND ");
-  return { whereClause, params };
+  const whereClause = conditions.length > 0 ? conditions.join(" AND ") : "";
+  return {
+    whereClause,
+    params,
+    ...skippedFilters.length > 0 && { skippedFilters }
+  };
 }
 function needsAllowFiltering(filters) {
   if (!filters || filters.length === 0) {
@@ -1968,7 +2086,7 @@ function validateFilter(filter) {
     }
   }
   if (filter.operator === "in") {
-    const values = Array.isArray(filter.value) ? filter.value : String(filter.value || "").split(",").map((v) => v.trim()).filter((v) => v !== "");
+    const values = Array.isArray(filter.value) ? filter.value : String(filter.value ?? "").split(",").map((v) => v.trim()).filter((v) => v !== "");
     if (values.length === 0) {
       errors.push("IN operator requires at least one value");
     }
@@ -2004,7 +2122,7 @@ function getFilterErrors(filters) {
 function normalizeFilter(filter) {
   const normalized = {
     id: filter.id,
-    columnName: filter.columnName.trim(),
+    columnName: typeof filter.columnName === "string" ? filter.columnName.trim() : String(filter.columnName ?? ""),
     operator: filter.operator,
     value: filter.value
   };
@@ -2174,6 +2292,7 @@ function toSql(rows, columns, options) {
 function getIdentifierQuoter(dbType) {
   switch (dbType) {
     case "mysql":
+    case "mariadb":
       return (id) => `\`${id.replace(/`/g, "``")}\``;
     case "sqlserver":
       return (id) => `[${id.replace(/\]/g, "]]")}]`;
@@ -2194,7 +2313,7 @@ function getValueQuoter(dbType) {
       return String(value);
     }
     if (typeof value === "boolean") {
-      if (dbType === "mysql" || dbType === "sqlserver") {
+      if (dbType === "mysql" || dbType === "mariadb" || dbType === "sqlserver") {
         return value ? "1" : "0";
       }
       return value ? "TRUE" : "FALSE";

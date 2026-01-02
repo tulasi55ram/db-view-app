@@ -71,7 +71,7 @@ export function validateFilter(filter: FilterCondition): FilterValidationResult 
   if (filter.operator === 'in') {
     const values = Array.isArray(filter.value)
       ? filter.value
-      : String(filter.value || '').split(',').map(v => v.trim()).filter(v => v !== '');
+      : String(filter.value ?? '').split(',').map(v => v.trim()).filter(v => v !== '');
 
     if (values.length === 0) {
       errors.push('IN operator requires at least one value');
@@ -144,7 +144,9 @@ export function getFilterErrors(filters: FilterCondition[]): string[] {
 export function normalizeFilter(filter: FilterCondition): FilterCondition {
   const normalized: FilterCondition = {
     id: filter.id,
-    columnName: filter.columnName.trim(),
+    columnName: typeof filter.columnName === 'string'
+      ? filter.columnName.trim()
+      : String(filter.columnName ?? ''),
     operator: filter.operator,
     value: filter.value,
   };

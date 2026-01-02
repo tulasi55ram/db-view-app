@@ -1,43 +1,33 @@
 import { type FC, useState, useMemo } from "react";
 import { Clock, Play, Trash2, Star } from "lucide-react";
 import { cn } from "@/utils/cn";
-
-export interface QueryHistoryEntry {
-  id: string;
-  sql: string;
-  executedAt: number;
-  duration?: number;
-  rowCount?: number;
-  success: boolean;
-  error?: string;
-  starred?: boolean;
-}
+import type { QueryHistoryEntry } from "@dbview/types";
 
 export interface QueryHistoryPanelProps {
   history: QueryHistoryEntry[];
   onSelectQuery?: (sql: string) => void;
   onClearHistory?: () => void;
-  onToggleStar?: (id: string) => void;
+  onToggleFavorite?: (id: string) => void;
 }
 
-export const QueryHistoryPanel: FC<QueryHistoryPanelProps> = ({ history, onSelectQuery, onClearHistory, onToggleStar }) => {
-  const [showStarredOnly, setShowStarredOnly] = useState(false);
+export const QueryHistoryPanel: FC<QueryHistoryPanelProps> = ({ history, onSelectQuery, onClearHistory, onToggleFavorite }) => {
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 
-  // Filter and sort history - starred items first, then by time
+  // Filter and sort history - favorites first, then by time
   const sortedHistory = useMemo(() => {
     let filtered = [...history];
-    if (showStarredOnly) {
-      filtered = filtered.filter((entry) => entry.starred);
+    if (showFavoritesOnly) {
+      filtered = filtered.filter((entry) => entry.isFavorite);
     }
-    // Sort: starred first, then by executedAt (newest first)
+    // Sort: favorites first, then by executedAt (newest first)
     return filtered.sort((a, b) => {
-      if (a.starred && !b.starred) return -1;
-      if (!a.starred && b.starred) return 1;
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
       return b.executedAt - a.executedAt;
     });
-  }, [history, showStarredOnly]);
+  }, [history, showFavoritesOnly]);
 
-  const starredCount = history.filter((entry) => entry.starred).length;
+  const favoritesCount = history.filter((entry) => entry.isFavorite).length;
 
   return (
     <div className="h-full border-l border-border bg-bg-secondary flex flex-col">
@@ -51,18 +41,18 @@ export const QueryHistoryPanel: FC<QueryHistoryPanelProps> = ({ history, onSelec
           )}
         </div>
         <div className="flex items-center gap-1">
-          {starredCount > 0 && (
+          {favoritesCount > 0 && (
             <button
-              onClick={() => setShowStarredOnly(!showStarredOnly)}
+              onClick={() => setShowFavoritesOnly(!showFavoritesOnly)}
               className={cn(
                 "p-1.5 rounded transition-colors",
-                showStarredOnly
+                showFavoritesOnly
                   ? "bg-yellow-500/20 text-yellow-500"
                   : "hover:bg-bg-hover text-text-tertiary hover:text-yellow-500"
               )}
-              title={showStarredOnly ? "Show all" : `Show starred (${starredCount})`}
+              title={showFavoritesOnly ? "Show all" : `Show favorites (${favoritesCount})`}
             >
-              <Star className={cn("w-3.5 h-3.5", showStarredOnly && "fill-current")} />
+              <Star className={cn("w-3.5 h-3.5", showFavoritesOnly && "fill-current")} />
             </button>
           )}
           {history.length > 0 && onClearHistory && (
@@ -81,12 +71,12 @@ export const QueryHistoryPanel: FC<QueryHistoryPanelProps> = ({ history, onSelec
       <div className="flex-1 overflow-auto p-2">
         {sortedHistory.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-text-tertiary text-sm">
-            {showStarredOnly ? (
+            {showFavoritesOnly ? (
               <>
                 <Star className="w-8 h-8 mb-2 opacity-30" />
-                <p>No starred queries</p>
+                <p>No favorite queries</p>
                 <button
-                  onClick={() => setShowStarredOnly(false)}
+                  onClick={() => setShowFavoritesOnly(false)}
                   className="mt-2 text-xs text-accent hover:underline"
                 >
                   Show all queries
@@ -106,29 +96,29 @@ export const QueryHistoryPanel: FC<QueryHistoryPanelProps> = ({ history, onSelec
                 key={entry.id}
                 className={cn(
                   "p-3 rounded-lg border transition-colors cursor-pointer group relative",
-                  entry.starred && "ring-1 ring-yellow-500/30",
+                  entry.isFavorite && "ring-1 ring-yellow-500/30",
                   entry.success
                     ? "border-border bg-bg-primary hover:bg-bg-hover"
                     : "border-error/30 bg-error/5 hover:bg-error/10"
                 )}
                 onClick={() => onSelectQuery?.(entry.sql)}
               >
-                {/* Star button - top right */}
-                {onToggleStar && (
+                {/* Favorite button - top right */}
+                {onToggleFavorite && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onToggleStar(entry.id);
+                      onToggleFavorite(entry.id);
                     }}
                     className={cn(
                       "absolute top-2 right-2 p-1 rounded transition-all",
-                      entry.starred
+                      entry.isFavorite
                         ? "text-yellow-500 hover:text-yellow-600"
                         : "text-text-tertiary opacity-0 group-hover:opacity-100 hover:text-yellow-500"
                     )}
-                    title={entry.starred ? "Remove from favorites" : "Add to favorites"}
+                    title={entry.isFavorite ? "Remove from favorites" : "Add to favorites"}
                   >
-                    <Star className={cn("w-3.5 h-3.5", entry.starred && "fill-current")} />
+                    <Star className={cn("w-3.5 h-3.5", entry.isFavorite && "fill-current")} />
                   </button>
                 )}
 

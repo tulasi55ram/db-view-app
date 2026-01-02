@@ -10,6 +10,7 @@ import { SaveQueryModal } from "./SaveQueryModal";
 import type { QueryHistoryEntry, TableInfo, ColumnMetadata, ExplainPlan } from "@dbview/types";
 import {
   Play,
+  X,
   Terminal,
   Clock,
   AlertCircle,
@@ -32,6 +33,7 @@ export interface SqlRunnerViewProps {
   sql: string;
   onSqlChange: (value: string) => void;
   onRunQuery: () => void;
+  onCancelQuery?: () => void;
   onFormatSql?: () => void;
   onExplainQuery?: () => void;
   loading: boolean;
@@ -136,6 +138,7 @@ export const SqlRunnerView: FC<SqlRunnerViewProps> = ({
   sql,
   onSqlChange,
   onRunQuery,
+  onCancelQuery,
   onFormatSql,
   onExplainQuery,
   loading,
@@ -227,22 +230,22 @@ export const SqlRunnerView: FC<SqlRunnerViewProps> = ({
       {/* Toolbar - Compact, organized */}
       <header className="flex items-center justify-between border-b border-vscode-border bg-vscode-bg-light px-3 py-2">
         <div className="flex items-center gap-2">
-          {/* Left: Run, Format, Explain buttons */}
+          {/* Left: Run/Cancel, Format, Explain buttons */}
           <button
             className={clsx(
               "inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-all",
               "disabled:cursor-not-allowed disabled:opacity-50",
               loading
-                ? "bg-vscode-warning/20 text-vscode-warning"
+                ? "bg-vscode-error/20 text-vscode-error hover:bg-vscode-error/30"
                 : "bg-vscode-accent text-white hover:bg-vscode-accent/80"
             )}
-            onClick={onRunQuery}
-            disabled={loading || !sql.trim()}
+            onClick={loading ? onCancelQuery : onRunQuery}
+            disabled={!loading && !sql.trim()}
           >
             {loading ? (
               <>
-                <Clock className="h-3.5 w-3.5 animate-spin" />
-                Running...
+                <X className="h-3.5 w-3.5" />
+                Cancel
               </>
             ) : (
               <>

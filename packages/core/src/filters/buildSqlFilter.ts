@@ -97,6 +97,77 @@ function getNotLikeOperator(dbType: DatabaseType): string {
 }
 
 /**
+ * Escapes LIKE pattern wildcards in user input to prevent wildcard injection.
+ *
+ * Without escaping, a user could input '%' or '_' to match unexpected data.
+ * For example, searching for '%admin%' would match any admin-related value.
+ *
+ * @param value - User input to escape
+ * @param dbType - Database type (SQL Server uses different escape syntax)
+ * @returns Escaped string safe for LIKE patterns
+ *
+ * @example
+ * ```typescript
+ * escapeLikePattern('50%', 'postgres')  // Returns '50\\%'
+ * escapeLikePattern('test_value', 'mysql')  // Returns 'test\\_value'
+ * escapeLikePattern('50%', 'sqlserver')  // Returns '50[%]'
+ * ```
+ */
+function escapeLikePattern(value: unknown, dbType: DatabaseType): string {
+  const strValue = String(value ?? '');
+
+  if (dbType === 'sqlserver') {
+    // SQL Server uses [char] syntax to escape special characters
+    return strValue
+      .replace(/\[/g, '[[]')  // Escape opening bracket first
+      .replace(/%/g, '[%]')
+      .replace(/_/g, '[_]');
+  }
+
+  // Standard SQL escape with backslash (PostgreSQL, MySQL, MariaDB, SQLite)
+  return strValue
+    .replace(/\\/g, '\\\\')  // Escape backslash first
+    .replace(/%/g, '\\%')
+    .replace(/_/g, '\\_');
+}
+
+/**
+ * Gets the ESCAPE clause for LIKE patterns.
+ * Required for standard SQL databases to specify the escape character.
+ */
+function getLikeEscapeClause(dbType: DatabaseType): string {
+  if (dbType === 'sqlserver') {
+    // SQL Server uses [char] syntax, no ESCAPE clause needed
+    return '';
+  }
+  // Standard SQL uses backslash escape
+  return " ESCAPE '\\'";
+}
+
+/**
+ * Parses IN operator values, preserving original types.
+ * Arrays keep their element types (only trim strings).
+ * String input is split by comma and kept as strings to preserve leading zeros
+ * and ensure consistent string matching behavior.
+ *
+ * @param value - The filter value (array or comma-separated string)
+ * @returns Array of values with preserved types
+ */
+function parseInValues(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    // Preserve types exactly, only trim strings, filter empty/null values
+    return value
+      .map(v => typeof v === 'string' ? v.trim() : v)
+      .filter(v => v !== '' && v !== null && v !== undefined);
+  }
+  // String input: split and keep as strings (preserves leading zeros, etc.)
+  return String(value ?? '')
+    .split(',')
+    .map(v => v.trim())
+    .filter(v => v !== '');
+}
+
+/**
  * Builds a SQL WHERE clause from filter conditions.
  *
  * Uses parameterized queries to prevent SQL injection.
@@ -133,9 +204,16 @@ export function buildSqlFilter(
   logic: 'AND' | 'OR',
   options: SqlFilterOptions
 ): SqlFilterResult {
-  const { dbType, startIndex = 1 } = options;
+  const { dbType } = options;
   const quoteIdentifier = options.quoteIdentifier ?? getQuoteFunction(dbType);
   const placeholderStyle = getPlaceholderStyle(dbType);
+
+  // Default startIndex depends on placeholder style:
+  // - positional ($1, $2): starts at 1 (PostgreSQL convention)
+  // - named (@p0, @p1): starts at 0 (consistent with buildSqlFilterNamed)
+  // - question (?): index doesn't appear in output, default to 0
+  const defaultStartIndex = placeholderStyle === 'positional' ? 1 : 0;
+  const startIndex = options.startIndex ?? defaultStartIndex;
 
   if (!filters || filters.length === 0) {
     return { whereClause: '', params: [] };
@@ -156,7 +234,7 @@ export function buildSqlFilter(
         paramIndex++;
         return '?';
       case 'named':
-        return `@p${paramIndex++ - 1}`;
+        return `@p${paramIndex++}`;
     }
   }
 
@@ -181,25 +259,37 @@ export function buildSqlFilter(
         params.push(filter.value);
         break;
 
-      case 'contains':
-        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}`);
-        params.push(`%${filter.value}%`);
+      case 'contains': {
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}${escapeClause}`);
+        params.push(`%${escaped}%`);
         break;
+      }
 
-      case 'not_contains':
-        conditions.push(`${textColumn} ${notLikeOp} ${getPlaceholder()}`);
-        params.push(`%${filter.value}%`);
+      case 'not_contains': {
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} ${notLikeOp} ${getPlaceholder()}${escapeClause}`);
+        params.push(`%${escaped}%`);
         break;
+      }
 
-      case 'starts_with':
-        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}`);
-        params.push(`${filter.value}%`);
+      case 'starts_with': {
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}${escapeClause}`);
+        params.push(`${escaped}%`);
         break;
+      }
 
-      case 'ends_with':
-        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}`);
-        params.push(`%${filter.value}`);
+      case 'ends_with': {
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} ${likeOp} ${getPlaceholder()}${escapeClause}`);
+        params.push(`%${escaped}`);
         break;
+      }
 
       case 'greater_than':
         conditions.push(`${columnName} > ${getPlaceholder()}`);
@@ -230,7 +320,13 @@ export function buildSqlFilter(
         break;
 
       case 'between':
-        if (filter.value2 !== undefined) {
+        if (filter.value2 === undefined || filter.value2 === null) {
+          throw new Error(
+            `BETWEEN operator on column "${filter.columnName}" requires both value and value2. ` +
+            'Provide value2 or use a different operator.'
+          );
+        }
+        {
           const p1 = getPlaceholder();
           const p2 = getPlaceholder();
           conditions.push(`${columnName} BETWEEN ${p1} AND ${p2}`);
@@ -239,11 +335,8 @@ export function buildSqlFilter(
         break;
 
       case 'in': {
-        // Parse comma-separated values and filter empty strings
-        const values = (Array.isArray(filter.value)
-          ? filter.value.map(v => String(v).trim())
-          : String(filter.value).split(',').map(v => v.trim())
-        ).filter(v => v !== '');
+        // Parse values preserving types (numbers stay numbers)
+        const values = parseInValues(filter.value);
 
         if (values.length > 0) {
           const placeholders = values.map(() => getPlaceholder()).join(', ');
@@ -321,29 +414,37 @@ export function buildSqlFilterNamed(
 
       case 'contains': {
         const name = getParamName();
-        conditions.push(`${textColumn} LIKE @${name}`);
-        params[name] = `%${filter.value}%`;
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} LIKE @${name}${escapeClause}`);
+        params[name] = `%${escaped}%`;
         break;
       }
 
       case 'not_contains': {
         const name = getParamName();
-        conditions.push(`${textColumn} NOT LIKE @${name}`);
-        params[name] = `%${filter.value}%`;
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} NOT LIKE @${name}${escapeClause}`);
+        params[name] = `%${escaped}%`;
         break;
       }
 
       case 'starts_with': {
         const name = getParamName();
-        conditions.push(`${textColumn} LIKE @${name}`);
-        params[name] = `${filter.value}%`;
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} LIKE @${name}${escapeClause}`);
+        params[name] = `${escaped}%`;
         break;
       }
 
       case 'ends_with': {
         const name = getParamName();
-        conditions.push(`${textColumn} LIKE @${name}`);
-        params[name] = `%${filter.value}`;
+        const escaped = escapeLikePattern(filter.value, dbType);
+        const escapeClause = getLikeEscapeClause(dbType);
+        conditions.push(`${textColumn} LIKE @${name}${escapeClause}`);
+        params[name] = `%${escaped}`;
         break;
       }
 
@@ -384,21 +485,23 @@ export function buildSqlFilterNamed(
         break;
 
       case 'between': {
-        if (filter.value2 !== undefined) {
-          const name1 = getParamName();
-          const name2 = getParamName();
-          conditions.push(`${columnName} BETWEEN @${name1} AND @${name2}`);
-          params[name1] = filter.value;
-          params[name2] = filter.value2;
+        if (filter.value2 === undefined || filter.value2 === null) {
+          throw new Error(
+            `BETWEEN operator on column "${filter.columnName}" requires both value and value2. ` +
+            'Provide value2 or use a different operator.'
+          );
         }
+        const name1 = getParamName();
+        const name2 = getParamName();
+        conditions.push(`${columnName} BETWEEN @${name1} AND @${name2}`);
+        params[name1] = filter.value;
+        params[name2] = filter.value2;
         break;
       }
 
       case 'in': {
-        const values = (Array.isArray(filter.value)
-          ? filter.value.map(v => String(v).trim())
-          : String(filter.value).split(',').map(v => v.trim())
-        ).filter(v => v !== '');
+        // Parse values preserving types (numbers stay numbers)
+        const values = parseInValues(filter.value);
 
         if (values.length > 0) {
           const paramNames: string[] = [];

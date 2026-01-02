@@ -8,6 +8,37 @@ import type { FilterCondition } from '@dbview/types';
 import type { ElasticsearchFilterResult } from './types.js';
 
 /**
+ * Escapes Elasticsearch wildcard special characters (* and ?).
+ * Without escaping, user input could alter the wildcard pattern behavior.
+ *
+ * @param str - User input to escape
+ * @returns Escaped string safe for wildcard patterns
+ */
+function escapeWildcard(str: string): string {
+  return str.replace(/\\/g, '\\\\').replace(/\*/g, '\\*').replace(/\?/g, '\\?');
+}
+
+/**
+ * Parses IN operator values, preserving original types.
+ * Arrays keep their element types (only trim strings).
+ * String input is split by comma and kept as strings to preserve leading zeros
+ * and ensure consistent string matching behavior.
+ */
+function parseInValues(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    // Preserve types exactly, only trim strings, filter empty/null values
+    return value
+      .map(v => typeof v === 'string' ? v.trim() : v)
+      .filter(v => v !== '' && v !== null && v !== undefined);
+  }
+  // String input: split and keep as strings (preserves leading zeros, etc.)
+  return String(value ?? '')
+    .split(',')
+    .map(v => v.trim())
+    .filter(v => v !== '');
+}
+
+/**
  * Converts a single filter condition to an Elasticsearch query clause.
  */
 function filterToEsClause(filter: FilterCondition): Record<string, unknown> | null {
@@ -25,17 +56,20 @@ function filterToEsClause(filter: FilterCondition): Record<string, unknown> | nu
       return { bool: { must_not: { term: { [columnName]: value } } } };
 
     case 'contains':
-      // Use match for text search or wildcard for exact patterns
-      return { wildcard: { [columnName]: { value: `*${value}*`, case_insensitive: true } } };
+      // Use wildcard for contains pattern (escaped to prevent wildcard injection)
+      return { wildcard: { [columnName]: { value: `*${escapeWildcard(String(value))}*`, case_insensitive: true } } };
 
     case 'not_contains':
-      return { bool: { must_not: { wildcard: { [columnName]: { value: `*${value}*`, case_insensitive: true } } } } };
+      // Escaped to prevent wildcard injection
+      return { bool: { must_not: { wildcard: { [columnName]: { value: `*${escapeWildcard(String(value))}*`, case_insensitive: true } } } } };
 
     case 'starts_with':
-      return { prefix: { [columnName]: { value: String(value).toLowerCase(), case_insensitive: true } } };
+      // Use wildcard with proper escaping for consistency with other string operators
+      return { wildcard: { [columnName]: { value: `${escapeWildcard(String(value))}*`, case_insensitive: true } } };
 
     case 'ends_with':
-      return { wildcard: { [columnName]: { value: `*${value}`, case_insensitive: true } } };
+      // Escaped to prevent wildcard injection
+      return { wildcard: { [columnName]: { value: `*${escapeWildcard(String(value))}`, case_insensitive: true } } };
 
     case 'greater_than':
       return { range: { [columnName]: { gt: value } } };
@@ -56,15 +90,16 @@ function filterToEsClause(filter: FilterCondition): Record<string, unknown> | nu
       return { exists: { field: columnName } };
 
     case 'between':
-      if (value2 !== undefined) {
-        return { range: { [columnName]: { gte: value, lte: value2 } } };
+      if (value2 === undefined || value2 === null) {
+        throw new Error(
+          `BETWEEN operator on column "${columnName}" requires both value and value2. ` +
+          'Provide value2 or use a different operator.'
+        );
       }
-      return null;
+      return { range: { [columnName]: { gte: value, lte: value2 } } };
 
     case 'in': {
-      const values = Array.isArray(value)
-        ? value
-        : String(value).split(',').map(v => v.trim()).filter(v => v !== '');
+      const values = parseInValues(value);
       return { terms: { [columnName]: values } };
     }
 

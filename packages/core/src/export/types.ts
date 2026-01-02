@@ -34,7 +34,7 @@ export interface JsonExportOptions {
  */
 export interface SqlExportOptions {
   /** Database type for syntax variations */
-  dbType?: 'postgres' | 'mysql' | 'sqlite' | 'sqlserver';
+  dbType?: 'postgres' | 'mysql' | 'mariadb' | 'sqlite' | 'sqlserver';
   /** Schema name (optional, some DBs don't use schemas) */
   schema?: string;
   /** Table name (required) */

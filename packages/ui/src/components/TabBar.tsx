@@ -2,15 +2,10 @@ import { FC, useState, useRef, useEffect } from 'react';
 import type { Tab } from '@dbview/types';
 import { Table2, FileCode, X, Plus } from 'lucide-react';
 import clsx from 'clsx';
+import { useTabStore } from '@dbview/shared-state/stores';
 
 interface TabBarProps {
-  tabs: Tab[];
-  activeTabId: string | null;
-  onTabSelect: (tabId: string) => void;
-  onTabClose: (tabId: string) => void;
   onNewQuery: () => void;
-  onCloseOtherTabs?: (tabId: string) => void;
-  onCloseAllTabs?: () => void;
 }
 
 interface ContextMenuState {
@@ -20,15 +15,16 @@ interface ContextMenuState {
   tabId: string | null;
 }
 
-export const TabBar: FC<TabBarProps> = ({
-  tabs,
-  activeTabId,
-  onTabSelect,
-  onTabClose,
-  onNewQuery,
-  onCloseOtherTabs,
-  onCloseAllTabs,
-}) => {
+export const TabBar: FC<TabBarProps> = ({ onNewQuery }) => {
+  const {
+    tabs,
+    activeTabId,
+    setActiveTab,
+    closeTab,
+    closeOtherTabs,
+    closeAllTabs
+  } = useTabStore();
+
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({
     visible: false,
     x: 0,
@@ -63,7 +59,7 @@ export const TabBar: FC<TabBarProps> = ({
 
   const handleCloseTab = (e: React.MouseEvent, tabId: string) => {
     e.stopPropagation();
-    onTabClose(tabId);
+    closeTab(tabId);
     if (contextMenu.tabId === tabId) {
       setContextMenu({ visible: false, x: 0, y: 0, tabId: null });
     }
@@ -77,13 +73,13 @@ export const TabBar: FC<TabBarProps> = ({
 
     switch (action) {
       case 'close':
-        onTabClose(tabId);
+        closeTab(tabId);
         break;
       case 'close-others':
-        onCloseOtherTabs?.(tabId);
+        closeOtherTabs(tabId);
         break;
       case 'close-all':
-        onCloseAllTabs?.();
+        closeAllTabs();
         break;
     }
   };
@@ -120,7 +116,7 @@ export const TabBar: FC<TabBarProps> = ({
                   ? 'bg-vscode-bg text-vscode-text border-t-2 border-t-vscode-accent'
                   : 'bg-vscode-bg-light text-vscode-text-muted hover:bg-vscode-bg-hover hover:text-vscode-text'
               )}
-              onClick={() => onTabSelect(tab.id)}
+              onClick={() => setActiveTab(tab.id)}
               onContextMenu={(e) => handleContextMenu(e, tab.id)}
               role="tab"
               aria-selected={isActive}

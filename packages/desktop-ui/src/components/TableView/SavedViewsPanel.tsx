@@ -4,6 +4,7 @@ import { cn } from "@/utils/cn";
 import { getElectronAPI } from "@/electron";
 import { toast } from "sonner";
 import type { SavedView, FilterCondition } from "@dbview/types";
+import { SidePanel } from "../panels/SidePanel";
 
 interface SavedViewsPanelProps {
   open: boolean;
@@ -15,6 +16,7 @@ interface SavedViewsPanelProps {
   currentFilterLogic: "AND" | "OR";
   currentSortColumn: string | null;
   currentSortDirection: "ASC" | "DESC";
+  variant?: "inline" | "overlay";
 }
 
 export const SavedViewsPanel = memo(function SavedViewsPanel({
@@ -27,6 +29,7 @@ export const SavedViewsPanel = memo(function SavedViewsPanel({
   currentFilterLogic,
   currentSortColumn,
   currentSortDirection,
+  variant = "inline",
 }: SavedViewsPanelProps) {
   const [views, setViews] = useState<SavedView[]>([]);
   const [loading, setLoading] = useState(false);
@@ -112,6 +115,104 @@ export const SavedViewsPanel = memo(function SavedViewsPanel({
 
   if (!open) return null;
 
+  // Content component
+  const content = loading ? (
+    <div className="flex items-center justify-center h-32 text-text-tertiary text-sm">
+      Loading views...
+    </div>
+  ) : views.length === 0 ? (
+    <div className="flex flex-col items-center justify-center h-32 text-center px-4">
+      <Bookmark className="w-8 h-8 text-text-tertiary mb-2" />
+      <p className="text-sm text-text-secondary">No saved views</p>
+      <p className="text-xs text-text-tertiary mt-1">
+        Create filters and sorting, then save as a view
+      </p>
+    </div>
+  ) : (
+    <div className="divide-y divide-border">
+      {views.map((view) => (
+        <div
+          key={view.id}
+          className="p-3 hover:bg-bg-hover transition-colors group cursor-pointer"
+          onClick={() => {
+            onLoadView(view);
+            onClose();
+          }}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-text-primary truncate">
+                  {view.name}
+                </span>
+                {view.isDefault && (
+                  <Star className="w-3 h-3 text-yellow-500 flex-shrink-0" fill="currentColor" />
+                )}
+              </div>
+              {view.description && (
+                <p className="text-xs text-text-tertiary mt-0.5 line-clamp-2">
+                  {view.description}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeleteView(view.id, view.name);
+              }}
+              className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-error/10 text-error transition-all"
+              title="Delete view"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3 mt-2 text-[10px] text-text-tertiary">
+            {view.state.filters.length > 0 && (
+              <span className="flex items-center gap-1">
+                <Filter className="w-3 h-3" />
+                {view.state.filters.length} filter{view.state.filters.length !== 1 && "s"}
+              </span>
+            )}
+            {view.state.sorting.length > 0 && (
+              <span>
+                Sorted by {view.state.sorting[0].columnName}
+              </span>
+            )}
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              {formatDate(view.updatedAt)}
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Footer component
+  const footer = (
+    <QuickSaveView
+      currentFilters={currentFilters}
+      existingNames={views.map((v) => v.name)}
+      onSave={handleSaveView}
+    />
+  );
+
+  // Inline mode - use SidePanel wrapper
+  if (variant === "inline") {
+    return (
+      <SidePanel
+        title="Saved Views"
+        icon={<Bookmark className="w-4 h-4 text-accent" />}
+        onClose={onClose}
+        footer={footer}
+      >
+        {content}
+      </SidePanel>
+    );
+  }
+
+  // Overlay mode - original fixed positioning with backdrop
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       {/* Backdrop */}
@@ -135,87 +236,12 @@ export const SavedViewsPanel = memo(function SavedViewsPanel({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto">
-          {loading ? (
-            <div className="flex items-center justify-center h-32 text-text-tertiary text-sm">
-              Loading views...
-            </div>
-          ) : views.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-32 text-center px-4">
-              <Bookmark className="w-8 h-8 text-text-tertiary mb-2" />
-              <p className="text-sm text-text-secondary">No saved views</p>
-              <p className="text-xs text-text-tertiary mt-1">
-                Create filters and sorting, then save as a view
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {views.map((view) => (
-                <div
-                  key={view.id}
-                  className="p-3 hover:bg-bg-hover transition-colors group cursor-pointer"
-                  onClick={() => {
-                    onLoadView(view);
-                    onClose();
-                  }}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-text-primary truncate">
-                          {view.name}
-                        </span>
-                        {view.isDefault && (
-                          <Star className="w-3 h-3 text-yellow-500 flex-shrink-0" fill="currentColor" />
-                        )}
-                      </div>
-                      {view.description && (
-                        <p className="text-xs text-text-tertiary mt-0.5 line-clamp-2">
-                          {view.description}
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteView(view.id, view.name);
-                      }}
-                      className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-error/10 text-error transition-all"
-                      title="Delete view"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-3 mt-2 text-[10px] text-text-tertiary">
-                    {view.state.filters.length > 0 && (
-                      <span className="flex items-center gap-1">
-                        <Filter className="w-3 h-3" />
-                        {view.state.filters.length} filter{view.state.filters.length !== 1 && "s"}
-                      </span>
-                    )}
-                    {view.state.sorting.length > 0 && (
-                      <span>
-                        Sorted by {view.state.sorting[0].columnName}
-                      </span>
-                    )}
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {formatDate(view.updatedAt)}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          {content}
         </div>
 
         {/* Quick Save Section */}
         <div className="border-t border-border p-3 bg-bg-secondary/50">
-          <QuickSaveView
-            currentFilters={currentFilters}
-            existingNames={views.map((v) => v.name)}
-            onSave={handleSaveView}
-          />
+          {footer}
         </div>
       </div>
     </div>

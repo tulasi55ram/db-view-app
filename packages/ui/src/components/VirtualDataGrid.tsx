@@ -3,11 +3,11 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   useReactTable,
   getCoreRowModel,
-  getSortedRowModel,
   flexRender,
   type ColumnDef,
   type SortingState,
   type Row,
+  type ColumnResizeMode,
 } from '@tanstack/react-table';
 import clsx from 'clsx';
 import type { ColumnMetadata } from '@dbview/types';
@@ -15,11 +15,15 @@ import { CellEditor } from './CellEditor';
 import { formatCellValue } from '../utils/formatCellValue';
 import { ScrollProgressBar } from './ScrollProgressBar';
 import { ScrollButtons } from './ScrollButtons';
+import { TableSkeleton } from './Skeleton';
 
 // Row height constant for virtualization
 const ROW_HEIGHT = 36;
 const HEADER_HEIGHT = 40;
 const OVERSCAN = 5;
+const DEFAULT_COLUMN_WIDTH = 150;
+const MIN_COLUMN_WIDTH = 50;
+const MAX_COLUMN_WIDTH = 500;
 
 interface VirtualDataGridProps {
   columns: ColumnMetadata[];
@@ -108,7 +112,11 @@ const VirtualRow = memo(function VirtualRow({
                 <input
                   type="checkbox"
                   checked={isSelected}
-                  onChange={() => onSelectRow(rowIndex)}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    onSelectRow(rowIndex);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
                   className="cursor-pointer"
                 />
               </div>
@@ -223,7 +231,11 @@ export function VirtualDataGrid({
             <input
               type="checkbox"
               checked={rows.length > 0 && selectedRows.size === rows.length}
-              onChange={handleSelectAll}
+              onChange={(e) => {
+                e.stopPropagation();
+                handleSelectAll();
+              }}
+              onClick={(e) => e.stopPropagation()}
               className="cursor-pointer"
             />
           </div>
@@ -241,12 +253,18 @@ export function VirtualDataGrid({
         accessorKey: col.name,
         header: col.name,
         cell: () => null, // Rendered in VirtualRow
-        size: 150,
+        size: DEFAULT_COLUMN_WIDTH,
+        minSize: MIN_COLUMN_WIDTH,
+        maxSize: MAX_COLUMN_WIDTH,
+        enableResizing: true,
       });
     });
 
     return cols;
   }, [filteredColumnMetadata, selectable, rows.length, selectedRows.size, handleSelectAll]);
+
+  // Column resize mode - onChange for real-time resizing
+  const [columnResizeMode] = useState<ColumnResizeMode>('onChange');
 
   const table = useReactTable({
     data: rows,
@@ -254,7 +272,9 @@ export function VirtualDataGrid({
     state: { sorting },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
+    manualSorting: true, // Enable server-side sorting
+    columnResizeMode,
+    enableColumnResizing: true,
   });
 
   const { rows: tableRows } = table.getRowModel();
@@ -275,7 +295,10 @@ export function VirtualDataGrid({
     return table.getAllColumns().reduce((acc, col) => acc + (col.getSize() || 150), 0);
   }, [table]);
 
-  // Update scroll progress and visible range
+  // Debounce helper for scroll performance
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Update scroll progress and visible range with debouncing
   const handleScroll = useCallback(() => {
     const scrollElement = parentRef.current;
     if (!scrollElement) return;
@@ -283,13 +306,30 @@ export function VirtualDataGrid({
     const { scrollTop, scrollHeight, clientHeight } = scrollElement;
     const maxScroll = scrollHeight - clientHeight;
     const progress = maxScroll > 0 ? (scrollTop / maxScroll) * 100 : 0;
+
+    // Update progress immediately for smooth progress bar
     setScrollProgress(progress);
 
-    // Calculate visible row range
-    const startRow = Math.floor(scrollTop / ROW_HEIGHT);
-    const endRow = Math.min(startRow + Math.ceil(clientHeight / ROW_HEIGHT), tableRows.length);
-    setVisibleRowRange({ start: startRow, end: endRow });
+    // Debounce the visible row range calculation
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+
+    scrollTimeoutRef.current = setTimeout(() => {
+      const startRow = Math.floor(scrollTop / ROW_HEIGHT);
+      const endRow = Math.min(startRow + Math.ceil(clientHeight / ROW_HEIGHT), tableRows.length);
+      setVisibleRowRange({ start: startRow, end: endRow });
+    }, 16); // ~60fps
   }, [tableRows.length]);
+
+  // Cleanup scroll timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Scroll handlers
   const scrollToTop = useCallback(() => {
@@ -335,11 +375,13 @@ export function VirtualDataGrid({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-vscode-accent border-t-transparent" />
-          <div className="text-vscode-text-muted">Loading...</div>
-        </div>
+      <div className="h-full overflow-hidden">
+        <TableSkeleton
+          columns={columns.length || 5}
+          rows={Math.floor((typeof window !== 'undefined' ? window.innerHeight : 600) / ROW_HEIGHT)}
+          showRowNumbers={selectable}
+          rowHeight={ROW_HEIGHT}
+        />
       </div>
     );
   }
@@ -382,25 +424,31 @@ export function VirtualDataGrid({
                   <div
                     key={header.id}
                     className={clsx(
-                      'px-3 py-2 flex items-center font-semibold text-vscode-text border-r border-vscode-border flex-shrink-0',
+                      'relative px-3 py-2 flex items-center font-semibold text-vscode-text border-r border-vscode-border flex-shrink-0',
                       header.column.getCanSort() && 'cursor-pointer hover:bg-vscode-bg-hover select-none'
                     )}
                     onClick={header.column.getToggleSortingHandler()}
                     style={{ width: header.column.getSize(), minWidth: header.column.getSize() }}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-1 overflow-hidden">
                       {header.column.id === '__select' ? (
                         <div className="flex items-center justify-center w-full">
                           <input
                             type="checkbox"
                             checked={rows.length > 0 && selectedRows.size === rows.length}
-                            onChange={handleSelectAll}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleSelectAll();
+                            }}
+                            onClick={(e) => e.stopPropagation()}
                             className="cursor-pointer"
                           />
                         </div>
                       ) : (
                         <>
-                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          <span className="truncate">
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                          </span>
                           {{
                             asc: ' ↑',
                             desc: ' ↓',
@@ -408,6 +456,25 @@ export function VirtualDataGrid({
                         </>
                       )}
                     </div>
+                    {/* Column resize handle */}
+                    {header.column.getCanResize() && (
+                      <div
+                        onMouseDown={header.getResizeHandler()}
+                        onTouchStart={header.getResizeHandler()}
+                        onClick={(e) => e.stopPropagation()}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          // Reset to default width on double-click
+                          header.column.resetSize();
+                        }}
+                        className={clsx(
+                          'absolute right-0 top-0 h-full w-1 cursor-col-resize select-none touch-none',
+                          'hover:bg-vscode-accent transition-colors',
+                          header.column.getIsResizing() && 'bg-vscode-accent'
+                        )}
+                        title="Drag to resize column, double-click to reset"
+                      />
+                    )}
                   </div>
                 ))}
               </div>

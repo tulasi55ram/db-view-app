@@ -53,6 +53,9 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
   private readonly reconnectDelayMs = 2000;
   private readonly healthCheckIntervalMs = 30000; // 30 seconds
 
+  // Track running queries for cancellation
+  private runningQueries = new Map<string, sql.Request>(); // queryId -> Request
+
   constructor(config: SQLServerConnectionConfig) {
     super();
     this.connectionConfig = config;
@@ -708,9 +711,48 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Query Execution ====================
 
-  async runQuery(sql: string): Promise<QueryResultSet> {
-    const result = await this.pool!.request().query(sql);
-    return this.createResultSet(result);
+  async runQuery(sqlQuery: string, queryId?: string): Promise<QueryResultSet> {
+    if (!this.pool) {
+      throw new Error('Not connected to SQL Server');
+    }
+
+    const request = this.pool.request();
+
+    // Track the request for cancellation
+    if (queryId) {
+      this.runningQueries.set(queryId, request);
+    }
+
+    try {
+      const result = await request.query(sqlQuery);
+      return this.createResultSet(result);
+    } finally {
+      // Clean up tracking
+      if (queryId) {
+        this.runningQueries.delete(queryId);
+      }
+    }
+  }
+
+  async cancelQuery(queryId: string): Promise<void> {
+    const request = this.runningQueries.get(queryId);
+    if (!request) {
+      // Query already completed or not found
+      return;
+    }
+
+    try {
+      // Cancel the request using mssql's cancel method
+      request.cancel();
+
+      console.log(`[SQLServerAdapter] Successfully cancelled query ${queryId}`);
+    } catch (error) {
+      console.error(`[SQLServerAdapter] Failed to cancel query ${queryId}:`, error);
+      throw new Error(`Failed to cancel query: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      // Always clean up tracking
+      this.runningQueries.delete(queryId);
+    }
   }
 
   async explainQuery(querySQL: string): Promise<ExplainPlan> {

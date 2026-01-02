@@ -46,6 +46,9 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
   private error: Error | undefined;
   private readonly connectionConfig: MongoDBConnectionConfig;
 
+  // Track running queries for cancellation
+  private runningQueries = new Map<string, AbortController>(); // queryId -> AbortController
+
   readonly capabilities: DatabaseCapabilities = {
     // Hierarchy
     supportsSchemas: false, // MongoDB uses databases directly, no schemas
@@ -454,7 +457,7 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
    *   "query": { "active": true }
    * }
    */
-  async runQuery(query: string): Promise<QueryResultSet> {
+  async runQuery(query: string, queryId?: string): Promise<QueryResultSet> {
     if (!this.db) {
       throw new Error('Not connected to MongoDB database');
     }
@@ -474,51 +477,88 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
     const collection = this.db.collection(collectionName);
     let results: any[] = [];
 
-    // Aggregation Pipeline
-    if (parsedQuery.pipeline && Array.isArray(parsedQuery.pipeline)) {
-      const pipeline = parsedQuery.pipeline;
-      const options = parsedQuery.options || {};
-      results = await collection.aggregate(pipeline, options).toArray();
+    // Create AbortController for cancellation support
+    let abortController: AbortController | undefined;
+    if (queryId) {
+      abortController = new AbortController();
+      this.runningQueries.set(queryId, abortController);
     }
-    // Find Query
-    else if (parsedQuery.find !== undefined) {
-      const filter = parsedQuery.find || {};
-      const projection = parsedQuery.projection || {};
-      const sort = parsedQuery.sort || {};
-      const limit = parsedQuery.limit || 100;
-      const skip = parsedQuery.skip || 0;
 
-      let cursor = collection.find(filter);
+    try {
+      // Aggregation Pipeline
+      if (parsedQuery.pipeline && Array.isArray(parsedQuery.pipeline)) {
+        const pipeline = parsedQuery.pipeline;
+        const options = parsedQuery.options || {};
 
-      if (Object.keys(projection).length > 0) {
-        cursor = cursor.project(projection);
-      }
-      if (Object.keys(sort).length > 0) {
-        cursor = cursor.sort(sort);
-      }
-      if (skip > 0) {
-        cursor = cursor.skip(skip);
-      }
-      cursor = cursor.limit(limit);
+        // Add abort signal if available
+        if (abortController) {
+          options.signal = abortController.signal;
+        }
 
-      results = await cursor.toArray();
-    }
-    // Count Query
-    else if (parsedQuery.count !== undefined) {
-      const filter = parsedQuery.count || {};
-      const count = await collection.countDocuments(filter);
-      results = [{ count }];
-    }
-    // Distinct Query
-    else if (parsedQuery.distinct) {
-      const field = parsedQuery.distinct;
-      const filter = parsedQuery.query || {};
-      const distinctValues = await collection.distinct(field, filter);
-      results = distinctValues.map((value: any) => ({ [field]: value }));
-    }
-    // Default: treat as find with empty filter
-    else {
-      results = await collection.find({}).limit(100).toArray();
+        results = await collection.aggregate(pipeline, options).toArray();
+      }
+      // Find Query
+      else if (parsedQuery.find !== undefined) {
+        const filter = parsedQuery.find || {};
+        const projection = parsedQuery.projection || {};
+        const sort = parsedQuery.sort || {};
+        const limit = parsedQuery.limit || 100;
+        const skip = parsedQuery.skip || 0;
+
+        const findOptions: any = {};
+        if (abortController) {
+          findOptions.signal = abortController.signal;
+        }
+
+        let cursor = collection.find(filter, findOptions);
+
+        if (Object.keys(projection).length > 0) {
+          cursor = cursor.project(projection);
+        }
+        if (Object.keys(sort).length > 0) {
+          cursor = cursor.sort(sort);
+        }
+        if (skip > 0) {
+          cursor = cursor.skip(skip);
+        }
+        cursor = cursor.limit(limit);
+
+        results = await cursor.toArray();
+      }
+      // Count Query
+      else if (parsedQuery.count !== undefined) {
+        const filter = parsedQuery.count || {};
+        const options: any = {};
+        if (abortController) {
+          options.signal = abortController.signal;
+        }
+        const count = await collection.countDocuments(filter, options);
+        results = [{ count }];
+      }
+      // Distinct Query
+      else if (parsedQuery.distinct) {
+        const field = parsedQuery.distinct;
+        const filter = parsedQuery.query || {};
+        const options: any = {};
+        if (abortController) {
+          options.signal = abortController.signal;
+        }
+        const distinctValues = await collection.distinct(field, filter, options);
+        results = distinctValues.map((value: any) => ({ [field]: value }));
+      }
+      // Default: treat as find with empty filter
+      else {
+        const findOptions: any = { limit: 100 };
+        if (abortController) {
+          findOptions.signal = abortController.signal;
+        }
+        results = await collection.find({}, findOptions).toArray();
+      }
+    } finally {
+      // Clean up tracking
+      if (queryId) {
+        this.runningQueries.delete(queryId);
+      }
     }
 
     // Extract columns from results
@@ -564,6 +604,27 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
 
   async explainQuery(query: string): Promise<any> {
     throw new Error('Explain is not yet implemented for MongoDB');
+  }
+
+  async cancelQuery(queryId: string): Promise<void> {
+    const abortController = this.runningQueries.get(queryId);
+    if (!abortController) {
+      // Query already completed or not found
+      return;
+    }
+
+    try {
+      // Abort the query using AbortController
+      abortController.abort();
+
+      console.log(`[MongoDBAdapter] Successfully cancelled query ${queryId}`);
+    } catch (error) {
+      console.error(`[MongoDBAdapter] Failed to cancel query ${queryId}:`, error);
+      throw new Error(`Failed to cancel query: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      // Always clean up tracking
+      this.runningQueries.delete(queryId);
+    }
   }
 
   // ==================== CRUD Operations ====================

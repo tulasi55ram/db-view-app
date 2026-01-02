@@ -1,23 +1,22 @@
 import type { FC } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import type { SortingState } from "@tanstack/react-table";
-import type { ColumnMetadata, TableIndex, TableStatistics, DatabaseType } from "@dbview/types";
+import type { ColumnMetadata, TableIndex, TableStatistics, DatabaseType, SavedView } from "@dbview/types";
 import { DataGrid, type DataGridColumn } from "./DataGrid";
 import { DataGridV2 } from "./DataGridV2";
 import { VirtualDataGrid } from "./VirtualDataGrid";
-import { JumpToRowDialog } from "./JumpToRowDialog";
-import { InsertRowModal } from "./InsertRowModal";
-import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
+import { InsertRowPanel } from "./InsertRowPanel";
+import { JsonEditorPanel } from "./JsonEditorPanel";
 import { ColumnVisibilityMenu } from "./ColumnVisibilityMenu";
 import { Pagination } from "./Pagination";
 import { FilterBuilder } from "./FilterBuilder";
-import { SaveViewDialog } from "./SaveViewDialog";
 import { SavedViewsPanel } from "./SavedViewsPanel";
 import { TableMetadataPanel } from "./TableMetadataPanel";
 import { TableToolbar } from "./TableToolbar";
 import { QuickFilterBar } from "./QuickFilterBar";
-import { ExportDataDialog } from "./ExportDataDialog";
 import { ImportDataDialog } from "./ImportDataDialog";
+import { QuickAccessBar, type PanelType } from "./panels";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useTableEditing } from "../hooks/useTableEditing";
 import { useTableFilters } from "../hooks/useTableFilters";
 import { useSavedViews } from "../hooks/useSavedViews";
@@ -39,7 +38,6 @@ import {
   Plus,
   Info,
   Upload,
-  ArrowRight,
   Bookmark
 } from "lucide-react";
 import clsx from "clsx";
@@ -58,6 +56,8 @@ export interface TableViewProps {
   offset: number;
   totalRows: number | null;
   dbType?: DatabaseType;
+  sorting?: Array<{ columnName: string; direction: 'asc' | 'desc' }>;
+  onSortingChange?: (sorting: Array<{ columnName: string; direction: 'asc' | 'desc' }>) => void;
 }
 
 // Database type labels for status bar
@@ -84,7 +84,9 @@ export const TableView: FC<TableViewProps> = ({
   limit,
   offset,
   totalRows,
-  dbType = 'postgres'
+  dbType = 'postgres',
+  sorting: initialSorting,
+  onSortingChange
 }) => {
   const rowCount = rows.length;
   const columnCount = columns.length;
@@ -105,11 +107,16 @@ export const TableView: FC<TableViewProps> = ({
 
   // Modal state
   const [insertModalOpen, setInsertModalOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [duplicateRowData, setDuplicateRowData] = useState<Record<string, unknown> | undefined>(undefined);
-  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const [jumpToRowDialogOpen, setJumpToRowDialogOpen] = useState(false);
+
+  // JSON editor panel state
+  const [jsonEditorOpen, setJsonEditorOpen] = useState(false);
+  const [jsonEditorData, setJsonEditorData] = useState<{
+    rowIndex: number;
+    columnKey: string;
+    value: unknown;
+  } | null>(null);
 
   // Reference for virtual grid scroll
   const virtualGridRef = { current: { scrollToRow: (_: number) => {} } };
@@ -123,7 +130,6 @@ export const TableView: FC<TableViewProps> = ({
   const filters = useTableFilters();
 
   // Saved views state
-  const [saveViewDialogOpen, setSaveViewDialogOpen] = useState(false);
   const savedViews = useSavedViews(schema, table);
 
   // Metadata panel state
@@ -133,25 +139,20 @@ export const TableView: FC<TableViewProps> = ({
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [metadataResponsesReceived, setMetadataResponsesReceived] = useState({ indexes: false, statistics: false });
 
+  // Compute active panel for resizable layout
+  const activePanel: PanelType | null = useMemo(() => {
+    if (insertModalOpen) return "insert";
+    if (jsonEditorOpen && jsonEditorData) return "json-editor";
+    if (metadataPanelOpen) return "metadata";
+    return null;
+  }, [insertModalOpen, jsonEditorOpen, jsonEditorData, metadataPanelOpen]);
+
   // Auto-add first condition when filter panel opens
   useEffect(() => {
     if (showFilters && filters.conditions.length === 0) {
       filters.addCondition();
     }
   }, [showFilters]);
-
-  // Keyboard shortcut for Jump to Row (Ctrl+G / Cmd+G)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
-        e.preventDefault();
-        setJumpToRowDialogOpen(true);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
   // Request indexes and statistics when metadata panel opens
   useEffect(() => {
@@ -169,12 +170,49 @@ export const TableView: FC<TableViewProps> = ({
     }
   }, [metadataPanelOpen, vscode, schema, table]);
 
-  // Listen for INSERT_SUCCESS/INSERT_ERROR messages
+  // Define executeDelete before the useEffect that uses it
+  const executeDelete = useCallback(() => {
+    if (!metadata || editing.selectedRows.size === 0) return;
+
+    const primaryKeyColumns = metadata.filter((col) => col.isPrimaryKey).map((col) => col.name);
+    const selectedIndices = Array.from(editing.selectedRows);
+    const primaryKeys = selectedIndices.map((idx) => {
+      const row = rows[idx];
+      const pk: Record<string, unknown> = {};
+      primaryKeyColumns.forEach((col) => {
+        pk[col] = row[col];
+      });
+      return pk;
+    });
+
+    vscode?.postMessage({ type: "DELETE_ROWS", schema, table, primaryKeys });
+    editing.clearSelection();
+  }, [metadata, editing, rows, vscode, schema, table]);
+
+  // Listen for INSERT_SUCCESS/INSERT_ERROR messages and delete confirmation
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
 
-      if (message.type === "INSERT_SUCCESS") {
+      if (message.type === "CONFIRM_DELETE_RESULT") {
+        // Handle VS Code native dialog response
+        if (message.confirmed) {
+          executeDelete();
+        }
+      } else if (message.type === "JUMP_TO_ROW_RESULT") {
+        // Handle VS Code native InputBox result for Jump to Row
+        console.log('[TableView] Jump to row:', message.rowIndex);
+        // The VirtualDataGrid would handle scrolling if we had a ref to it
+      } else if (message.type === "SAVE_VIEW_RESULT") {
+        // Handle VS Code native InputBox result for Save View
+        const { name, description, isDefault } = message;
+        const state = getCurrentViewState();
+        savedViews.saveView(name, description, state, isDefault);
+      } else if (message.type === "EXPORT_RESULT") {
+        // Handle VS Code native QuickPick result for Export
+        const { options } = message;
+        handleExport(options);
+      } else if (message.type === "INSERT_SUCCESS") {
         console.log('[TableView] Received INSERT_SUCCESS, closing modal and refreshing');
         setIsInserting(false);
         setInsertError(null);
@@ -236,7 +274,8 @@ export const TableView: FC<TableViewProps> = ({
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [vscode, schema, table, limit, offset, filters, statistics, indexes]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vscode, schema, table, limit, offset, filters, executeDelete]);
 
   // Manual search handler
   const handleSearch = () => {
@@ -307,8 +346,49 @@ export const TableView: FC<TableViewProps> = ({
     return new Set();
   });
 
-  // Sorting state
-  const [sorting, setSorting] = useState<SortingState>([]);
+  // Sorting state - initialize from props if provided
+  const [sorting, setSorting] = useState<SortingState>(() => {
+    if (initialSorting && initialSorting.length > 0) {
+      return initialSorting.map(s => ({
+        id: s.columnName,
+        desc: s.direction === 'desc'
+      }));
+    }
+    return [];
+  });
+
+  // Helper to get current view state (defined early for use in useEffect)
+  const getCurrentViewState = useCallback(() => {
+    return {
+      filters: filters.conditions,
+      filterLogic: filters.logicOperator,
+      sorting: sorting.map(sort => ({
+        columnName: sort.id,
+        direction: sort.desc ? 'desc' as const : 'asc' as const
+      })),
+      visibleColumns: Array.from(visibleColumns),
+      pageSize: pageSize
+    };
+  }, [filters.conditions, filters.logicOperator, sorting, visibleColumns, pageSize]);
+
+  // Handle sorting changes - notify parent for server-side sorting
+  const handleSortingChange = useCallback((updaterOrValue: SortingState | ((old: SortingState) => SortingState)) => {
+    // Handle both updater function and direct value from TanStack Table
+    const newSorting = typeof updaterOrValue === 'function'
+      ? updaterOrValue(sorting)
+      : updaterOrValue;
+
+    setSorting(newSorting);
+
+    // Notify parent component if callback is provided
+    if (onSortingChange) {
+      const sortingData = newSorting.map(sort => ({
+        columnName: sort.id,
+        direction: sort.desc ? 'desc' as const : 'asc' as const
+      }));
+      onSortingChange(sortingData);
+    }
+  }, [sorting, onSortingChange]);
 
   // Update visible columns when metadata changes
   useEffect(() => {
@@ -343,30 +423,16 @@ export const TableView: FC<TableViewProps> = ({
     });
 
     vscode?.postMessage({ type: "COMMIT_CHANGES", schema, table, edits });
-    editing.discardAllEdits();
+    editing.discardAllEdits(true); // Silent - don't show "discarded" toast when saving
   };
 
   const handleDeleteRows = () => {
     if (!metadata || editing.selectedRows.size === 0) return;
-    setDeleteDialogOpen(true);
-  };
-
-  const confirmDelete = () => {
-    if (!metadata || editing.selectedRows.size === 0) return;
-
-    const primaryKeyColumns = metadata.filter((col) => col.isPrimaryKey).map((col) => col.name);
-    const selectedIndices = Array.from(editing.selectedRows);
-    const primaryKeys = selectedIndices.map((idx) => {
-      const row = rows[idx];
-      const pk: Record<string, unknown> = {};
-      primaryKeyColumns.forEach((col) => {
-        pk[col] = row[col];
-      });
-      return pk;
+    // Send confirmation request to VS Code for native dialog
+    vscode?.postMessage({
+      type: "CONFIRM_DELETE",
+      rowCount: editing.selectedRows.size
     });
-
-    vscode?.postMessage({ type: "DELETE_ROWS", schema, table, primaryKeys });
-    editing.clearSelection();
   };
 
   const handleInsertRow = () => {
@@ -405,6 +471,51 @@ export const TableView: FC<TableViewProps> = ({
     // Don't clear duplicate data or close modal yet - wait for backend response
   };
 
+  // Handle opening panels from QuickAccessBar
+  const handleOpenPanel = useCallback((panel: PanelType) => {
+    switch (panel) {
+      case "insert":
+        handleInsertRow();
+        break;
+      case "json-editor":
+        // Can only open if we have a selected cell with JSON data
+        break;
+      case "metadata":
+        setMetadataPanelOpen(true);
+        break;
+      default:
+        break;
+    }
+  }, []);
+
+  // JSON editor handlers
+  const handleStartEdit = useCallback((rowIndex: number, columnKey: string) => {
+    const column = metadata?.find(c => c.name === columnKey);
+    const value = rows[rowIndex]?.[columnKey];
+
+    // Check if this is a JSON/JSONB/Array column OR if the value is an array/object - open side panel instead
+    const isJsonColumn = column && (column.type === 'json' || column.type === 'jsonb');
+    const isArrayColumn = column && (column.type === 'array' || column.type.includes('[]'));
+    const isArrayOrObjectValue = Array.isArray(value) || (typeof value === 'object' && value !== null && !(value instanceof Date));
+
+    if (isJsonColumn || isArrayColumn || isArrayOrObjectValue) {
+      setJsonEditorData({ rowIndex, columnKey, value });
+      setJsonEditorOpen(true);
+      return false;
+    }
+
+    // For non-JSON columns, use default inline editor
+    return editing.startEdit(rowIndex, columnKey);
+  }, [metadata, rows, editing]);
+
+  const handleJsonEditorSave = useCallback((value: unknown) => {
+    if (jsonEditorData) {
+      editing.saveEdit(jsonEditorData.rowIndex, jsonEditorData.columnKey, value);
+    }
+    setJsonEditorOpen(false);
+    setJsonEditorData(null);
+  }, [jsonEditorData, editing]);
+
   // Column visibility handlers
   const handleToggleColumn = (columnName: string) => {
     setVisibleColumns((prev) => {
@@ -429,22 +540,12 @@ export const TableView: FC<TableViewProps> = ({
   };
 
   // Saved views handlers
-  const getCurrentViewState = () => {
-    return {
-      filters: filters.conditions,
-      filterLogic: filters.logicOperator,
-      sorting: sorting,
-      visibleColumns: Array.from(visibleColumns),
-      pageSize: pageSize
-    };
-  };
-
   const handleSaveView = (name: string, description: string, isDefault: boolean) => {
     const state = getCurrentViewState();
     savedViews.saveView(name, description, state, isDefault);
   };
 
-  const handleApplyView = (view: any) => {
+  const handleApplyView = (view: SavedView) => {
     const state = savedViews.applyView(view);
 
     // Apply filters from the view
@@ -456,9 +557,12 @@ export const TableView: FC<TableViewProps> = ({
       setVisibleColumns(new Set(state.visibleColumns));
     }
 
-    // Apply sorting
+    // Apply sorting (convert from ViewState format to SortingState format)
     if (state.sorting && Array.isArray(state.sorting)) {
-      setSorting(state.sorting);
+      setSorting(state.sorting.map(sort => ({
+        id: sort.columnName,
+        desc: sort.direction === 'desc'
+      })));
     }
 
     // Apply page size
@@ -514,7 +618,7 @@ export const TableView: FC<TableViewProps> = ({
     console.log('[TableView] handleExport called with options:', options);
 
     let dataToExport = rows;
-    let columnsToExport = metadata?.map(m => m.name) || columns;
+    let columnsToExport = metadata?.map(m => m.name) || columns.map(c => c.key);
 
     // Filter selected rows if option enabled
     if (options.selectedRowsOnly && editing.selectedRows.size > 0) {
@@ -595,25 +699,6 @@ export const TableView: FC<TableViewProps> = ({
       const errorMessage = error instanceof Error ? error.message : String(error);
       toast.error('Import failed', { description: errorMessage });
     }
-  };
-
-  const handleCopyAsSQL = () => {
-    if (editing.selectedRows.size === 0) {
-      toast.error('No rows selected');
-      return;
-    }
-
-    const selectedIndices = Array.from(editing.selectedRows);
-    const selectedRowsData = selectedIndices.map(idx => rows[idx]);
-    const columnsToExport = metadata?.map(m => m.name) || columns;
-
-    const sql = formatAsSQL(selectedRowsData, columnsToExport, schema, table);
-
-    navigator.clipboard.writeText(sql).then(() => {
-      toast.success(`Copied ${selectedIndices.length} rows as INSERT statements`);
-    }).catch(() => {
-      toast.error('Failed to copy to clipboard');
-    });
   };
 
   return (
@@ -740,7 +825,12 @@ export const TableView: FC<TableViewProps> = ({
                     onApplyView={handleApplyView}
                     onDeleteView={savedViews.deleteView}
                     onExportView={savedViews.exportView}
-                    onSaveCurrentView={() => setSaveViewDialogOpen(true)}
+                    onSaveCurrentView={() => {
+                      vscode?.postMessage({
+                        type: "SHOW_SAVE_VIEW",
+                        currentState: getCurrentViewState()
+                      });
+                    }}
                     onImportView={savedViews.importView}
                   />
                 </>
@@ -749,7 +839,13 @@ export const TableView: FC<TableViewProps> = ({
               <ToolbarButton
                 icon={<Download className="h-3.5 w-3.5" />}
                 label="Export"
-                onClick={() => setExportDialogOpen(true)}
+                onClick={() => {
+                  vscode?.postMessage({
+                    type: "SHOW_EXPORT_DIALOG",
+                    selectedRowCount: editing.selectedRows.size,
+                    hasFilters: filters.conditions.length > 0
+                  });
+                }}
                 title="Export table data"
               />
               <ToolbarButton
@@ -757,21 +853,6 @@ export const TableView: FC<TableViewProps> = ({
                 label="Import"
                 onClick={() => setImportDialogOpen(true)}
                 title="Import data from file"
-              />
-              {hasSelectedRows && (
-                <ToolbarButton
-                  icon={<Copy className="h-3.5 w-3.5" />}
-                  label="Copy SQL"
-                  onClick={handleCopyAsSQL}
-                  title={`Copy ${editing.selectedRows.size} row(s) as INSERT statements`}
-                />
-              )}
-              <div className="w-px h-5 bg-vscode-border mx-1" />
-              <ToolbarButton
-                icon={<ArrowRight className="h-3.5 w-3.5" />}
-                label="Jump"
-                onClick={() => setJumpToRowDialogOpen(true)}
-                title="Jump to row (Ctrl+G)"
               />
             </div>
           </div>
@@ -830,40 +911,109 @@ export const TableView: FC<TableViewProps> = ({
         />
       )}
 
-      {/* Data Grid */}
+      {/* Data Grid - with resizable panels */}
       <main className="flex-1 overflow-hidden">
-        {metadata && metadata.length > 0 ? (
-          <VirtualDataGrid
-            columns={metadata}
-            rows={rows}
-            loading={loading}
-            selectable={true}
-            selectedRows={editing.selectedRows}
-            onRowSelectionChange={editing.setRowSelection}
-            editingCell={editing.editingCell}
-            onStartEdit={editing.startEdit}
-            onSaveEdit={editing.saveEdit}
-            onCancelEdit={editing.cancelEdit}
-            isPending={editing.isPending}
-            hasError={editing.hasError}
-            getEditValue={editing.getEditValue}
-            visibleColumns={visibleColumns}
-            sorting={sorting}
-            onSortingChange={setSorting}
-            totalRows={totalRows}
-            currentPage={currentPage}
-            pageSize={pageSize}
-            offset={offset}
-          />
-        ) : (
-          <DataGrid
-            columns={columns}
-            rows={rows}
-            loading={loading}
-            showRowNumbers={true}
-            emptyMessage={`No rows found in ${schema}.${table}`}
-          />
-        )}
+        <PanelGroup direction="horizontal" autoSaveId={`tableview-panels-${schema}-${table}`}>
+          {/* Main content panel */}
+          <Panel id="main" minSize={40}>
+            {metadata && metadata.length > 0 ? (
+              <VirtualDataGrid
+                columns={metadata}
+                rows={rows}
+                loading={loading}
+                selectable={true}
+                selectedRows={editing.selectedRows}
+                onRowSelectionChange={editing.setRowSelection}
+                editingCell={editing.editingCell}
+                onStartEdit={handleStartEdit}
+                onSaveEdit={editing.saveEdit}
+                onCancelEdit={editing.cancelEdit}
+                isPending={editing.isPending}
+                hasError={editing.hasError}
+                getEditValue={editing.getEditValue}
+                visibleColumns={visibleColumns}
+                sorting={sorting}
+                onSortingChange={handleSortingChange}
+                totalRows={totalRows}
+                currentPage={currentPage}
+                pageSize={pageSize}
+                offset={offset}
+              />
+            ) : (
+              <DataGrid
+                columns={columns}
+                rows={rows}
+                loading={loading}
+                showRowNumbers={true}
+                emptyMessage={`No rows found in ${schema}.${table}`}
+              />
+            )}
+          </Panel>
+
+          {/* Resize handle - only show when panel is active */}
+          {activePanel && (
+            <>
+              <PanelResizeHandle className="w-1 hover:bg-vscode-accent transition-colors cursor-col-resize group">
+                <div className="w-1 h-full group-hover:bg-vscode-accent/30 transition-colors" />
+              </PanelResizeHandle>
+
+              {/* Side panel */}
+              <Panel id="side" defaultSize={30} minSize={20} maxSize={50}>
+                {/* Insert Row Panel */}
+                {activePanel === "insert" && metadata && (
+                  <InsertRowPanel
+                    open={insertModalOpen}
+                    onOpenChange={setInsertModalOpen}
+                    columns={metadata}
+                    onInsert={handleInsert}
+                    initialValues={duplicateRowData}
+                    isInserting={isInserting}
+                    insertError={insertError}
+                    variant="inline"
+                  />
+                )}
+
+                {/* JSON Editor Panel */}
+                {activePanel === "json-editor" && jsonEditorData && (
+                  <JsonEditorPanel
+                    open={jsonEditorOpen}
+                    onOpenChange={setJsonEditorOpen}
+                    value={jsonEditorData.value}
+                    onSave={handleJsonEditorSave}
+                    columnName={jsonEditorData.columnKey}
+                    rowIndex={jsonEditorData.rowIndex}
+                    variant="inline"
+                  />
+                )}
+
+                {/* Table Metadata Panel */}
+                {activePanel === "metadata" && (
+                  <TableMetadataPanel
+                    schema={schema}
+                    table={table}
+                    columns={metadata}
+                    indexes={indexes}
+                    statistics={statistics}
+                    isOpen={metadataPanelOpen}
+                    onClose={() => setMetadataPanelOpen(false)}
+                    loading={metadataLoading}
+                    variant="inline"
+                  />
+                )}
+              </Panel>
+            </>
+          )}
+
+          {/* Quick Access Bar - only show when no panel is active */}
+          {!activePanel && (
+            <QuickAccessBar
+              onOpenPanel={handleOpenPanel}
+              activePanel={activePanel}
+              hasUnsavedChanges={hasPendingChanges}
+              hasSelectedCell={false}
+            />
+          )}
+        </PanelGroup>
       </main>
 
       {/* Status Bar */}
@@ -910,83 +1060,11 @@ export const TableView: FC<TableViewProps> = ({
         loading={loading}
       />
 
-      {/* Insert Row Modal */}
-      {metadata && (
-        <InsertRowModal
-          open={insertModalOpen}
-          onOpenChange={setInsertModalOpen}
-          columns={metadata}
-          onInsert={handleInsert}
-          initialValues={duplicateRowData}
-          isInserting={isInserting}
-          insertError={insertError}
-        />
-      )}
-
-      {/* Delete Confirm Dialog */}
-      {metadata && (
-        <DeleteConfirmDialog
-          open={deleteDialogOpen}
-          onOpenChange={setDeleteDialogOpen}
-          rowCount={editing.selectedRows.size}
-          selectedRows={Array.from(editing.selectedRows).map((idx) => rows[idx])}
-          columns={metadata}
-          onConfirm={confirmDelete}
-        />
-      )}
-
-      {/* Save View Dialog */}
-      {metadata && (
-        <SaveViewDialog
-          open={saveViewDialogOpen}
-          onOpenChange={setSaveViewDialogOpen}
-          currentState={getCurrentViewState()}
-          onSave={handleSaveView}
-        />
-      )}
-
-      {/* Table Metadata Panel */}
-      <TableMetadataPanel
-        schema={schema}
-        table={table}
-        columns={metadata}
-        indexes={indexes}
-        statistics={statistics}
-        isOpen={metadataPanelOpen}
-        onClose={() => setMetadataPanelOpen(false)}
-        loading={metadataLoading}
-      />
-
-      {/* Export Dialog */}
-      <ExportDataDialog
-        open={exportDialogOpen}
-        onOpenChange={setExportDialogOpen}
-        rowCount={rowCount}
-        selectedRowCount={editing.selectedRows.size}
-        hasFilters={filters.conditions.length > 0}
-        onExport={handleExport}
-      />
-
       {/* Import Dialog */}
       <ImportDataDialog
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
         onImport={handleImport}
-      />
-
-      {/* Jump to Row Dialog */}
-      <JumpToRowDialog
-        open={jumpToRowDialogOpen}
-        onOpenChange={setJumpToRowDialogOpen}
-        totalRows={totalRows}
-        currentPage={currentPage}
-        pageSize={pageSize}
-        offset={offset}
-        columns={metadata}
-        onJumpToRow={(rowIndex) => {
-          // The VirtualDataGrid will handle the scrolling internally
-          console.log('[TableView] Jump to row:', rowIndex);
-        }}
       />
     </div>
   );

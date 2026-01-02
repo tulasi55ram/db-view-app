@@ -13,26 +13,190 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { autocompletion, CompletionContext } from "@codemirror/autocomplete";
+import { autocompletion } from "@codemirror/autocomplete";
 import { json } from "@codemirror/lang-json";
 import { sql } from "@codemirror/lang-sql";
-import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { StreamLanguage, syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
 import { QueryResultsGrid } from "./QueryResultsGrid";
 import { SavedQueriesPanel } from "./SavedQueriesPanel";
 import { SaveQueryModal } from "./SaveQueryModal";
 import { getElectronAPI, type QueryHistoryEntry, type SavedQuery } from "@/electron";
 import { useTheme } from "@/design-system";
 import { toast } from "sonner";
+import type { TableInfo } from "@dbview/types";
 import {
   MONGO_COMMANDS,
-  MONGO_OPERATORS,
-  MONGO_STAGES,
   ES_COMMANDS,
-  ES_QUERY_AUTOCOMPLETE,
-  ES_AGG_AUTOCOMPLETE,
-  CQL_KEYWORDS,
   CASSANDRA_COMMANDS,
 } from "./constants";
+import { createSmartCqlCompletion, type CqlAutocompleteData, type CqlTableInfo } from "@/utils/cqlAutocomplete";
+import { createSmartESCompletion, type ESAutocompleteData, type ESFieldInfo, type ESFieldType } from "@/utils/esAutocomplete";
+import { createSmartMongoCompletion, type MongoAutocompleteData, type MongoFieldInfo, type MongoFieldType } from "@/utils/mongoAutocomplete";
+
+// Helper to map generic type strings to ES field types
+function mapToESFieldType(type: string): ESFieldType {
+  const typeLower = type.toLowerCase();
+  if (typeLower.includes("text") || typeLower.includes("string") || typeLower.includes("varchar")) {
+    return "text";
+  }
+  if (typeLower.includes("keyword") || typeLower.includes("id")) {
+    return "keyword";
+  }
+  if (typeLower.includes("long") || typeLower.includes("bigint")) {
+    return "long";
+  }
+  if (typeLower.includes("int") || typeLower.includes("integer")) {
+    return "integer";
+  }
+  if (typeLower.includes("float") || typeLower.includes("real")) {
+    return "float";
+  }
+  if (typeLower.includes("double") || typeLower.includes("decimal") || typeLower.includes("numeric")) {
+    return "double";
+  }
+  if (typeLower.includes("date") || typeLower.includes("time") || typeLower.includes("timestamp")) {
+    return "date";
+  }
+  if (typeLower.includes("bool")) {
+    return "boolean";
+  }
+  if (typeLower.includes("geo") || typeLower.includes("point") || typeLower.includes("location")) {
+    return "geo_point";
+  }
+  if (typeLower.includes("ip") || typeLower.includes("inet")) {
+    return "ip";
+  }
+  if (typeLower.includes("nested")) {
+    return "nested";
+  }
+  if (typeLower.includes("object") || typeLower.includes("json")) {
+    return "object";
+  }
+  return "keyword"; // Default to keyword for unknown types
+}
+
+// Helper to map generic type strings to MongoDB field types
+function mapToMongoFieldType(type: string): MongoFieldType {
+  const typeLower = type.toLowerCase();
+  if (typeLower.includes("string") || typeLower.includes("text") || typeLower.includes("varchar")) {
+    return "string";
+  }
+  if (typeLower.includes("int") || typeLower.includes("long") || typeLower.includes("double") || typeLower.includes("float") || typeLower.includes("decimal") || typeLower.includes("number")) {
+    return "number";
+  }
+  if (typeLower.includes("bool")) {
+    return "boolean";
+  }
+  if (typeLower.includes("date") || typeLower.includes("time") || typeLower.includes("timestamp")) {
+    return "date";
+  }
+  if (typeLower.includes("objectid") || typeLower.includes("oid")) {
+    return "objectId";
+  }
+  if (typeLower.includes("array") || typeLower.includes("list")) {
+    return "array";
+  }
+  if (typeLower.includes("object") || typeLower.includes("document") || typeLower.includes("json")) {
+    return "object";
+  }
+  if (typeLower.includes("binary") || typeLower.includes("blob")) {
+    return "binary";
+  }
+  if (typeLower.includes("regex")) {
+    return "regex";
+  }
+  return "mixed"; // Default to mixed for unknown types
+}
+
+// CQL syntax highlighting using StreamParser
+const cqlLanguage = StreamLanguage.define({
+  name: "cql",
+  token(stream) {
+    if (stream.eatSpace()) return null;
+
+    // Comments
+    if (stream.match("--") || stream.match("//")) {
+      stream.skipToEnd();
+      return "comment";
+    }
+    if (stream.match("/*")) {
+      while (!stream.eol()) {
+        if (stream.match("*/")) break;
+        stream.next();
+      }
+      return "comment";
+    }
+
+    // Strings
+    if (stream.match("'")) {
+      while (!stream.eol()) {
+        if (stream.match("''")) continue;
+        if (stream.match("'")) break;
+        stream.next();
+      }
+      return "string";
+    }
+    if (stream.match('"')) {
+      while (!stream.eol()) {
+        if (stream.match('""')) continue;
+        if (stream.match('"')) break;
+        stream.next();
+      }
+      return "string-2";
+    }
+
+    // Numbers
+    if (stream.match(/^0x[0-9a-fA-F]+/) || stream.match(/^-?\d+(\.\d+)?([eE][+-]?\d+)?/)) {
+      return "number";
+    }
+
+    // UUID
+    if (stream.match(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/)) {
+      return "string";
+    }
+
+    // Operators
+    if (stream.match(/^[+\-*/%=<>!&|^~]+/) || stream.match(/^[(),;.\[\]{}:]/)) {
+      return "operator";
+    }
+
+    // Keywords
+    if (stream.match(/^[a-zA-Z_][a-zA-Z0-9_]*/)) {
+      const word = stream.current().toUpperCase();
+      const keywords = [
+        "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "INSERT", "INTO",
+        "VALUES", "UPDATE", "SET", "DELETE", "CREATE", "ALTER", "DROP", "TABLE",
+        "KEYSPACE", "INDEX", "TYPE", "FUNCTION", "AGGREGATE", "TRIGGER", "MATERIALIZED",
+        "VIEW", "IF", "EXISTS", "PRIMARY", "KEY", "PARTITION", "CLUSTERING", "ORDER",
+        "BY", "ASC", "DESC", "LIMIT", "ALLOW", "FILTERING", "USING", "TTL", "TIMESTAMP",
+        "BATCH", "BEGIN", "APPLY", "UNLOGGED", "LOGGED", "COUNTER", "GRANT", "REVOKE",
+        "ON", "TO", "ALL", "PERMISSIONS", "OF", "WITH", "CONTAINS", "TOKEN", "AS",
+        "COMPACT", "STORAGE", "STATIC", "FROZEN", "TUPLE", "LIST", "SET", "MAP",
+        "NULL", "TRUE", "FALSE", "JSON", "DISTINCT", "CAST", "GROUP", "PER",
+        "TRUNCATE", "DESCRIBE", "USE",
+      ];
+      if (keywords.includes(word)) return "keyword";
+
+      const types = [
+        "ASCII", "BIGINT", "BLOB", "BOOLEAN", "COUNTER", "DATE", "DECIMAL", "DOUBLE",
+        "DURATION", "FLOAT", "INET", "INT", "SMALLINT", "TEXT", "TIME", "TIMESTAMP",
+        "TIMEUUID", "TINYINT", "UUID", "VARCHAR", "VARINT",
+      ];
+      if (types.includes(word)) return "type";
+
+      const functions = [
+        "NOW", "UUID", "TIMEUUID", "TOKEN", "TTL", "WRITETIME", "COUNT", "SUM",
+        "AVG", "MIN", "MAX", "CAST", "TYPEOF", "TODATE", "TOTIMESTAMP", "TOUNIXTIME",
+      ];
+      if (functions.includes(word)) return "builtin";
+
+      return "variable";
+    }
+
+    stream.next();
+    return null;
+  },
+});
 
 export interface DocumentQueryViewProps {
   tab: {
@@ -71,8 +235,77 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
   const readOnlyCompartment = useRef(new Compartment());
   const themeCompartment = useRef(new Compartment());
 
+  // CQL autocomplete data for Cassandra
+  const [cqlAutocompleteData, setCqlAutocompleteData] = useState<CqlAutocompleteData>({
+    keyspaces: [],
+    tables: [],
+    columns: {},
+  });
+
+  // Ref for CQL autocomplete data to avoid recreating editor
+  const cqlAutocompleteDataRef = useRef<CqlAutocompleteData>({
+    keyspaces: [],
+    tables: [],
+    columns: {},
+  });
+
+  // ES autocomplete data for Elasticsearch
+  const [esAutocompleteData, setEsAutocompleteData] = useState<ESAutocompleteData>({
+    indices: [],
+    fields: {},
+    aliases: [],
+  });
+
+  // Ref for ES autocomplete data to avoid recreating editor
+  const esAutocompleteDataRef = useRef<ESAutocompleteData>({
+    indices: [],
+    fields: {},
+    aliases: [],
+  });
+
+  // MongoDB autocomplete data
+  const [mongoAutocompleteData, setMongoAutocompleteData] = useState<MongoAutocompleteData>({
+    collections: [],
+    fields: {},
+    databases: [],
+  });
+
+  // Ref for MongoDB autocomplete data to avoid recreating editor
+  const mongoAutocompleteDataRef = useRef<MongoAutocompleteData>({
+    collections: [],
+    fields: {},
+    databases: [],
+  });
+
   const api = getElectronAPI();
   const { resolvedTheme } = useTheme();
+
+  // Update CQL autocomplete ref when data changes
+  useEffect(() => {
+    cqlAutocompleteDataRef.current = {
+      keyspaces: cqlAutocompleteData.keyspaces,
+      tables: cqlAutocompleteData.tables,
+      columns: cqlAutocompleteData.columns,
+    };
+  }, [cqlAutocompleteData]);
+
+  // Update ES autocomplete ref when data changes
+  useEffect(() => {
+    esAutocompleteDataRef.current = {
+      indices: esAutocompleteData.indices,
+      fields: esAutocompleteData.fields,
+      aliases: esAutocompleteData.aliases,
+    };
+  }, [esAutocompleteData]);
+
+  // Update MongoDB autocomplete ref when data changes
+  useEffect(() => {
+    mongoAutocompleteDataRef.current = {
+      collections: mongoAutocompleteData.collections,
+      fields: mongoAutocompleteData.fields,
+      databases: mongoAutocompleteData.databases,
+    };
+  }, [mongoAutocompleteData]);
 
   // Database-specific configuration
   const config = {
@@ -125,87 +358,112 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
         .catch((err) => {
           console.error("Failed to load saved queries:", err);
         });
+
+      // Load CQL autocomplete data for Cassandra
+      if (dbType === "cassandra") {
+        api
+          .getAutocompleteData(tab.connectionKey)
+          .then((data) => {
+            // Transform TableInfo to CqlTableInfo
+            const cqlTables: CqlTableInfo[] = (data.tables || []).map((t: TableInfo) => ({
+              keyspace: t.schema || "default",
+              name: t.name,
+            }));
+            setCqlAutocompleteData({
+              keyspaces: data.schemas || [],
+              tables: cqlTables,
+              columns: data.columns || {},
+            });
+          })
+          .catch((err) => {
+            console.error("Failed to load CQL autocomplete data:", err);
+          });
+      }
+
+      // Load ES autocomplete data for Elasticsearch
+      if (dbType === "elasticsearch") {
+        api
+          .getAutocompleteData(tab.connectionKey)
+          .then((data) => {
+            // Transform columns to ES field format
+            const fields: Record<string, ESFieldInfo[]> = {};
+            if (data.columns) {
+              Object.entries(data.columns).forEach(([table, cols]) => {
+                fields[table] = cols.map((col: { name: string; type: string }) => ({
+                  name: col.name,
+                  type: mapToESFieldType(col.type),
+                }));
+              });
+            }
+            setEsAutocompleteData({
+              indices: data.tables?.map((t: TableInfo) => t.name) || [],
+              fields,
+              aliases: data.schemas || [],
+            });
+          })
+          .catch((err) => {
+            console.error("Failed to load ES autocomplete data:", err);
+          });
+      }
+
+      // Load MongoDB autocomplete data
+      if (dbType === "mongodb") {
+        api
+          .getAutocompleteData(tab.connectionKey)
+          .then((data) => {
+            // Transform columns to MongoDB field format
+            const fields: Record<string, MongoFieldInfo[]> = {};
+            if (data.columns) {
+              Object.entries(data.columns).forEach(([collection, cols]) => {
+                fields[collection] = cols.map((col: { name: string; type: string }) => ({
+                  name: col.name,
+                  type: mapToMongoFieldType(col.type),
+                }));
+              });
+            }
+            setMongoAutocompleteData({
+              collections: data.tables?.map((t: TableInfo) => t.name) || [],
+              fields,
+              databases: data.schemas || [],
+            });
+          })
+          .catch((err) => {
+            console.error("Failed to load MongoDB autocomplete data:", err);
+          });
+      }
     }
-  }, [tab.connectionKey, api]);
+  }, [tab.connectionKey, api, dbType]);
 
   // Initialize CodeMirror editor
   useEffect(() => {
     if (!editorRef.current) return;
 
-    // Autocomplete based on database type
-    const autocomplete = (context: CompletionContext) => {
-      const word = context.matchBefore(/[\w$]*/);
-      if (!word || (word.from === word.to && !context.explicit)) {
-        return null;
-      }
+    // Create smart CQL autocomplete for Cassandra
+    const smartCqlAutocomplete = dbType === "cassandra"
+      ? createSmartCqlCompletion(() => cqlAutocompleteDataRef.current)
+      : null;
 
-      const input = word.text.toLowerCase();
-      const suggestions: any[] = [];
+    // Create smart ES autocomplete for Elasticsearch
+    const smartEsAutocomplete = dbType === "elasticsearch"
+      ? createSmartESCompletion(() => esAutocompleteDataRef.current)
+      : null;
 
-      if (dbType === "mongodb") {
-        // MongoDB stages
-        MONGO_STAGES.forEach(({ stage, desc }) => {
-          if (stage.toLowerCase().includes(input)) {
-            suggestions.push({
-              label: stage,
-              detail: desc,
-              type: "keyword",
-              boost: 2,
-            });
-          }
-        });
-        // MongoDB operators
-        MONGO_OPERATORS.forEach(({ op, desc }) => {
-          if (op.toLowerCase().includes(input)) {
-            suggestions.push({
-              label: op,
-              detail: desc,
-              type: "function",
-              boost: 1,
-            });
-          }
-        });
-      } else if (dbType === "elasticsearch") {
-        // ES query types
-        ES_QUERY_AUTOCOMPLETE.forEach(({ type, desc }) => {
-          if (type.toLowerCase().includes(input)) {
-            suggestions.push({
-              label: type,
-              detail: desc,
-              type: "keyword",
-              boost: 2,
-            });
-          }
-        });
-        // ES aggregations
-        ES_AGG_AUTOCOMPLETE.forEach(({ type, desc }) => {
-          if (type.toLowerCase().includes(input)) {
-            suggestions.push({
-              label: type,
-              detail: `Agg: ${desc}`,
-              type: "function",
-              boost: 1,
-            });
-          }
-        });
-      } else if (dbType === "cassandra") {
-        // CQL keywords
-        CQL_KEYWORDS.forEach((kw) => {
-          if (kw.toLowerCase().includes(input)) {
-            suggestions.push({
-              label: kw,
-              type: "keyword",
-            });
-          }
-        });
-      }
+    // Create smart MongoDB autocomplete
+    const smartMongoAutocomplete = dbType === "mongodb"
+      ? createSmartMongoCompletion(() => mongoAutocompleteDataRef.current)
+      : null;
 
-      return {
-        from: word.from,
-        options: suggestions,
-        validFor: /^[\w$]*$/,
-      };
-    };
+    // Choose appropriate autocomplete based on database type
+    let autocompleteOverride: any[];
+    if (dbType === "cassandra" && smartCqlAutocomplete) {
+      autocompleteOverride = [smartCqlAutocomplete];
+    } else if (dbType === "elasticsearch" && smartEsAutocomplete) {
+      autocompleteOverride = [smartEsAutocomplete];
+    } else if (dbType === "mongodb" && smartMongoAutocomplete) {
+      autocompleteOverride = [smartMongoAutocomplete];
+    } else {
+      autocompleteOverride = [];
+    }
 
     // Create theme based on current mode
     const accentColor = dbType === "mongodb" ? "#22c55e" : dbType === "elasticsearch" ? "#eab308" : "#60a5fa";
@@ -278,17 +536,20 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
 
     const editorTheme = createEditorTheme(isDark);
 
+    // Use CQL language for Cassandra, JSON for others
+    const languageExtension = dbType === "cassandra" ? cqlLanguage : config.language;
+
     const startState = EditorState.create({
       doc: tab.sql || getDefaultQuery(dbType),
       extensions: [
         EditorView.lineWrapping,
         history(),
-        config.language,
+        languageExtension,
         syntaxHighlighting(defaultHighlightStyle),
         autocompletion({
-          override: [autocomplete],
+          override: autocompleteOverride,
           activateOnTyping: true,
-          maxRenderedOptions: 15,
+          maxRenderedOptions: 20,
         }),
         keymap.of([
           {
@@ -615,8 +876,8 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-bg-primary">
-      {/* Toolbar */}
-      <div className="h-10 px-4 flex items-center justify-between border-b border-border bg-bg-secondary">
+      {/* Toolbar - z-10 ensures it stays above content */}
+      <div className="h-10 px-4 flex items-center justify-between border-b border-border bg-bg-secondary relative z-10">
         <div className="flex items-center gap-2">
           <div className={`flex items-center gap-1.5 ${config.color}`}>
             <span>{config.icon}</span>
@@ -720,7 +981,7 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
                 <div className={`absolute inset-0 pointer-events-none border-2 ${config.borderColor}/50 rounded`} />
               )}
               {tab.loading && (
-                <div className="absolute inset-0 bg-bg-primary/50 backdrop-blur-[1px] flex items-center justify-center">
+                <div className="absolute inset-0 bg-bg-primary/50 backdrop-blur-[1px] flex items-center justify-center pointer-events-none">
                   <div className="flex items-center gap-2 text-sm text-text-secondary">
                     <div className={`h-4 w-4 animate-spin rounded-full border-2 ${config.borderColor} border-t-transparent`} />
                     <span>Executing query...</span>

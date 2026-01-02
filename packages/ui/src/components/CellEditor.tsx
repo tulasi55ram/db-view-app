@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ColumnMetadata } from '@dbview/types';
-import { BooleanToggle } from './editors/BooleanToggle';
-import { DateTimeInput } from './editors/DateTimeInput';
-import { JsonTextarea } from './editors/JsonTextarea';
+import { BooleanButtons } from './editors/BooleanButtons';
 import { EnumSelect } from './editors/EnumSelect';
-import { ArrayInput } from './editors/ArrayInput';
 import { validateCellValue } from '../utils/validateCell';
 import { toast } from 'sonner';
 
@@ -19,38 +16,20 @@ export function CellEditor({ value, column, onSave, onCancel }: CellEditorProps)
   // Use specialized editors for specific types
   if (column.type === 'boolean') {
     return (
-      <BooleanToggle
+      <BooleanButtons
         value={value as boolean | null}
         onSave={onSave}
         onCancel={onCancel}
+        nullable={column.nullable}
       />
     );
   }
 
-  if (column.type === 'json' || column.type === 'jsonb') {
-    return (
-      <JsonTextarea
-        value={value}
-        onSave={onSave}
-        onCancel={onCancel}
-      />
-    );
-  }
+  // JSON/JSONB/Array columns now use the side panel editor (handled in TableView)
+  // This inline editor should not be reached for JSON or Array columns
 
-  if (
-    column.type === 'date' ||
-    column.type.includes('timestamp') ||
-    column.type.includes('time')
-  ) {
-    return (
-      <DateTimeInput
-        value={value}
-        columnType={column.type}
-        onSave={(val) => onSave(val)}
-        onCancel={onCancel}
-      />
-    );
-  }
+  // Date/time fields: Use default text input to show raw database value
+  // No special formatting - display exactly what the database returns
 
   // Enum editor - check for enumValues
   if ((column.type === 'enum' || column.type === 'USER-DEFINED') && column.enumValues && column.enumValues.length > 0) {
@@ -58,17 +37,6 @@ export function CellEditor({ value, column, onSave, onCancel }: CellEditorProps)
       <EnumSelect
         value={value}
         enumValues={column.enumValues}
-        onSave={onSave}
-        onCancel={onCancel}
-      />
-    );
-  }
-
-  // Array editor
-  if (column.type === 'array' || column.type.includes('[]')) {
-    return (
-      <ArrayInput
-        value={value}
         onSave={onSave}
         onCancel={onCancel}
       />
