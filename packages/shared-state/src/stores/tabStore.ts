@@ -11,6 +11,7 @@ import { useCallback } from 'react';
 import { create } from 'zustand';
 import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 import type { Tab, TableTab, QueryTab, ERDiagramTab, DatabaseType } from '@dbview/types';
+import { useSelectionStore } from './selectionStore.js';
 
 interface TabState {
   tabs: Tab[];
@@ -66,7 +67,7 @@ interface TabActions {
 
 // Generate unique tab ID
 function generateTabId(): string {
-  return `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  return `tab-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 }
 
 export const useTabStore = create<TabState & TabActions>()(
@@ -91,7 +92,10 @@ export const useTabStore = create<TabState & TabActions>()(
           ),
 
         // Close a tab
-        closeTab: (tabId) =>
+        closeTab: (tabId) => {
+          // Clean up selection state for this tab (prevent memory leak)
+          useSelectionStore.getState().clearTabSelection(tabId);
+
           set(
             (state) => {
               const tabs = state.tabs.filter((t) => t.id !== tabId);
@@ -100,7 +104,9 @@ export const useTabStore = create<TabState & TabActions>()(
               // If closing the active tab, switch to adjacent tab
               if (activeTabId === tabId) {
                 const index = state.tabs.findIndex((t) => t.id === tabId);
-                activeTabId = tabs[Math.min(index, tabs.length - 1)]?.id ?? null;
+                // Guard against findIndex returning -1 (edge case: tab already removed)
+                const safeIndex = index >= 0 ? index : 0;
+                activeTabId = tabs[Math.min(safeIndex, tabs.length - 1)]?.id ?? null;
               }
 
               // Also clear second active tab if it's being closed
@@ -111,7 +117,8 @@ export const useTabStore = create<TabState & TabActions>()(
             },
             false,
             'closeTab'
-          ),
+          );
+        },
 
         // Set active tab
         setActiveTab: (tabId) =>
@@ -173,12 +180,17 @@ export const useTabStore = create<TabState & TabActions>()(
           const state = get();
 
           // Check if tab already exists for this table (and same connection)
+          // Require at least one identifier to match - don't match if both are undefined
           const existingTab = state.tabs.find(
             (t) =>
               t.type === 'table' &&
               (t as TableTab).schema === schema &&
               (t as TableTab).table === table &&
-              (connectionKey ? t.connectionKey === connectionKey : t.connectionName === connectionName)
+              (connectionKey
+                ? t.connectionKey === connectionKey
+                : connectionName
+                  ? t.connectionName === connectionName
+                  : false)  // Don't match if both identifiers are undefined
           );
 
           if (existingTab) {
@@ -298,15 +310,24 @@ export const useTabStore = create<TabState & TabActions>()(
           tabs: state.tabs,
           activeTabId: state.activeTabId,
         }),
-        // Reset loading states when rehydrating from storage
-        // This prevents tabs from being stuck in loading state after app restart
-        onRehydrateStorage: () => (state) => {
-          if (state?.tabs) {
-            state.tabs = state.tabs.map((tab) => ({
+        // Use merge to reset loading states during rehydration
+        // This is safer than setTimeout and avoids race conditions
+        merge: (persistedState, currentState) => {
+          const persisted = persistedState as Partial<TabState>;
+          return {
+            ...currentState,
+            ...persisted,
+            // Reset loading states during merge (no setTimeout race condition)
+            tabs: (persisted.tabs ?? []).map((tab) => ({
               ...tab,
               loading: false, // Reset loading state on app restart
               error: undefined, // Clear any previous errors
-            }));
+            })),
+          };
+        },
+        onRehydrateStorage: () => (_state, error) => {
+          if (error) {
+            console.warn('Failed to rehydrate tab store:', error);
           }
         },
       }

@@ -14,11 +14,12 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { autocompletion, CompletionContext } from "@codemirror/autocomplete";
+import { autocompletion } from "@codemirror/autocomplete";
 import { QueryResultsGrid } from "./QueryResultsGrid";
 import { getElectronAPI, type QueryHistoryEntry } from "@/electron";
 import { useTheme } from "@/design-system";
 import { toast } from "sonner";
+import { createSmartRedisCompletion, type RedisAutocompleteData } from "@/utils/redisAutocomplete";
 
 // Redis command categories with descriptions
 // Comprehensive Redis commands with full examples
@@ -234,9 +235,6 @@ const REDIS_COMMANDS = {
   ],
 };
 
-// Flatten all commands for autocomplete
-const ALL_COMMANDS = Object.values(REDIS_COMMANDS).flat();
-
 export interface RedisQueryViewProps {
   tab: {
     id: string;
@@ -270,6 +268,12 @@ export function RedisQueryView({ tab, onTabUpdate }: RedisQueryViewProps) {
   const readOnlyCompartment = useRef(new Compartment());
   const themeCompartment = useRef(new Compartment());
 
+  // Redis autocomplete data (keys from the database)
+  const autocompleteDataRef = useRef<RedisAutocompleteData>({
+    keys: [],
+    keyPatterns: [],
+  });
+
   const api = getElectronAPI();
   const { resolvedTheme } = useTheme();
 
@@ -291,35 +295,8 @@ export function RedisQueryView({ tab, onTabUpdate }: RedisQueryViewProps) {
   useEffect(() => {
     if (!editorRef.current) return;
 
-    // Redis command autocomplete
-    const redisAutocomplete = (context: CompletionContext) => {
-      const word = context.matchBefore(/[\w\s]*/);
-      if (!word || (word.from === word.to && !context.explicit)) {
-        return null;
-      }
-
-      const input = word.text.toUpperCase().trim();
-      const suggestions: any[] = [];
-
-      // Match commands
-      ALL_COMMANDS.forEach(({ cmd, args, desc }) => {
-        if (cmd.startsWith(input) || input === "") {
-          suggestions.push({
-            label: cmd,
-            detail: args,
-            info: desc,
-            type: "keyword",
-            boost: cmd.startsWith(input) ? 2 : 1,
-          });
-        }
-      });
-
-      return {
-        from: word.from,
-        options: suggestions,
-        validFor: /^[\w\s]*$/,
-      };
-    };
+    // Create smart Redis autocomplete
+    const smartRedisAutocomplete = createSmartRedisCompletion(() => autocompleteDataRef.current);
 
     // Create theme based on current mode
     const isDark = resolvedTheme === "dark";
@@ -396,9 +373,10 @@ export function RedisQueryView({ tab, onTabUpdate }: RedisQueryViewProps) {
         EditorView.lineWrapping,
         history(),
         autocompletion({
-          override: [redisAutocomplete],
+          override: [smartRedisAutocomplete],
           activateOnTyping: true,
-          maxRenderedOptions: 15,
+          maxRenderedOptions: 20,
+          defaultKeymap: true,
         }),
         keymap.of([
           {

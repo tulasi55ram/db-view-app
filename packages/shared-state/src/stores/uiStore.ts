@@ -89,6 +89,9 @@ const initialState: UIState = {
   expandConnectionKey: null,
 };
 
+// Track pending timeout for expandAndClearConnection to allow cancellation
+let expandClearTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
 export const useUIStore = create<UIState & UIActions>()(
   devtools(
     persist(
@@ -135,9 +138,16 @@ export const useUIStore = create<UIState & UIActions>()(
         setExpandConnectionKey: (key) =>
           set({ expandConnectionKey: key }, false, 'setExpandConnectionKey'),
         expandAndClearConnection: (key) => {
+          // Clear any pending timeout to prevent stale updates
+          if (expandClearTimeoutId !== null) {
+            clearTimeout(expandClearTimeoutId);
+          }
+
           set({ expandConnectionKey: key }, false, 'expandAndClearConnection:set');
+
           // Clear after a short delay to allow re-triggering
-          setTimeout(() => {
+          expandClearTimeoutId = setTimeout(() => {
+            expandClearTimeoutId = null;
             set({ expandConnectionKey: null }, false, 'expandAndClearConnection:clear');
           }, 100);
         },

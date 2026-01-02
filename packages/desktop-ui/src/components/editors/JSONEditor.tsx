@@ -22,6 +22,16 @@ interface JSONEditorProps {
   columnType: string;
 }
 
+// Maximum JSON size to prevent browser freeze (10MB)
+const MAX_JSON_SIZE = 10 * 1024 * 1024;
+
+/**
+ * Check if JSON content is safe to parse
+ */
+function isJsonSizeSafe(content: string): boolean {
+  return content.length <= MAX_JSON_SIZE;
+}
+
 // Editor theme using CSS variables for theme support
 const editorTheme = EditorView.theme({
   "&": {
@@ -155,6 +165,12 @@ export function JSONEditor({
       return "{}";
     }
 
+    // Check size before parsing to prevent browser freeze
+    if (!isJsonSizeSafe(value)) {
+      console.warn(`JSON content too large (${(value.length / 1024 / 1024).toFixed(2)}MB). Max allowed: ${MAX_JSON_SIZE / 1024 / 1024}MB`);
+      return value; // Return as-is without parsing
+    }
+
     try {
       // Try to parse and pretty-print
       const parsed = JSON.parse(value);
@@ -214,6 +230,11 @@ export function JSONEditor({
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             const content = update.state.doc.toString();
+            // Check size first
+            if (!isJsonSizeSafe(content)) {
+              setJsonError(`Content too large (${(content.length / 1024 / 1024).toFixed(2)}MB). Max: ${MAX_JSON_SIZE / 1024 / 1024}MB`);
+              return;
+            }
             try {
               JSON.parse(content);
               setJsonError(null);

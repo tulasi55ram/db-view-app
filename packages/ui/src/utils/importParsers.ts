@@ -1,8 +1,7 @@
 /**
- * Import Parsers - Re-exports from @dbview/core
- * @deprecated Import directly from '@dbview/core' instead
+ * Import Parsers - Convenience wrappers around @dbview/core functions
+ * These provide simplified APIs with sensible defaults for the VS Code UI.
  */
-
 import { parseCsv, parseJson } from '@dbview/core';
 
 export function parseCSV(content: string, hasHeaders: boolean = true): {

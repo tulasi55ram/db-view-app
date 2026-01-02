@@ -11,6 +11,11 @@ export {
   resetMessageAdapter,
   sendMessage,
   sendMessageMulti,
+  generateCorrelationId,
 } from './messageAdapter.js';
 
-export type { MessageAdapter } from '../types/index.js';
+export type {
+  MessageAdapter,
+  CorrelatedMessage,
+  SendMessageOptions,
+} from '../types/index.js';

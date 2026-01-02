@@ -2,11 +2,10 @@ import { type FC, useEffect, useRef } from "react";
 import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
-import { sql, PostgreSQL } from "@codemirror/lang-sql";
+import { sql, PostgreSQL, MySQL, MariaSQL, SQLite, MSSQL } from "@codemirror/lang-sql";
 import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
 import {
   autocompletion,
-  CompletionContext,
   nextSnippetField,
   prevSnippetField,
   clearSnippet,
@@ -15,6 +14,12 @@ import { search, searchKeymap } from "@codemirror/search";
 import type { ColumnMetadata, TableInfo } from "@dbview/types";
 import { SQL_SNIPPETS } from "@/utils/sqlSnippets";
 import { useTheme } from "@/design-system";
+import {
+  createSmartSqlCompletion,
+  type SqlDatabaseType,
+  type ForeignKeyRelation,
+  type EnhancedAutocompleteData,
+} from "@/utils/sqlAutocomplete";
 
 export interface SqlEditorProps {
   value: string;
@@ -24,10 +29,33 @@ export interface SqlEditorProps {
   readOnly?: boolean;
   loading?: boolean;
   error?: string;
+  // Database type for dialect-specific features
+  dbType?: SqlDatabaseType;
   // Autocomplete data
   schemas?: string[];
   tables?: TableInfo[];
   columns?: Record<string, ColumnMetadata[]>;
+  // Foreign key relationships for JOIN suggestions
+  foreignKeys?: ForeignKeyRelation[];
+}
+
+/**
+ * Get the CodeMirror SQL dialect for a database type
+ */
+function getSqlDialect(dbType?: SqlDatabaseType) {
+  switch (dbType) {
+    case "mysql":
+      return MySQL;
+    case "mariadb":
+      return MariaSQL;
+    case "sqlite":
+      return SQLite;
+    case "sqlserver":
+      return MSSQL;
+    case "postgres":
+    default:
+      return PostgreSQL;
+  }
 }
 
 export const SqlEditor: FC<SqlEditorProps> = ({
@@ -38,9 +66,11 @@ export const SqlEditor: FC<SqlEditorProps> = ({
   readOnly = false,
   loading = false,
   error,
+  dbType = "postgres",
   schemas = [],
   tables = [],
   columns = {},
+  foreignKeys = [],
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -51,269 +81,173 @@ export const SqlEditor: FC<SqlEditorProps> = ({
   const { resolvedTheme } = useTheme();
 
   // Store autocomplete data in a ref so it can be updated without recreating the editor
-  const autocompleteDataRef = useRef({ schemas, tables, columns });
+  const autocompleteDataRef = useRef<EnhancedAutocompleteData>({
+    schemas,
+    tables,
+    columns,
+    foreignKeys,
+    dbType,
+  });
 
   // Update the ref whenever autocomplete data changes
   useEffect(() => {
-    autocompleteDataRef.current = { schemas, tables, columns };
-  }, [schemas, tables, columns]);
+    autocompleteDataRef.current = {
+      schemas,
+      tables,
+      columns,
+      foreignKeys,
+      dbType,
+    };
+  }, [schemas, tables, columns, foreignKeys, dbType]);
 
   useEffect(() => {
     if (!editorRef.current) return;
 
-    // Custom SQL autocomplete - uses ref to always get latest data
-    const sqlAutocomplete = (context: CompletionContext) => {
+    // Create smart SQL autocomplete using the new system
+    const smartSqlComplete = createSmartSqlCompletion(() => autocompleteDataRef.current);
+
+    // Also include SQL snippets
+    const snippetComplete = (context: any) => {
       const word = context.matchBefore(/\w*/);
       if (!word || (word.from === word.to && !context.explicit)) {
         return null;
       }
 
-      const suggestions: any[] = [];
-
-      // Get latest autocomplete data from ref
-      const { schemas, tables, columns } = autocompleteDataRef.current;
-
-      // SQL Snippets (match by prefix for discoverability)
       const snippetMatches = SQL_SNIPPETS.filter((snippet) =>
         snippet.label.toLowerCase().startsWith(word.text.toLowerCase())
       );
-      suggestions.push(...snippetMatches);
 
-      // SQL Keywords
-      const keywords = [
-        "SELECT",
-        "FROM",
-        "WHERE",
-        "JOIN",
-        "LEFT",
-        "RIGHT",
-        "INNER",
-        "OUTER",
-        "ON",
-        "AND",
-        "OR",
-        "NOT",
-        "IN",
-        "LIKE",
-        "ILIKE",
-        "BETWEEN",
-        "ORDER",
-        "BY",
-        "ASC",
-        "DESC",
-        "GROUP",
-        "HAVING",
-        "LIMIT",
-        "OFFSET",
-        "INSERT",
-        "INTO",
-        "VALUES",
-        "UPDATE",
-        "SET",
-        "DELETE",
-        "CREATE",
-        "TABLE",
-        "DROP",
-        "ALTER",
-        "ADD",
-        "COLUMN",
-        "PRIMARY",
-        "KEY",
-        "FOREIGN",
-        "REFERENCES",
-        "CONSTRAINT",
-        "INDEX",
-        "UNIQUE",
-        "NULL",
-        "NOT NULL",
-        "DEFAULT",
-        "DISTINCT",
-        "AS",
-        "CASE",
-        "WHEN",
-        "THEN",
-        "ELSE",
-        "END",
-        "UNION",
-        "ALL",
-        "INTERSECT",
-        "EXCEPT",
-        "TRUE",
-        "FALSE",
-      ];
-
-      keywords.forEach((keyword) => {
-        suggestions.push({
-          label: keyword,
-          type: "keyword",
-          boost: 0,
-        });
-      });
-
-      // PostgreSQL Functions
-      const functions = [
-        "COUNT",
-        "SUM",
-        "AVG",
-        "MIN",
-        "MAX",
-        "NOW",
-        "CURRENT_DATE",
-        "CURRENT_TIMESTAMP",
-        "UPPER",
-        "LOWER",
-        "CONCAT",
-        "COALESCE",
-        "NULLIF",
-        "CAST",
-      ];
-
-      functions.forEach((func) => {
-        suggestions.push({
-          label: func,
-          type: "function",
-          apply: `${func}()`,
-          boost: 1,
-        });
-      });
-
-      // Schemas
-      schemas.forEach((schema) => {
-        suggestions.push({
-          label: schema,
-          type: "namespace",
-          boost: 2,
-        });
-      });
-
-      // Tables
-      tables.forEach((table) => {
-        const detail = table.rowCount
-          ? `${table.schema}.${table.name} (${formatRowCount(table.rowCount)} rows)`
-          : `${table.schema}.${table.name}`;
-
-        suggestions.push({
-          label: table.name,
-          detail,
-          type: "class",
-          boost: 3,
-        });
-
-        // Also suggest fully qualified name
-        suggestions.push({
-          label: `${table.schema}.${table.name}`,
-          detail,
-          type: "class",
-          boost: 3,
-        });
-      });
-
-      // Columns (show all available columns)
-      Object.entries(columns).forEach(([_tableName, cols]) => {
-        cols.forEach((col) => {
-          const typeInfo = col.nullable ? `${col.type} (nullable)` : col.type;
-          const pkInfo = col.isPrimaryKey ? ", PK" : "";
-
-          suggestions.push({
-            label: col.name,
-            detail: `${typeInfo}${pkInfo}`,
-            type: "property",
-            boost: 4,
-          });
-        });
-      });
+      if (snippetMatches.length === 0) {
+        return null;
+      }
 
       return {
         from: word.from,
-        options: suggestions,
+        options: snippetMatches.map((s) => ({ ...s, boost: 100 })), // High boost for snippets
         validFor: /^\w*$/,
       };
     };
 
     // Create theme based on current mode
-    const createEditorTheme = (isDark: boolean) => EditorView.theme(
-      {
-        "&": {
-          backgroundColor: isDark ? "#171717" : "#ffffff",
-          color: isDark ? "#fafafa" : "#171717",
-          height: height,
-          fontSize: "13px",
-          lineHeight: "1.5",
-          fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+    const createEditorTheme = (isDark: boolean) =>
+      EditorView.theme(
+        {
+          "&": {
+            backgroundColor: isDark ? "#171717" : "#ffffff",
+            color: isDark ? "#fafafa" : "#171717",
+            height: height,
+            fontSize: "13px",
+            lineHeight: "1.5",
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+          },
+          ".cm-content": {
+            caretColor: "#3b82f6",
+            padding: "12px 0",
+          },
+          ".cm-line": {
+            lineHeight: "1.5",
+          },
+          ".cm-cursor": {
+            borderLeftColor: "#3b82f6",
+            borderLeftWidth: "2px",
+            height: "1.2em !important",
+          },
+          ".cm-activeLine": {
+            backgroundColor: isDark ? "#262626" : "#f5f5f5",
+          },
+          ".cm-activeLineGutter": {
+            backgroundColor: isDark ? "#262626" : "#f5f5f5",
+          },
+          ".cm-gutters": {
+            backgroundColor: isDark ? "#171717" : "#fafafa",
+            color: isDark ? "#737373" : "#a3a3a3",
+            border: "none",
+            minWidth: "40px",
+          },
+          ".cm-lineNumbers .cm-gutterElement": {
+            padding: "0 12px 0 8px",
+          },
+          "&.cm-focused .cm-selectionBackground, ::selection": {
+            backgroundColor: "#3b82f6",
+            color: "#ffffff",
+          },
+          ".cm-selectionBackground": {
+            backgroundColor: isDark ? "#262626" : "#e5e5e5",
+          },
+          ".cm-tooltip": {
+            backgroundColor: isDark ? "#262626" : "#ffffff",
+            border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
+            color: isDark ? "#fafafa" : "#171717",
+            borderRadius: "6px",
+            boxShadow: isDark
+              ? "0 4px 12px rgba(0, 0, 0, 0.4)"
+              : "0 4px 12px rgba(0, 0, 0, 0.1)",
+          },
+          ".cm-tooltip-autocomplete": {
+            backgroundColor: isDark ? "#262626" : "#ffffff",
+            border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
+            maxWidth: "400px",
+          },
+          ".cm-tooltip-autocomplete ul": {
+            maxHeight: "300px",
+          },
+          ".cm-tooltip-autocomplete ul li": {
+            padding: "4px 8px",
+            borderRadius: "4px",
+            margin: "2px 4px",
+          },
+          ".cm-tooltip-autocomplete ul li[aria-selected]": {
+            backgroundColor: isDark ? "#404040" : "#e5e5e5",
+            color: isDark ? "#fafafa" : "#171717",
+          },
+          ".cm-completionIcon": {
+            width: "1.2em",
+            fontSize: "14px",
+            lineHeight: "1",
+            marginRight: "0.5em",
+            textAlign: "center",
+            color: isDark ? "#a3a3a3" : "#737373",
+          },
+          ".cm-completionIcon-keyword": { color: isDark ? "#569cd6" : "#0000ff" },
+          ".cm-completionIcon-function": { color: isDark ? "#dcdcaa" : "#795e26" },
+          ".cm-completionIcon-class": { color: isDark ? "#4ec9b0" : "#267f99" },
+          ".cm-completionIcon-property": { color: isDark ? "#9cdcfe" : "#001080" },
+          ".cm-completionIcon-namespace": { color: isDark ? "#c586c0" : "#af00db" },
+          ".cm-completionIcon-snippet": { color: isDark ? "#c586c0" : "#af00db", fontWeight: "500" },
+          ".cm-completionIcon-variable": { color: isDark ? "#4fc1ff" : "#0070c1" },
+          ".cm-completionIcon-text": { color: isDark ? "#ce9178" : "#a31515" },
+          ".cm-completionIcon-type": { color: isDark ? "#4ec9b0" : "#267f99" },
+          ".cm-completionIcon-operator": { color: isDark ? "#d4d4d4" : "#000000" },
+          ".cm-completionLabel": {
+            fontSize: "13px",
+          },
+          ".cm-completionDetail": {
+            fontSize: "11px",
+            opacity: 0.7,
+            marginLeft: "0.5em",
+            fontStyle: "italic",
+          },
+          ".cm-completionInfo": {
+            padding: "8px",
+            fontSize: "12px",
+            maxWidth: "300px",
+            borderLeft: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
+          },
+          ".cm-placeholder": {
+            color: "#737373",
+            lineHeight: "1.5",
+          },
         },
-        ".cm-content": {
-          caretColor: "#3b82f6",
-          padding: "12px 0",
-        },
-        ".cm-line": {
-          lineHeight: "1.5",
-        },
-        ".cm-cursor": {
-          borderLeftColor: "#3b82f6",
-          borderLeftWidth: "2px",
-          height: "1.2em !important",
-        },
-        ".cm-activeLine": {
-          backgroundColor: isDark ? "#262626" : "#f5f5f5",
-        },
-        ".cm-activeLineGutter": {
-          backgroundColor: isDark ? "#262626" : "#f5f5f5",
-        },
-        ".cm-gutters": {
-          backgroundColor: isDark ? "#171717" : "#fafafa",
-          color: isDark ? "#737373" : "#a3a3a3",
-          border: "none",
-          minWidth: "40px",
-        },
-        ".cm-lineNumbers .cm-gutterElement": {
-          padding: "0 12px 0 8px",
-        },
-        "&.cm-focused .cm-selectionBackground, ::selection": {
-          backgroundColor: "#3b82f6",
-          color: "#ffffff",
-        },
-        ".cm-selectionBackground": {
-          backgroundColor: isDark ? "#262626" : "#e5e5e5",
-        },
-        ".cm-tooltip": {
-          backgroundColor: isDark ? "#262626" : "#ffffff",
-          border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
-          color: isDark ? "#fafafa" : "#171717",
-        },
-        ".cm-tooltip-autocomplete": {
-          backgroundColor: isDark ? "#262626" : "#ffffff",
-          border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
-        },
-        ".cm-tooltip-autocomplete ul li[aria-selected]": {
-          backgroundColor: isDark ? "#404040" : "#e5e5e5",
-          color: isDark ? "#fafafa" : "#171717",
-        },
-        ".cm-completionIcon": {
-          width: "1em",
-          fontSize: "14px",
-          lineHeight: "1",
-          marginRight: "0.5em",
-          textAlign: "center",
-          color: isDark ? "#a3a3a3" : "#737373",
-        },
-        ".cm-completionIcon-keyword": { color: isDark ? "#569cd6" : "#0000ff" },
-        ".cm-completionIcon-function": { color: isDark ? "#dcdcaa" : "#795e26" },
-        ".cm-completionIcon-class": { color: isDark ? "#4ec9b0" : "#267f99" },
-        ".cm-completionIcon-property": { color: isDark ? "#9cdcfe" : "#001080" },
-        ".cm-completionIcon-namespace": { color: isDark ? "#c586c0" : "#af00db" },
-        ".cm-completionIcon-snippet": { color: isDark ? "#c586c0" : "#af00db", fontWeight: "500" },
-        ".cm-placeholder": {
-          color: "#737373",
-          lineHeight: "1.5",
-        },
-      },
-      { dark: isDark }
-    );
+        { dark: isDark }
+      );
 
     const editorTheme = createEditorTheme(resolvedTheme === "dark");
 
     // Custom syntax highlighting for SQL
     const sqlHighlighting = syntaxHighlighting(defaultHighlightStyle);
+
+    // Get the appropriate SQL dialect
+    const dialect = getSqlDialect(dbType);
 
     // Custom keybindings
     const customKeybindings = keymap.of([
@@ -341,17 +275,18 @@ export const SqlEditor: FC<SqlEditorProps> = ({
         EditorView.lineWrapping,
         history(),
         search(),
-        sql({ dialect: PostgreSQL }),
+        sql({ dialect }),
         sqlHighlighting,
         autocompletion({
-          override: [sqlAutocomplete],
+          override: [snippetComplete, smartSqlComplete],
           activateOnTyping: true,
-          maxRenderedOptions: 12,
+          maxRenderedOptions: 20,
+          defaultKeymap: true,
         }),
         customKeybindings,
         themeCompartment.current.of(editorTheme),
         readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly || loading)),
-        placeholderExt("Write your SQL query here..."),
+        placeholderExt("Write your SQL query here... (Ctrl+Space for autocomplete)"),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             const newValue = update.state.doc.toString();
@@ -450,6 +385,11 @@ export const SqlEditor: FC<SqlEditorProps> = ({
     <div className="relative">
       <div ref={editorRef} className="rounded border border-border overflow-hidden" style={{ height }} />
 
+      {/* Database type badge */}
+      <div className="absolute top-2 right-2 px-2 py-0.5 text-[10px] font-medium rounded bg-bg-tertiary text-text-secondary uppercase tracking-wide">
+        {dbType}
+      </div>
+
       {/* Error indicator border */}
       {error && <div className="absolute inset-0 pointer-events-none border-2 border-error/50 rounded" />}
 
@@ -465,10 +405,3 @@ export const SqlEditor: FC<SqlEditorProps> = ({
     </div>
   );
 };
-
-// Helper function to format row count
-function formatRowCount(count: number): string {
-  if (count < 1000) return count.toString();
-  if (count < 1000000) return `${(count / 1000).toFixed(1)}k`;
-  return `${(count / 1000000).toFixed(1)}M`;
-}

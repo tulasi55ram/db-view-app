@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { X, Plus, Filter } from "lucide-react";
 import type { FilterCondition, ColumnMetadata, FilterOperator } from "@dbview/types";
+import { generateUniqueId } from "@/utils/generateId";
 
 interface FilterBuilderProps {
   columns: ColumnMetadata[];
@@ -31,7 +32,7 @@ export function FilterBuilder({ columns, onApply, initialFilters = [], initialLo
   const [filters, setFilters] = useState<FilterCondition[]>(
     initialFilters.length > 0
       ? initialFilters
-      : [{ id: Date.now().toString(), columnName: columns[0]?.name || "", operator: "equals", value: "" }]
+      : [{ id: generateUniqueId('filter'), columnName: columns[0]?.name || "", operator: "equals", value: "" }]
   );
   const [logic, setLogic] = useState<"AND" | "OR">(initialLogic);
   const [internalIsOpen, setInternalIsOpen] = useState(false);
@@ -41,7 +42,7 @@ export function FilterBuilder({ columns, onApply, initialFilters = [], initialLo
     if (initialFilters.length > 0) {
       setFilters(initialFilters);
     } else {
-      setFilters([{ id: Date.now().toString(), columnName: columns[0]?.name || "", operator: "equals", value: "" }]);
+      setFilters([{ id: generateUniqueId('filter'), columnName: columns[0]?.name || "", operator: "equals", value: "" }]);
     }
     setLogic(initialLogic);
   }, [initialFilters, initialLogic, columns]);
@@ -56,12 +57,8 @@ export function FilterBuilder({ columns, onApply, initialFilters = [], initialLo
     }
   };
 
-  const addFilter = useCallback(() => {
-    setFilters([...filters, { id: Date.now().toString(), columnName: columns[0]?.name || "", operator: "equals", value: "" }]);
-  }, [filters, columns]);
-
   const addFilterAfter = useCallback((index: number) => {
-    const newFilter = { id: Date.now().toString(), columnName: columns[0]?.name || "", operator: "equals" as FilterOperator, value: "" };
+    const newFilter = { id: generateUniqueId('filter'), columnName: columns[0]?.name || "", operator: "equals" as FilterOperator, value: "" };
     const newFilters = [...filters];
     newFilters.splice(index + 1, 0, newFilter);
     setFilters(newFilters);
@@ -86,12 +83,28 @@ export function FilterBuilder({ columns, onApply, initialFilters = [], initialLo
   );
 
   const handleApply = useCallback(() => {
+    /**
+     * Check if a filter value is considered "set" (has a meaningful value).
+     * Allows 0, false, and other falsy values that are valid filter inputs.
+     * Only treats empty string, null, and undefined as "no value".
+     */
+    const hasValue = (value: unknown): boolean => {
+      return value !== '' && value !== null && value !== undefined;
+    };
+
     // Filter out incomplete filters
     const validFilters = filters.filter((f) => {
-      if (f.operator === "is_null" || f.operator === "is_not_null") {
-        return f.columnName !== "";
+      if (!f.columnName || f.columnName === "") {
+        return false;
       }
-      return f.columnName !== "" && f.value !== "";
+      if (f.operator === "is_null" || f.operator === "is_not_null") {
+        return true;
+      }
+      if (f.operator === "between") {
+        // BETWEEN requires both value and value2
+        return hasValue(f.value) && hasValue(f.value2);
+      }
+      return hasValue(f.value);
     });
 
     onApply(validFilters, logic);
@@ -99,7 +112,7 @@ export function FilterBuilder({ columns, onApply, initialFilters = [], initialLo
   }, [filters, logic, onApply]);
 
   const handleClear = useCallback(() => {
-    setFilters([{ id: Date.now().toString(), columnName: columns[0]?.name || "", operator: "equals", value: "" }]);
+    setFilters([{ id: generateUniqueId('filter'), columnName: columns[0]?.name || "", operator: "equals", value: "" }]);
     setLogic("AND");
     onApply([], "AND");
   }, [columns, onApply]);
@@ -199,21 +212,40 @@ export function FilterBuilder({ columns, onApply, initialFilters = [], initialLo
 
                       {/* Value (hide for is_null / is_not_null) */}
                       {filter.operator !== "is_null" && filter.operator !== "is_not_null" ? (
-                        <input
-                          type="text"
-                          value={String(filter.value || "")}
-                          onChange={(e) => updateFilter(index, "value", e.target.value)}
-                          placeholder={
-                            filter.operator === "in"
-                              ? "value1, value2, value3"
-                              : filter.operator === "between"
-                              ? "min, max"
-                              : filter.operator === "contains" || filter.operator === "starts_with" || filter.operator === "ends_with"
-                              ? "pattern"
-                              : "value"
-                          }
-                          className="col-span-1 px-2 py-1.5 bg-bg-secondary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
-                        />
+                        filter.operator === "between" ? (
+                          // BETWEEN needs two input fields for value and value2
+                          <div className="col-span-1 flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={String(filter.value || "")}
+                              onChange={(e) => updateFilter(index, "value", e.target.value)}
+                              placeholder="min"
+                              className="flex-1 min-w-0 px-2 py-1.5 bg-bg-secondary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
+                            />
+                            <span className="text-xs text-text-tertiary">to</span>
+                            <input
+                              type="text"
+                              value={String(filter.value2 || "")}
+                              onChange={(e) => updateFilter(index, "value2", e.target.value)}
+                              placeholder="max"
+                              className="flex-1 min-w-0 px-2 py-1.5 bg-bg-secondary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
+                            />
+                          </div>
+                        ) : (
+                          <input
+                            type="text"
+                            value={String(filter.value || "")}
+                            onChange={(e) => updateFilter(index, "value", e.target.value)}
+                            placeholder={
+                              filter.operator === "in"
+                                ? "value1, value2, value3"
+                                : filter.operator === "contains" || filter.operator === "starts_with" || filter.operator === "ends_with"
+                                ? "pattern"
+                                : "value"
+                            }
+                            className="col-span-1 px-2 py-1.5 bg-bg-secondary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
+                          />
+                        )
                       ) : (
                         <div className="col-span-1" />
                       )}

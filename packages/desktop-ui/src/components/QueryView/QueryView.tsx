@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Play, Wand2, History, Activity, BookOpen, Save, Bookmark, X } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SqlEditor } from "./SqlEditor";
@@ -11,6 +11,16 @@ import { getElectronAPI } from "@/electron";
 import { toast } from "sonner";
 import type { TableInfo, ColumnMetadata, ExplainPlan, SavedQuery, QueryHistoryEntry } from "@dbview/types";
 import { useQueryHistoryStore, useSavedQueriesStore } from "@dbview/shared-state";
+import type { SqlDatabaseType, ForeignKeyRelation } from "@/utils/sqlAutocomplete";
+
+/**
+ * Extract error message from unknown error type
+ */
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return 'Unknown error';
+}
 
 // Comprehensive SQL commands organized by category
 const SQL_COMMANDS = {
@@ -291,6 +301,78 @@ export interface QueryViewProps {
   ) => void;
 }
 
+/**
+ * Extract database type from connection key
+ * Connection keys have format: "dbtype:identifier"
+ */
+function getDbTypeFromConnectionKey(connectionKey?: string): SqlDatabaseType {
+  if (!connectionKey) return "postgres";
+  const [dbType] = connectionKey.split(":");
+  const validTypes: SqlDatabaseType[] = ["postgres", "mysql", "mariadb", "sqlserver", "sqlite"];
+  return validTypes.includes(dbType as SqlDatabaseType) ? (dbType as SqlDatabaseType) : "postgres";
+}
+
+/**
+ * Extract FK relationships from column metadata
+ */
+function extractForeignKeys(columns: Record<string, ColumnMetadata[]>): ForeignKeyRelation[] {
+  const foreignKeys: ForeignKeyRelation[] = [];
+
+  for (const [tableKey, cols] of Object.entries(columns)) {
+    // Validate tableKey format
+    if (!tableKey || typeof tableKey !== 'string') continue;
+
+    const tableParts = tableKey.split(".");
+    const sourceSchema = tableParts[0] || "public";
+    const sourceTable = tableParts[1] || tableParts[0] || "";
+
+    // Validate cols is an array
+    if (!Array.isArray(cols)) continue;
+
+    for (const col of cols) {
+      // Validate column structure
+      if (!col || typeof col !== 'object') continue;
+      if (!col.isForeignKey || !col.foreignKeyRef) continue;
+
+      // Validate foreignKeyRef is a non-empty string
+      const fkRef = col.foreignKeyRef;
+      if (typeof fkRef !== 'string' || !fkRef.trim()) continue;
+
+      // foreignKeyRef format: "schema.table.column" or "table.column"
+      const parts = fkRef.split(".");
+
+      // Skip malformed references (need at least table.column)
+      if (parts.length < 2 || parts.some(p => !p.trim())) {
+        console.warn(`Skipping malformed foreign key reference: "${fkRef}"`);
+        continue;
+      }
+
+      if (parts.length >= 3) {
+        foreignKeys.push({
+          sourceSchema,
+          sourceTable,
+          sourceColumn: col.name,
+          targetSchema: parts[0],
+          targetTable: parts[1],
+          targetColumn: parts.slice(2).join("."), // Handle column names with dots
+        });
+      } else if (parts.length === 2) {
+        // "table.column" format (no schema)
+        foreignKeys.push({
+          sourceSchema,
+          sourceTable,
+          sourceColumn: col.name,
+          targetSchema: sourceSchema,
+          targetTable: parts[0],
+          targetColumn: parts[1],
+        });
+      }
+    }
+  }
+
+  return foreignKeys;
+}
+
 export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
   const [autocompleteData, setAutocompleteData] = useState<{
     schemas: string[];
@@ -326,23 +408,50 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     deleteQuery: deleteSavedQuery,
   } = useSavedQueriesStore();
 
+  // Extract database type from connection key
+  const dbType = useMemo(
+    () => getDbTypeFromConnectionKey(tab.connectionKey),
+    [tab.connectionKey]
+  );
+
+  // Extract FK relationships from column metadata
+  const foreignKeys = useMemo(
+    () => extractForeignKeys(autocompleteData.columns),
+    [autocompleteData.columns]
+  );
+
   // Load autocomplete data on mount
   useEffect(() => {
-    if (tab.connectionKey && api) {
-      // Load autocomplete data
-      api
-        .getAutocompleteData(tab.connectionKey)
-        .then((data) => {
+    if (!tab.connectionKey || !api) {
+      return;
+    }
+
+    // Track if effect is still active (prevents state updates after unmount/change)
+    let isActive = true;
+
+    api
+      .getAutocompleteData(tab.connectionKey)
+      .then((data) => {
+        // Only update state if this effect is still active
+        if (isActive) {
           setAutocompleteData({
             schemas: data.schemas || [],
             tables: data.tables || [],
             columns: data.columns || {},
           });
-        })
-        .catch((err) => {
+        }
+      })
+      .catch((err) => {
+        // Only log if effect is still active (avoid logging after unmount)
+        if (isActive) {
           console.error("Failed to load autocomplete data:", err);
-        });
-    }
+        }
+      });
+
+    // Cleanup: mark effect as inactive
+    return () => {
+      isActive = false;
+    };
   }, [tab.connectionKey, api]);
 
   // Handle run query
@@ -379,18 +488,19 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
       });
 
       toast.success(`Query executed successfully (${result.rows.length} rows, ${duration}ms)`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       const duration = Date.now() - startTime;
+      const errorMessage = getErrorMessage(error);
 
       // Add failed query to shared history store
-      addQueryToHistory(tab.sql, false, duration, undefined, error.message || "Unknown error");
+      addQueryToHistory(tab.sql, false, duration, undefined, errorMessage);
 
       onTabUpdate(tab.id, {
         loading: false,
-        error: error.message || "Failed to execute query",
+        error: errorMessage,
       });
 
-      toast.error(`Query failed: ${error.message}`);
+      toast.error(`Query failed: ${errorMessage}`);
     }
   }, [tab, onTabUpdate, api, addQueryToHistory]);
 
@@ -410,7 +520,7 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
       });
 
       toast.info("Query cancelled");
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to cancel query:", error);
 
       // Even if cancellation failed, update UI state
@@ -419,7 +529,7 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
         error: "Query cancellation failed, but query may have completed",
       });
 
-      toast.error(`Failed to cancel query: ${error.message}`);
+      toast.error(`Failed to cancel query: ${getErrorMessage(error)}`);
     }
   }, [tab.connectionKey, tab.id, onTabUpdate, api]);
 
@@ -431,8 +541,8 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
       const formatted = await api.formatSql(tab.sql);
       onTabUpdate(tab.id, { sql: formatted, isDirty: true });
       toast.success("SQL formatted successfully");
-    } catch (error: any) {
-      toast.error(`Failed to format SQL: ${error.message}`);
+    } catch (error: unknown) {
+      toast.error(`Failed to format SQL: ${getErrorMessage(error)}`);
     }
   }, [tab.sql, tab.id, onTabUpdate, api]);
 
@@ -534,9 +644,10 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
       });
       setExplainPlan(result);
       toast.success("Query analyzed successfully");
-    } catch (error: any) {
-      setExplainError(error.message || "Failed to analyze query");
-      toast.error(`Failed to analyze query: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error);
+      setExplainError(errorMessage);
+      toast.error(`Failed to analyze query: ${errorMessage}`);
     } finally {
       setExplainLoading(false);
     }
@@ -675,9 +786,11 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
                 onRunQuery={handleRunQuery}
                 loading={tab.loading || false}
                 error={tab.error}
+                dbType={dbType}
                 schemas={autocompleteData.schemas}
                 tables={autocompleteData.tables}
                 columns={autocompleteData.columns}
+                foreignKeys={foreignKeys}
                 height="100%"
               />
             </div>
@@ -704,7 +817,11 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
                       onClick={() => {
                         if (!tab.sql) return;
                         // Reload query with higher limit
-                        const newLimit = (tab.limit || 1000) + 1000;
+                        // Validate and sanitize the limit value to prevent injection
+                        const currentLimit = typeof tab.limit === 'number' && Number.isInteger(tab.limit) && tab.limit > 0
+                          ? tab.limit
+                          : 1000;
+                        const newLimit = Math.min(currentLimit + 1000, 100000); // Cap at 100k for safety
                         const modifiedSql = `${tab.sql.trim()}\nLIMIT ${newLimit}`;
                         onTabUpdate(tab.id, { sql: modifiedSql, isDirty: true });
                         handleRunQuery();

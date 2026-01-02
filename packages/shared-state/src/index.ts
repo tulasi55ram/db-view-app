@@ -109,6 +109,26 @@ export {
   clearQueryStartTime,
 } from './hooks/useQueryActions.js';
 
+// Table editing hook
+export {
+  useTableEditing,
+  type UseTableEditingOptions,
+  type UseTableEditingResult,
+} from './hooks/useTableEditing.js';
+
+// Table filters hook
+export {
+  useTableFilters,
+  type UseTableFiltersResult,
+} from './hooks/useTableFilters.js';
+
+// Saved views hook
+export {
+  useSavedViews,
+  type UseSavedViewsCallbacks,
+  type UseSavedViewsResult,
+} from './hooks/useSavedViews.js';
+
 // ============================================
 // TanStack Query
 // ============================================
@@ -176,6 +196,9 @@ export type {
   FilterOperator,
   QueryHistoryEntry,
   SavedQuery,
+  SavedView,
+  ViewState,
+  CellEdit,
 } from '@dbview/types';
 
 // Re-export TanStack Query types that consumers might need

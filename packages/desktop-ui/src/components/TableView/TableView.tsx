@@ -6,6 +6,7 @@ import { cn } from "@/utils/cn";
 import { getElectronAPI } from "@/electron";
 import { toast } from "sonner";
 import type { ColumnMetadata, FilterCondition } from "@dbview/types";
+import { useTableFilters } from "@dbview/shared-state";
 import { FilterBuilder } from "./FilterBuilder";
 import { FilterChips } from "./FilterChips";
 import { TableMetadataPanel } from "./TableMetadataPanel";
@@ -62,8 +63,17 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
   const [showInsertPanel, setShowInsertPanel] = useState(false);
   const [insertPanelInitialValues, setInsertPanelInitialValues] = useState<Record<string, string>>({});
   const [insertPanelInitialNullColumns, setInsertPanelInitialNullColumns] = useState<Set<string>>(new Set());
-  const [filters, setFilters] = useState<FilterCondition[]>([]);
-  const [filterLogic, setFilterLogic] = useState<"AND" | "OR">("AND");
+
+  // Use shared filter hook
+  const {
+    conditions: filters,
+    logicOperator: filterLogic,
+    setAllConditions: setFilters,
+    setLogicOperator: setFilterLogic,
+    clearAll: clearFilters,
+    hasActiveFilters,
+  } = useTableFilters();
+
   const [showMetadataPanel, setShowMetadataPanel] = useState(false);
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"ASC" | "DESC">("ASC");
@@ -96,50 +106,95 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
   // Column widths state (persisted per table)
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
     try {
-      const storageKey = `dbview-col-widths-${schema}-${table}`;
+      const storageKey = `dbview-col-widths-${encodeURIComponent(schema)}-${encodeURIComponent(table)}`;
       const saved = localStorage.getItem(storageKey);
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Validate structure
+        if (typeof parsed === 'object' && parsed !== null) {
+          return parsed;
+        }
+        // Invalid structure - clear corrupted data
+        console.warn('Invalid column widths data, resetting');
+        localStorage.removeItem(storageKey);
+      }
+    } catch (error) {
+      console.warn('Failed to load column widths:', error);
+      // Don't remove on error - might be transient
     }
+    return {};
   });
   const [resizingColumn, setResizingColumn] = useState<string | null>(null);
   const resizeStartX = useRef<number>(0);
   const resizeStartWidth = useRef<number>(0);
 
-  // Persist column widths
+  // Persist column widths with debounce to avoid excessive writes
   useEffect(() => {
-    if (Object.keys(columnWidths).length > 0) {
+    if (Object.keys(columnWidths).length === 0) return;
+
+    const timeoutId = setTimeout(() => {
       try {
-        const storageKey = `dbview-col-widths-${schema}-${table}`;
+        const storageKey = `dbview-col-widths-${encodeURIComponent(schema)}-${encodeURIComponent(table)}`;
         localStorage.setItem(storageKey, JSON.stringify(columnWidths));
-      } catch {
-        // Ignore localStorage errors
+      } catch (error) {
+        console.warn('Failed to save column widths:', error);
       }
-    }
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(timeoutId);
   }, [columnWidths, schema, table]);
 
-  // Column resize handlers
+  // Column resize handlers - use refs to store handlers for proper cleanup
+  const resizingColumnRef = useRef<string | null>(null);
+  const handleMouseMoveRef = useRef<((e: MouseEvent) => void) | null>(null);
+  const handleMouseUpRef = useRef<(() => void) | null>(null);
+
+  // Cleanup function that safely removes listeners
+  const cleanupResizeListeners = useCallback(() => {
+    if (handleMouseMoveRef.current) {
+      document.removeEventListener("mousemove", handleMouseMoveRef.current);
+      handleMouseMoveRef.current = null;
+    }
+    if (handleMouseUpRef.current) {
+      document.removeEventListener("mouseup", handleMouseUpRef.current);
+      handleMouseUpRef.current = null;
+    }
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    resizingColumnRef.current = null;
+  }, []);
+
   const handleResizeStart = useCallback((e: React.MouseEvent, column: string) => {
     e.preventDefault();
     e.stopPropagation();
+
+    // Clean up any existing listeners first
+    cleanupResizeListeners();
+
+    resizingColumnRef.current = column;
     setResizingColumn(column);
     resizeStartX.current = e.clientX;
     resizeStartWidth.current = columnWidths[column] || 150;
-  }, [columnWidths]);
+  }, [columnWidths, cleanupResizeListeners]);
 
   useEffect(() => {
     if (!resizingColumn) return;
 
     const handleMouseMove = (e: MouseEvent) => {
+      if (!resizingColumnRef.current) return;
       const delta = e.clientX - resizeStartX.current;
       const newWidth = Math.max(60, resizeStartWidth.current + delta);
-      setColumnWidths((prev) => ({ ...prev, [resizingColumn]: newWidth }));
+      setColumnWidths((prev) => ({ ...prev, [resizingColumnRef.current!]: newWidth }));
     };
 
     const handleMouseUp = () => {
+      cleanupResizeListeners();
       setResizingColumn(null);
     };
+
+    // Store refs for cleanup
+    handleMouseMoveRef.current = handleMouseMove;
+    handleMouseUpRef.current = handleMouseUp;
 
     document.addEventListener("mousemove", handleMouseMove);
     document.addEventListener("mouseup", handleMouseUp);
@@ -147,12 +202,16 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     document.body.style.userSelect = "none";
 
     return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
+      cleanupResizeListeners();
     };
-  }, [resizingColumn]);
+  }, [resizingColumn, cleanupResizeListeners]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanupResizeListeners();
+    };
+  }, [cleanupResizeListeners]);
 
   // JSON editor panel state
   const [jsonEditor, setJsonEditor] = useState<{
@@ -175,14 +234,32 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
       if (!api) return;
       try {
         const connections = await api.getConnections();
+
+        // Validate connections array
+        if (!connections || !Array.isArray(connections)) {
+          console.warn("Invalid connections response from API");
+          return;
+        }
+
         const connection = connections.find((c) => {
-          const key = c.config.name
-            ? `${c.config.dbType}:${c.config.name}`
-            : (c.config as any).host
-            ? `${c.config.dbType}:${(c.config as any).user}@${(c.config as any).host}:${(c.config as any).port}/${(c.config as any).database}`
-            : `${c.config.dbType}:${JSON.stringify(c.config)}`;
-          return key === connectionKey;
+          // Validate connection object structure
+          if (!c || !c.config || typeof c.config.dbType !== 'string') {
+            return false;
+          }
+
+          try {
+            const config = c.config as Record<string, unknown>;
+            const key = config.name
+              ? `${config.dbType}:${config.name}`
+              : config.host
+              ? `${config.dbType}:${config.user ?? ''}@${config.host}:${config.port ?? ''}/${config.database ?? ''}`
+              : `${config.dbType}:${JSON.stringify(config)}`;
+            return key === connectionKey;
+          } catch {
+            return false;
+          }
         });
+
         if (connection) {
           // Update connection status
           setConnectionStatus(connection.status);
@@ -272,8 +349,8 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           table,
           limit,
           offset,
-          filters: filters.length > 0 ? filters : undefined,
-          filterLogic: filters.length > 0 ? filterLogic : undefined,
+          filters: hasActiveFilters ? filters : undefined,
+          filterLogic: hasActiveFilters ? filterLogic : undefined,
           orderBy: !sortColumn && pkColumns.length > 0 ? pkColumns : undefined,
           sortColumn: sortColumn || undefined,
           sortDirection: sortColumn ? sortDirection : undefined,
@@ -282,8 +359,8 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           connectionKey,
           schema,
           table,
-          filters: filters.length > 0 ? filters : undefined,
-          filterLogic: filters.length > 0 ? filterLogic : undefined,
+          filters: hasActiveFilters ? filters : undefined,
+          filterLogic: hasActiveFilters ? filterLogic : undefined,
         }),
       ]);
 
@@ -319,7 +396,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     setShowInsertPanel(false);
     setInsertPanelInitialValues({});
     setInsertPanelInitialNullColumns(new Set());
-    setFilters([]);
+    clearFilters();
     setFilterLogic("AND");
     setSortColumn(null);
     setSortDirection("ASC");
@@ -1752,7 +1829,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
             <div className="text-center">
               <p className="text-lg mb-2">No Data</p>
               <p className="text-sm text-text-tertiary">
-                {filters.length > 0
+                {hasActiveFilters
                   ? "No rows match the current filters. Try adjusting or clearing them."
                   : schema ? `Table ${schema}.${table} is empty` : `Collection ${table} is empty`}
               </p>
@@ -2188,7 +2265,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
         onClose={() => setShowExportDialog(false)}
         rowCount={totalRows ?? rows.length}
         selectedRowCount={selectedRows.size}
-        hasFilters={filters.length > 0}
+        hasFilters={hasActiveFilters}
         onExport={handleExport}
       />
 

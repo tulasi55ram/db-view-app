@@ -45,3 +45,24 @@ export interface TableDataResult {
   rows: Record<string, unknown>[];
   totalRows: number | null;
 }
+
+/**
+ * Message with correlation ID for request/response matching.
+ * This prevents responses from being misrouted when multiple
+ * concurrent requests are made with the same message type.
+ */
+export interface CorrelatedMessage {
+  type: string;
+  correlationId?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Options for sending correlated messages
+ */
+export interface SendMessageOptions {
+  /** Timeout in milliseconds (default: 30000) */
+  timeout?: number;
+  /** Whether to require correlation ID matching (default: true for new messages) */
+  useCorrelation?: boolean;
+}

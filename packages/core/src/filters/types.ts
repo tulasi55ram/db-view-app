@@ -59,6 +59,14 @@ export interface CassandraFilterResult {
   whereClause: string;
   /** Parameter values */
   params: unknown[];
+  /** Filters that were skipped due to CQL limitations (require client-side filtering) */
+  skippedFilters?: Array<{
+    columnName: string;
+    operator: string;
+    reason: string;
+  }>;
+  /** Error message if the query cannot be built (e.g., OR logic with multiple filters) */
+  error?: string;
 }
 
 /**
