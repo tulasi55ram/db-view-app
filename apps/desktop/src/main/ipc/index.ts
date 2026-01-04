@@ -85,6 +85,18 @@ function broadcastImportProgress(progress: { current: number; total: number; per
 const connectionStatusListeners = new Set<string>();
 
 /**
+ * Running query tracker
+ * Maps connectionKey -> { queryId, startTime, sql }
+ */
+interface RunningQuery {
+  queryId: string;
+  startTime: number;
+  sql: string;
+}
+
+const runningQueries = new Map<string, RunningQuery>();
+
+/**
  * Register all IPC handlers
  */
 export function registerAllHandlers(connectionManager: ConnectionManager): void {
@@ -324,7 +336,25 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
-    return adapter.runQuery(params.sql);
+
+    // Generate unique query ID
+    const queryId = `query-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Track the running query
+    runningQueries.set(params.connectionKey, {
+      queryId,
+      startTime: Date.now(),
+      sql: params.sql,
+    });
+
+    try {
+      // Run query with tracking ID
+      const result = await adapter.runQuery(params.sql, queryId);
+      return result;
+    } finally {
+      // Clean up tracking when query completes (success or error)
+      runningQueries.delete(params.connectionKey);
+    }
   });
 
   ipcMain.handle("query:format", async (_event, sql: string) => {
@@ -350,6 +380,36 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
       throw new Error("EXPLAIN not supported for this database type");
     }
     return adapter.explainQuery(params.sql);
+  });
+
+  ipcMain.handle("query:cancel", async (_event, connectionKey: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+
+    // Get the running query for this connection
+    const runningQuery = runningQueries.get(connectionKey);
+    if (!runningQuery) {
+      // No running query to cancel - this is okay, query may have completed
+      return;
+    }
+
+    // Check if adapter supports query cancellation
+    if (!adapter.cancelQuery) {
+      // Adapter doesn't support cancellation
+      // Clean up tracking but can't actually cancel the query
+      runningQueries.delete(connectionKey);
+      throw new Error(`Query cancellation not supported for this database type`);
+    }
+
+    try {
+      // Cancel the query at the database level
+      await adapter.cancelQuery(runningQuery.queryId);
+    } finally {
+      // Always clean up tracking, even if cancellation failed
+      runningQueries.delete(connectionKey);
+    }
   });
 
   // ==================== Saved Views (persisted to disk) ====================

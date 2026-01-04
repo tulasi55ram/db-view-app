@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { Toaster } from "sonner";
 import { ThemeProvider, useTheme } from "@/design-system";
 import { AppShell } from "@/layout";
@@ -12,49 +12,51 @@ import { HomeView } from "@/components/HomeView";
 import { SplitPane, type SplitDirection } from "@/components/SplitPane";
 import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcuts";
 import { getElectronAPI } from "@/electron";
-
-// Tab types
-interface Tab {
-  id: string;
-  type: "table" | "query" | "er-diagram";
-  title: string;
-  schema?: string;
-  table?: string;
-  connectionKey?: string; // Unique identifier for the connection
-  connectionName?: string; // Display name for the connection
-  connectionColor?: string; // Custom color for the connection
-  isDirty?: boolean;
-
-  // Query-specific fields
-  sql?: string;
-  columns?: string[];
-  rows?: Record<string, unknown>[];
-  loading?: boolean;
-  error?: string;
-  limitApplied?: boolean; // Whether an automatic LIMIT was applied
-  limit?: number; // The limit value that was applied
-  hasMore?: boolean; // Whether there are potentially more rows
-  duration?: number; // Query execution time in milliseconds
-
-  // ER Diagram fields
-  schemas?: string[]; // Schemas to show in ER diagram
-}
+import {
+  useTabStore,
+  useTabs,
+  useActiveTabId,
+  useSplitMode,
+  useUIStore,
+} from "@dbview/shared-state";
+import type { Tab, ERDiagramTab } from "@dbview/types";
 
 function AppContent() {
   const { resolvedTheme } = useTheme();
-  const [tabs, setTabs] = useState<Tab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [showAddConnection, setShowAddConnection] = useState(false);
-  const [editingConnectionKey, setEditingConnectionKey] = useState<string | null>(null);
-  const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0);
-  const [expandConnectionKey, setExpandConnectionKey] = useState<string | null>(null);
 
-  // Split view state
-  const [splitMode, setSplitMode] = useState<SplitDirection | null>(null);
-  const [secondActiveTabId, setSecondActiveTabId] = useState<string | null>(null);
+  // Use shared UI store
+  const {
+    showAddConnection,
+    editingConnectionKey,
+    sidebarRefreshTrigger,
+    expandConnectionKey,
+    showShortcutsDialog,
+    openAddConnection,
+    openEditConnection,
+    closeConnectionDialog,
+    triggerSidebarRefresh,
+    expandAndClearConnection,
+    setShowShortcutsDialog,
+  } = useUIStore();
 
-  // Keyboard shortcuts dialog
-  const [showShortcutsDialog, setShowShortcutsDialog] = useState(false);
+  // Use shared tab store
+  const tabs = useTabs();
+  const activeTabId = useActiveTabId();
+  const splitMode = useSplitMode();
+  const {
+    setActiveTab,
+    closeTab,
+    closeOtherTabs,
+    closeAllTabs,
+    updateTab,
+    reorderTabs,
+    findOrCreateTableTab,
+    addQueryTab,
+    addERDiagramTab,
+    setSplitMode,
+    setSecondActiveTab,
+  } = useTabStore();
+  const secondActiveTabId = useTabStore((s) => s.secondActiveTabId);
 
   const api = getElectronAPI();
 
@@ -79,43 +81,6 @@ function AppContent() {
     }
   }, [api]);
 
-  // Tab management
-  const addTab = useCallback((tab: Omit<Tab, "id">) => {
-    const id = `${tab.type}-${Date.now()}`;
-    const newTab = { ...tab, id };
-    setTabs((prev) => [...prev, newTab]);
-    setActiveTabId(id);
-    return id;
-  }, []);
-
-  const closeTab = useCallback((tabId: string) => {
-    setTabs((prev) => {
-      const newTabs = prev.filter((t) => t.id !== tabId);
-      if (activeTabId === tabId) {
-        setActiveTabId(newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null);
-      }
-      return newTabs;
-    });
-  }, [activeTabId]);
-
-  const closeOtherTabs = useCallback((tabId: string) => {
-    setTabs((prev) => prev.filter((t) => t.id === tabId));
-    setActiveTabId(tabId);
-  }, []);
-
-  const closeAllTabs = useCallback(() => {
-    setTabs([]);
-    setActiveTabId(null);
-  }, []);
-
-  const updateQueryTab = useCallback((tabId: string, updates: Partial<Tab>) => {
-    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, ...updates } : t)));
-  }, []);
-
-  const reorderTabs = useCallback((reorderedTabs: Tab[]) => {
-    setTabs(reorderedTabs);
-  }, []);
-
   // Split view handlers
   const splitView = useCallback((direction: SplitDirection) => {
     if (tabs.length < 2) return; // Need at least 2 tabs to split
@@ -124,14 +89,14 @@ function AppContent() {
     // Set the second pane to show a different tab
     const otherTab = tabs.find((t) => t.id !== activeTabId);
     if (otherTab) {
-      setSecondActiveTabId(otherTab.id);
+      setSecondActiveTab(otherTab.id);
     }
-  }, [tabs, activeTabId]);
+  }, [tabs, activeTabId, setSplitMode, setSecondActiveTab]);
 
   const closeSplit = useCallback(() => {
     setSplitMode(null);
-    setSecondActiveTabId(null);
-  }, []);
+    setSecondActiveTab(null);
+  }, [setSplitMode, setSecondActiveTab]);
 
   // Keyboard shortcuts for split view and shortcuts dialog
   useEffect(() => {
@@ -183,46 +148,30 @@ function AppContent() {
   // Handlers
   const handleTableSelect = useCallback(
     async (connectionKey: string, connectionName: string, schema: string, table: string) => {
-      setShowAddConnection(false);
-      const existingTab = tabs.find(
-        (t) => t.type === "table" && t.connectionKey === connectionKey && t.schema === schema && t.table === table
-      );
-      if (existingTab) {
-        setActiveTabId(existingTab.id);
-        return;
-      }
-
+      closeConnectionDialog();
       const connectionColor = await getConnectionColor(connectionKey);
-      addTab({
-        type: "table",
-        title: table,
+      findOrCreateTableTab({
         schema,
         table,
-        connectionKey,
         connectionName,
+        connectionKey,
         connectionColor,
       });
     },
-    [tabs, addTab, getConnectionColor]
+    [findOrCreateTableTab, getConnectionColor, closeConnectionDialog]
   );
 
   const handleQueryOpen = useCallback(
     async (connectionKey: string, connectionName: string) => {
-      setShowAddConnection(false);
+      closeConnectionDialog();
       const connectionColor = await getConnectionColor(connectionKey);
-      addTab({
-        type: "query",
-        title: "New Query",
-        connectionKey,
+      addQueryTab({
         connectionName,
+        connectionKey,
         connectionColor,
-        sql: "",
-        columns: [],
-        rows: [],
-        loading: false,
       });
     },
-    [addTab, getConnectionColor]
+    [addQueryTab, getConnectionColor, closeConnectionDialog]
   );
 
   const handleNewQuery = useCallback(async () => {
@@ -230,104 +179,115 @@ function AppContent() {
     const connectionColor = activeTab?.connectionKey
       ? await getConnectionColor(activeTab.connectionKey)
       : undefined;
-    addTab({
-      type: "query",
-      title: "New Query",
-      connectionKey: activeTab?.connectionKey,
+    addQueryTab({
       connectionName: activeTab?.connectionName,
+      connectionKey: activeTab?.connectionKey,
       connectionColor,
-      sql: "",
-      columns: [],
-      rows: [],
-      loading: false,
     });
-  }, [tabs, activeTabId, addTab]);
+  }, [tabs, activeTabId, addQueryTab, getConnectionColor]);
 
   const handleERDiagramOpen = useCallback(
     async (connectionKey: string, connectionName: string, schemas: string[]) => {
-      setShowAddConnection(false);
+      closeConnectionDialog();
       // Check if ER diagram tab for this connection already exists
       const existingTab = tabs.find(
         (t) => t.type === "er-diagram" && t.connectionKey === connectionKey
       );
       if (existingTab) {
         // Update schemas and switch to existing tab
-        setTabs((prev) =>
-          prev.map((t) => (t.id === existingTab.id ? { ...t, schemas } : t))
-        );
-        setActiveTabId(existingTab.id);
+        updateTab<ERDiagramTab>(existingTab.id, { selectedSchemas: schemas });
+        setActiveTab(existingTab.id);
         return;
       }
 
       const connectionColor = await getConnectionColor(connectionKey);
-      addTab({
-        type: "er-diagram",
-        title: "ER Diagram",
-        connectionKey,
+      addERDiagramTab({
+        availableSchemas: schemas,
         connectionName,
+        connectionKey,
         connectionColor,
-        schemas,
       });
     },
-    [tabs, addTab, getConnectionColor]
+    [tabs, addERDiagramTab, updateTab, setActiveTab, getConnectionColor, closeConnectionDialog]
   );
 
   const handleAddConnectionSave = useCallback(() => {
-    setShowAddConnection(false);
-    setEditingConnectionKey(null);
+    closeConnectionDialog();
     // Trigger sidebar refresh to show the new connection
-    setSidebarRefreshTrigger((prev) => prev + 1);
-  }, []);
+    triggerSidebarRefresh();
+  }, [closeConnectionDialog, triggerSidebarRefresh]);
 
   const handleEditConnection = useCallback((connectionKey: string) => {
-    setEditingConnectionKey(connectionKey);
-    setShowAddConnection(true);
-  }, []);
+    openEditConnection(connectionKey);
+  }, [openEditConnection]);
 
   const handleBrowseConnection = useCallback(
     (connectionKey: string) => {
-      setShowAddConnection(false);
+      closeConnectionDialog();
       // Trigger sidebar expansion for this connection
-      setExpandConnectionKey(connectionKey);
-      // Reset after a short delay to allow re-triggering if needed
-      setTimeout(() => setExpandConnectionKey(null), 100);
+      expandAndClearConnection(connectionKey);
     },
-    []
+    [closeConnectionDialog, expandAndClearConnection]
   );
+
+  // Handle tab updates from child components
+  const handleTabUpdate = useCallback((tabId: string, updates: Partial<Tab>) => {
+    updateTab(tabId, updates);
+  }, [updateTab]);
 
   // Render a single tab's content (for split view)
   const renderTabContent = useCallback((tab: Tab | undefined) => {
     if (!tab) return null;
 
-    if (tab.type === "table" && tab.schema !== undefined && tab.table && tab.connectionKey) {
+    if (tab.type === "table" && tab.connectionKey) {
+      const tableTab = tab as import("@dbview/types").TableTab;
       // Use DataView router which handles SQL, Document, and Redis databases
       return (
         <DataView
           key={tab.id}
           connectionKey={tab.connectionKey}
-          schema={tab.schema}
-          table={tab.table}
+          schema={tableTab.schema}
+          table={tableTab.table}
         />
       );
     }
 
     if (tab.type === "query") {
-      return <QueryViewRouter key={tab.id} tab={tab} onTabUpdate={updateQueryTab} />;
+      // Cast to the expected shape for QueryViewRouter
+      const queryTab = tab as import("@dbview/types").QueryTab;
+      return (
+        <QueryViewRouter
+          key={tab.id}
+          tab={{
+            id: queryTab.id,
+            connectionKey: queryTab.connectionKey,
+            connectionName: queryTab.connectionName,
+            sql: queryTab.sql,
+            columns: queryTab.columns,
+            rows: queryTab.rows,
+            loading: queryTab.loading,
+            error: queryTab.error,
+            duration: queryTab.duration,
+          }}
+          onTabUpdate={handleTabUpdate}
+        />
+      );
     }
 
-    if (tab.type === "er-diagram" && tab.connectionKey && tab.schemas) {
+    if (tab.type === "er-diagram" && tab.connectionKey) {
+      const erTab = tab as import("@dbview/types").ERDiagramTab;
       return (
         <ERDiagramPanel
           key={tab.id}
           connectionKey={tab.connectionKey}
           connectionName={tab.connectionName}
-          schemas={tab.schemas}
+          schemas={erTab.selectedSchemas}
         />
       );
     }
 
     return null;
-  }, [updateQueryTab]);
+  }, [handleTabUpdate]);
 
   // Render all tabs (keeping them mounted to preserve state)
   const renderAllTabs = useCallback(() => {
@@ -355,34 +315,50 @@ function AppContent() {
         zIndex: isActive ? 1 : 0,
       };
 
-      if (tab.type === "table" && tab.schema !== undefined && tab.table && tab.connectionKey) {
+      if (tab.type === "table" && tab.connectionKey) {
+        const tableTab = tab as import("@dbview/types").TableTab;
         // Use DataView router which handles SQL, Document, and Redis databases
         return (
           <div key={tab.id} style={style}>
             <DataView
               connectionKey={tab.connectionKey}
-              schema={tab.schema}
-              table={tab.table}
+              schema={tableTab.schema}
+              table={tableTab.table}
             />
           </div>
         );
       }
 
       if (tab.type === "query") {
+        const queryTab = tab as import("@dbview/types").QueryTab;
         return (
           <div key={tab.id} style={style}>
-            <QueryViewRouter tab={tab} onTabUpdate={updateQueryTab} />
+            <QueryViewRouter
+              tab={{
+                id: queryTab.id,
+                connectionKey: queryTab.connectionKey,
+                connectionName: queryTab.connectionName,
+                sql: queryTab.sql,
+                columns: queryTab.columns,
+                rows: queryTab.rows,
+                loading: queryTab.loading,
+                error: queryTab.error,
+                duration: queryTab.duration,
+              }}
+              onTabUpdate={handleTabUpdate}
+            />
           </div>
         );
       }
 
-      if (tab.type === "er-diagram" && tab.connectionKey && tab.schemas) {
+      if (tab.type === "er-diagram" && tab.connectionKey) {
+        const erTab = tab as import("@dbview/types").ERDiagramTab;
         return (
           <div key={tab.id} style={style}>
             <ERDiagramPanel
               connectionKey={tab.connectionKey}
               connectionName={tab.connectionName}
-              schemas={tab.schemas}
+              schemas={erTab.selectedSchemas}
             />
           </div>
         );
@@ -390,7 +366,7 @@ function AppContent() {
 
       return null;
     });
-  }, [tabs, activeTabId, secondActiveTabId, splitMode, updateQueryTab]);
+  }, [tabs, activeTabId, secondActiveTabId, splitMode, handleTabUpdate]);
 
   // Render main content
   const renderContent = () => {
@@ -399,10 +375,7 @@ function AppContent() {
       return (
         <AddConnectionView
           onSave={handleAddConnectionSave}
-          onCancel={() => {
-            setShowAddConnection(false);
-            setEditingConnectionKey(null);
-          }}
+          onCancel={closeConnectionDialog}
           editingConnectionKey={editingConnectionKey}
         />
       );
@@ -414,7 +387,7 @@ function AppContent() {
     if (!activeTab) {
       return (
         <HomeView
-          onAddConnection={() => setShowAddConnection(true)}
+          onAddConnection={openAddConnection}
           onQueryOpen={handleQueryOpen}
           onEditConnection={handleEditConnection}
           onBrowseConnection={handleBrowseConnection}
@@ -438,6 +411,19 @@ function AppContent() {
     // Single view mode - render all tabs but only show active one
     return renderAllTabs();
   };
+
+  // Convert tabs to the format expected by TabBar
+  const tabBarTabs = tabs.map((tab) => ({
+    id: tab.id,
+    type: tab.type,
+    title: tab.title,
+    schema: tab.type === "table" ? (tab as import("@dbview/types").TableTab).schema : undefined,
+    table: tab.type === "table" ? (tab as import("@dbview/types").TableTab).table : undefined,
+    connectionKey: tab.connectionKey,
+    connectionName: tab.connectionName,
+    connectionColor: tab.connectionColor,
+    isDirty: tab.isDirty,
+  }));
 
   return (
     <>
@@ -465,7 +451,7 @@ function AppContent() {
             onTableSelect={handleTableSelect}
             onQueryOpen={handleQueryOpen}
             onERDiagramOpen={handleERDiagramOpen}
-            onAddConnection={() => setShowAddConnection(true)}
+            onAddConnection={openAddConnection}
             onEditConnection={handleEditConnection}
             refreshTrigger={sidebarRefreshTrigger}
             expandConnectionKey={expandConnectionKey}
@@ -475,14 +461,21 @@ function AppContent() {
         {/* Tab Bar - hide when showing Add Connection */}
         {!showAddConnection && (
           <TabBar
-            tabs={tabs}
+            tabs={tabBarTabs}
             activeTabId={activeTabId}
-            onTabSelect={setActiveTabId}
+            onTabSelect={setActiveTab}
             onTabClose={closeTab}
             onNewQuery={handleNewQuery}
             onCloseOtherTabs={closeOtherTabs}
             onCloseAllTabs={closeAllTabs}
-            onReorderTabs={reorderTabs}
+            onReorderTabs={(reorderedTabs) => {
+              // Map back to full tabs for the store
+              const fullTabs = reorderedTabs.map((t) => {
+                const original = tabs.find((tab) => tab.id === t.id);
+                return original || t;
+              }).filter((t): t is Tab => t !== undefined);
+              reorderTabs(fullTabs);
+            }}
             onSplitView={splitView}
             onCloseSplit={closeSplit}
             isSplitView={!!splitMode}

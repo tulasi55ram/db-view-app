@@ -57,7 +57,11 @@ export const ExportDataDialog: FC<ExportDataDialogProps> = ({
               </div>
             </div>
             <Dialog.Close asChild>
-              <button className="rounded p-1 hover:bg-vscode-bg-hover text-vscode-text-muted transition-colors">
+              <button
+                className="rounded p-1 hover:bg-vscode-bg-hover text-vscode-text-muted transition-colors"
+                title="Close dialog"
+                aria-label="Close dialog"
+              >
                 <X className="h-4 w-4" />
               </button>
             </Dialog.Close>

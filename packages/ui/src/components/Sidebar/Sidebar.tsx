@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { ChevronRight, ChevronDown, Database, Table2, Columns, Plus, RefreshCw, MoreVertical, Plug, Unplug, FileQuestion } from "lucide-react";
 import { getElectronAPI, type ConnectionInfo, type ElectronAPI } from "../../electron";
 import { AddConnectionDialog } from "./AddConnectionDialog";
+import { TreeSkeleton } from "../Skeleton";
 import clsx from "clsx";
 import type { TableInfo, DatabaseConnectionConfig } from "@dbview/types";
 
@@ -259,13 +260,21 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, isVisible
           )}
         </div>
 
-        {isExpanded && node.children && (
+        {isExpanded && (
           <div>
-            {node.children.map((child) => renderNode(child, depth + 1))}
-            {node.children.length === 0 && !isLoading && (
-              <div className="text-xs text-gray-500 italic" style={{ paddingLeft: `${(depth + 1) * 16 + 24}px` }}>
-                {node.type === "connection" ? "No schemas" : "No tables"}
+            {isLoading && (!node.children || node.children.length === 0) ? (
+              <div style={{ paddingLeft: `${(depth + 1) * 16}px` }}>
+                <TreeSkeleton items={3} depth={0} />
               </div>
+            ) : (
+              <>
+                {node.children?.map((child) => renderNode(child, depth + 1))}
+                {node.children?.length === 0 && !isLoading && (
+                  <div className="text-xs text-gray-500 italic" style={{ paddingLeft: `${(depth + 1) * 16 + 24}px` }}>
+                    {node.type === "connection" ? "No schemas" : "No tables"}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

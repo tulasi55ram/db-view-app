@@ -43,10 +43,20 @@ const config: Config = {
         base: ["13px", { lineHeight: "20px" }],
         lg: ["14px", { lineHeight: "22px" }]
       },
+      spacing: {
+        'xs': '4px',
+        'sm': '8px',
+        'md': '12px',
+        'lg': '16px',
+        'xl': '24px',
+        '2xl': '32px',
+      },
       animation: {
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "fade-in": "fadeIn 0.2s ease-out",
-        "slide-up": "slideUp 0.2s ease-out"
+        "slide-up": "slideUp 0.2s ease-out",
+        "slide-in-right": "slideInRight 200ms ease-out",
+        "slide-out-right": "slideOutRight 150ms ease-in",
       },
       keyframes: {
         fadeIn: {
@@ -56,6 +66,14 @@ const config: Config = {
         slideUp: {
           "0%": { opacity: "0", transform: "translateY(4px)" },
           "100%": { opacity: "1", transform: "translateY(0)" }
+        },
+        slideInRight: {
+          from: { opacity: "0", transform: "translateX(20px)" },
+          to: { opacity: "1", transform: "translateX(0)" }
+        },
+        slideOutRight: {
+          from: { opacity: "1", transform: "translateX(0)" },
+          to: { opacity: "0", transform: "translateX(20px)" }
         }
       }
     }

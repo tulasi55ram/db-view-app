@@ -218,7 +218,13 @@ export function showConnectionConfigPanel(
                 console.log("[dbview] Connection saved successfully");
               } catch (saveError) {
                 console.error("[dbview] Error saving connection:", saveError);
-                vscode.window.showErrorMessage(`Failed to save connection: ${saveError instanceof Error ? saveError.message : String(saveError)}`);
+                const errorMessage = `Failed to save connection: ${saveError instanceof Error ? saveError.message : String(saveError)}`;
+                vscode.window.showErrorMessage(errorMessage);
+                // Also send error to webview so user sees it in the form
+                panel.webview.postMessage({
+                  type: 'error',
+                  message: saveError instanceof Error ? saveError.message : String(saveError)
+                });
                 // Don't close the panel on save error - let user fix the issue
                 return;
               }
@@ -1206,7 +1212,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                         </div>
                         <div class="form-group">
                             <label for="cassandraKeyspace">Keyspace <span class="required">*</span></label>
-                            <input type="text" id="cassandraKeyspace" name="cassandraKeyspace" value="${defaultCassandraKeyspace}" placeholder="dbview_dev" required>
+                            <input type="text" id="cassandraKeyspace" name="cassandraKeyspace" value="${defaultCassandraKeyspace}" placeholder="dbview_dev">
                             <div class="help-text">Required - e.g., dbview_dev</div>
                         </div>
                     </div>
@@ -1562,6 +1568,17 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 el.classList.toggle('hidden', !isCassandra);
             });
 
+            // Manage required attributes for database-specific fields
+            // This prevents HTML5 validation errors for hidden required fields
+            const cassandraKeyspaceInput = document.getElementById('cassandraKeyspace');
+            if (cassandraKeyspaceInput) {
+                if (isCassandra) {
+                    cassandraKeyspaceInput.setAttribute('required', 'required');
+                } else {
+                    cassandraKeyspaceInput.removeAttribute('required');
+                }
+            }
+
             // Update default port when switching database types
             if (isStandardDB && config.defaultPort) {
                 portInput.value = config.defaultPort;
@@ -1609,12 +1626,15 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
 
         // Form submission
         function submitForm() {
+            console.log('[dbview-webview] submitForm called');
             const formData = new FormData(form);
             const dbType = formData.get('dbType') || 'postgres';
 
             // Connection name is required for saving
             const connectionName = (formData.get('name') || '').toString().trim();
+            console.log('[dbview-webview] Connection name:', connectionName);
             if (!connectionName) {
+                console.log('[dbview-webview] No connection name, showing error');
                 showStatus('Please enter a connection name', 'error');
                 return;
             }
@@ -1666,6 +1686,11 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 }
             }
 
+            // Show saving feedback
+            console.log('[dbview-webview] Showing saving status and sending message');
+            showStatus('Saving connection...', 'info');
+
+            console.log('[dbview-webview] Sending submit message to extension');
             vscode.postMessage({
                 command: 'submit',
                 dbType: formData.get('dbType'),
@@ -1834,8 +1859,19 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
         // Handle messages from extension
         window.addEventListener('message', event => {
             const message = event.data;
+            console.log('[dbview-webview] Received message from extension:', message);
+
+            // Handle error messages sent with 'type' property
+            if (message.type === 'error') {
+                console.log('[dbview-webview] Showing error:', message.message);
+                showStatus(message.message, 'error');
+                return;
+            }
+
+            // Handle command-based messages
             switch (message.command) {
                 case 'testResult':
+                    console.log('[dbview-webview] Test result:', message.success);
                     testBtn.disabled = false;
                     if (message.success) {
                         showStatus(message.message, 'success');

@@ -234,6 +234,7 @@ export interface FetchOptions {
   orderBy?: string[]; // Column names to order by (defaults to primary key if not provided)
   sortColumn?: string; // Single column to sort by (takes precedence over orderBy)
   sortDirection?: 'ASC' | 'DESC'; // Sort direction (defaults to ASC)
+  sorting?: Array<{ columnName: string; direction: 'asc' | 'desc' }>; // Multi-column sorting (takes precedence over sortColumn/sortDirection)
   // Cursor-based pagination (more efficient for large datasets)
   cursor?: CursorPosition; // Start from this cursor position
   useCursor?: boolean; // Enable cursor-based pagination instead of offset
@@ -689,9 +690,10 @@ export interface DatabaseAdapter extends EventEmitter {
   /**
    * Execute a raw SQL query
    * @param sql SQL query string
+   * @param queryId Optional unique identifier for query tracking and cancellation
    * @returns Query result set
    */
-  runQuery(sql: string): Promise<QueryResultSet>;
+  runQuery(sql: string, queryId?: string): Promise<QueryResultSet>;
 
   /**
    * Get EXPLAIN plan for a query (if supported)
@@ -699,6 +701,14 @@ export interface DatabaseAdapter extends EventEmitter {
    * @returns EXPLAIN plan result
    */
   explainQuery?(sql: string): Promise<ExplainPlan>;
+
+  /**
+   * Cancel a running query by its ID (if supported)
+   * @param queryId Unique identifier for the query to cancel
+   * @returns Promise that resolves when cancellation is complete
+   * @throws Error if query not found or cancellation not supported
+   */
+  cancelQuery?(queryId: string): Promise<void>;
 
   // ==================== CRUD Operations ====================
 

@@ -11,6 +11,7 @@ import clsx from 'clsx';
 import type { ColumnMetadata } from '@dbview/types';
 import { CellEditor } from './CellEditor';
 import { formatCellValue } from '../utils/formatCellValue';
+import { TableSkeleton } from './Skeleton';
 
 interface DataGridV2Props {
   columns: ColumnMetadata[];
@@ -170,8 +171,12 @@ export function DataGridV2({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-vscode-text-muted">Loading...</div>
+      <div className="h-64 overflow-hidden">
+        <TableSkeleton
+          columns={columns.length || 5}
+          rows={6}
+          showRowNumbers={selectable}
+        />
       </div>
     );
   }

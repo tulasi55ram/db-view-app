@@ -88,6 +88,7 @@ export function toSql(
 function getIdentifierQuoter(dbType: SqlExportOptions['dbType']): (id: string) => string {
   switch (dbType) {
     case 'mysql':
+    case 'mariadb':
       return (id: string) => `\`${id.replace(/`/g, '``')}\``;
     case 'sqlserver':
       return (id: string) => `[${id.replace(/\]/g, ']]')}]`;
@@ -114,8 +115,8 @@ function getValueQuoter(dbType: SqlExportOptions['dbType']): (val: unknown) => s
     }
 
     if (typeof value === 'boolean') {
-      // MySQL and SQL Server use 1/0, PostgreSQL and SQLite support TRUE/FALSE
-      if (dbType === 'mysql' || dbType === 'sqlserver') {
+      // MySQL, MariaDB and SQL Server use 1/0, PostgreSQL and SQLite support TRUE/FALSE
+      if (dbType === 'mysql' || dbType === 'mariadb' || dbType === 'sqlserver') {
         return value ? '1' : '0';
       }
       return value ? 'TRUE' : 'FALSE';

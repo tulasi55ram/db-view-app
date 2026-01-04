@@ -473,7 +473,9 @@ export class SQLiteAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Query Execution ====================
 
-  async runQuery(sql: string): Promise<QueryResultSet> {
+  async runQuery(sql: string, queryId?: string): Promise<QueryResultSet> {
+    // Note: SQLite (better-sqlite3) is synchronous and doesn't support true query cancellation
+    // The queryId is accepted for interface compatibility but not used
     const trimmed = sql.trim().toUpperCase();
 
     if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA')) {
@@ -490,6 +492,13 @@ export class SQLiteAdapter extends EventEmitter implements DatabaseAdapter {
         rows: [{ changes: result.changes, lastInsertRowid: result.lastInsertRowid }],
       };
     }
+  }
+
+  async cancelQuery(queryId: string): Promise<void> {
+    // SQLite (better-sqlite3) uses a synchronous API and does not support query cancellation
+    // Once a query starts executing, it runs to completion
+    console.log(`[SQLiteAdapter] Query cancellation not supported for SQLite (queryId: ${queryId})`);
+    throw new Error('Query cancellation is not supported for SQLite databases. SQLite queries execute synchronously and cannot be interrupted.');
   }
 
   // ==================== CRUD Operations ====================

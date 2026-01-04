@@ -61,6 +61,9 @@ export class ElasticsearchAdapter extends EventEmitter implements DatabaseAdapte
   private readonly PIT_KEEP_ALIVE = '5m'; // Keep PIT alive for 5 minutes
   private readonly PIT_CACHE_TTL = 240000; // Refresh PIT after 4 minutes
 
+  // Track running queries for cancellation
+  private runningQueries = new Map<string, AbortController>(); // queryId -> AbortController
+
   readonly capabilities: DatabaseCapabilities = {
     // Hierarchy
     supportsSchemas: false, // Elasticsearch doesn't have schemas
@@ -635,9 +638,16 @@ export class ElasticsearchAdapter extends EventEmitter implements DatabaseAdapte
 
   // ==================== Query Execution ====================
 
-  async runQuery(query: string): Promise<QueryResultSet> {
+  async runQuery(query: string, queryId?: string): Promise<QueryResultSet> {
     if (!this.client) {
       throw new Error('Not connected to Elasticsearch');
+    }
+
+    // Create AbortController for cancellation support
+    let abortController: AbortController | undefined;
+    if (queryId) {
+      abortController = new AbortController();
+      this.runningQueries.set(queryId, abortController);
     }
 
     try {
@@ -661,7 +671,13 @@ export class ElasticsearchAdapter extends EventEmitter implements DatabaseAdapte
         throw new Error('Query must include "index" field. Example: {"index": "my-index", "query": {"match_all": {}}}');
       }
 
-      const searchResponse = await this.client.search(searchBody);
+      // Add abort signal if available
+      const searchOptions: any = {};
+      if (abortController) {
+        searchOptions.signal = abortController.signal;
+      }
+
+      const searchResponse = await this.client.search(searchBody, searchOptions);
 
       const rows = searchResponse.hits.hits.map((hit) => this.convertDocument(hit));
       const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
@@ -673,6 +689,32 @@ export class ElasticsearchAdapter extends EventEmitter implements DatabaseAdapte
         throw error;
       }
       throw this.parseElasticsearchError(error, 'Query execution failed');
+    } finally {
+      // Clean up tracking
+      if (queryId) {
+        this.runningQueries.delete(queryId);
+      }
+    }
+  }
+
+  async cancelQuery(queryId: string): Promise<void> {
+    const abortController = this.runningQueries.get(queryId);
+    if (!abortController) {
+      // Query already completed or not found
+      return;
+    }
+
+    try {
+      // Abort the query using AbortController
+      abortController.abort();
+
+      console.log(`[ElasticsearchAdapter] Successfully cancelled query ${queryId}`);
+    } catch (error) {
+      console.error(`[ElasticsearchAdapter] Failed to cancel query ${queryId}:`, error);
+      throw new Error(`Failed to cancel query: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      // Always clean up tracking
+      this.runningQueries.delete(queryId);
     }
   }
 

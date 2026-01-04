@@ -64,6 +64,9 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
   private readonly reconnectDelayMs = 2000;
   private readonly healthCheckIntervalMs = 30000; // 30 seconds
 
+  // Track running queries for cancellation
+  private runningQueries = new Map<string, { processId: number; secretKey: number }>();
+
   constructor(connection?: ConnectionConfig | PostgresConnectionConfig) {
     super();
     this.config = connection ? toPoolConfig(connection) : DEFAULT_CONFIG;
@@ -443,7 +446,7 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
   }
 
   async fetchTableRows(schema: string, table: string, options: FetchOptions = {}): Promise<QueryResultSet> {
-    const { limit = 100, offset = 0, filters = [], filterLogic = 'AND', orderBy = [], sortColumn, sortDirection = 'ASC' } = options;
+    const { limit = 100, offset = 0, filters = [], filterLogic = 'AND', orderBy = [], sortColumn, sortDirection = 'ASC', sorting } = options;
     const qualified = `${this.quoteIdentifier(schema)}.${this.quoteIdentifier(table)}`;
 
     const { whereClause, params } = this.buildWhereClause(filters, filterLogic);
@@ -453,8 +456,13 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
       sql += ` WHERE ${whereClause}`;
     }
 
-    // Add ORDER BY clause - sortColumn takes precedence over orderBy
-    if (sortColumn) {
+    // Add ORDER BY clause - sorting array takes precedence, then sortColumn, then orderBy
+    if (sorting && sorting.length > 0) {
+      const orderByClause = sorting.map(sort =>
+        `${this.quoteIdentifier(sort.columnName)} ${sort.direction.toUpperCase()}`
+      ).join(', ');
+      sql += ` ORDER BY ${orderByClause}`;
+    } else if (sortColumn) {
       sql += ` ORDER BY ${this.quoteIdentifier(sortColumn)} ${sortDirection}`;
     } else if (orderBy.length > 0) {
       const orderByClause = orderBy.map(col => this.quoteIdentifier(col)).join(', ');
@@ -670,9 +678,58 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Query Execution ====================
 
-  async runQuery(sql: string): Promise<QueryResultSet> {
-    const result = await this.query(sql);
-    return createResultSet(result);
+  async runQuery(sql: string, queryId?: string): Promise<QueryResultSet> {
+    if (queryId) {
+      // Get a dedicated client from the pool for cancellation support
+      const pool = this.pool ?? (this.pool = new Pool(this.config));
+      const client = await pool.connect();
+
+      try {
+        // Store process info for cancellation
+        const processInfo = await client.query('SELECT pg_backend_pid() as pid');
+        const processId = processInfo.rows[0].pid;
+
+        // Note: secret key is not exposed by pg library, but we can still cancel using PID
+        this.runningQueries.set(queryId, { processId, secretKey: 0 });
+
+        // Execute query
+        const result = await client.query(sql);
+
+        return createResultSet(result);
+      } finally {
+        // Clean up tracking and release client
+        if (queryId) {
+          this.runningQueries.delete(queryId);
+        }
+        client.release();
+      }
+    } else {
+      // No tracking needed, use pool directly
+      const result = await this.query(sql);
+      return createResultSet(result);
+    }
+  }
+
+  async cancelQuery(queryId: string): Promise<void> {
+    const queryInfo = this.runningQueries.get(queryId);
+    if (!queryInfo) {
+      // Query already completed or not found
+      return;
+    }
+
+    try {
+      // Use pg_cancel_backend to cancel the query
+      const sql = 'SELECT pg_cancel_backend($1) as cancelled';
+      await this.query(sql, [queryInfo.processId]);
+
+      console.log(`[PostgresAdapter] Successfully cancelled query ${queryId} (PID: ${queryInfo.processId})`);
+    } catch (error) {
+      console.error(`[PostgresAdapter] Failed to cancel query ${queryId}:`, error);
+      throw new Error(`Failed to cancel query: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      // Always clean up tracking
+      this.runningQueries.delete(queryId);
+    }
   }
 
   async explainQuery(sql: string): Promise<ExplainPlan> {
