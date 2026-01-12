@@ -388,6 +388,7 @@ export interface ElectronAPI {
   saveConnectionOrder(order: string[]): Promise<void>;
 
   // Schema operations
+  listDatabases(connectionKey: string): Promise<string[]>;
   listSchemas(connectionKey: string): Promise<string[]>;
   listTables(connectionKey: string, schema: string): Promise<TableInfo[]>;
   getHierarchy(connectionKey: string): Promise<any>;
