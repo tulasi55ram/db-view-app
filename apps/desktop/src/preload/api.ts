@@ -397,7 +397,14 @@ export interface ElectronAPI {
   listFunctions(connectionKey: string, schema: string): Promise<string[]>;
   listProcedures(connectionKey: string, schema: string): Promise<string[]>;
   listTypes(connectionKey: string, schema: string): Promise<string[]>;
+  listTriggers(connectionKey: string, schema: string): Promise<string[]>;
   listColumns(connectionKey: string, schema: string, table: string): Promise<ColumnInfo[]>;
+
+  // Function/Trigger operations
+  getFunctionDetails(connectionKey: string, schema: string, functionName: string): Promise<import('@dbview/types').FunctionDetails>;
+  getTriggerDetails(connectionKey: string, schema: string, triggerName: string): Promise<import('@dbview/types').TriggerDetails>;
+  updateFunctionDefinition(connectionKey: string, definition: string): Promise<void>;
+  executeFunction(connectionKey: string, schema: string, functionName: string, parameters: any[]): Promise<import('@dbview/types').FunctionExecutionResult>;
 
   // Table operations
   loadTableRows(params: LoadTableRowsParams): Promise<TableDataResult>;

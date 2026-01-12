@@ -104,6 +104,7 @@ type TreeNodeType =
   | "materializedView"
   | "function"
   | "procedure"
+  | "trigger"
   | "type"
   | "column";
 
@@ -136,6 +137,7 @@ interface TreeNode {
 
 interface SidebarProps {
   onTableSelect: (connectionKey: string, connectionName: string, schema: string, table: string) => void;
+  onFunctionSelect?: (connectionKey: string, connectionName: string, schema: string, functionName: string, functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger') => void;
   onQueryOpen: (connectionKey: string, connectionName: string) => void;
   onERDiagramOpen?: (connectionKey: string, connectionName: string, schemas: string[]) => void;
   onAddConnection: () => void;
@@ -193,7 +195,7 @@ function formatRowCount(count: number, dbType?: string): string {
   return `${(count / 1000000).toFixed(1)}M ${unit}`;
 }
 
-export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConnection, onEditConnection, refreshTrigger, expandConnectionKey }: SidebarProps) {
+export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiagramOpen, onAddConnection, onEditConnection, refreshTrigger, expandConnectionKey }: SidebarProps) {
   const [connections, setConnections] = useState<ConnectionInfo[]>([]);
   const [connectionOrder, setConnectionOrder] = useState<string[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
@@ -719,6 +721,19 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
     }
   };
 
+  const handleFunctionClick = (node: TreeNode) => {
+    if ((node.type === "function" || node.type === "procedure" || node.type === "trigger") &&
+        node.connectionKey && node.connectionName && node.schema !== undefined && onFunctionSelect) {
+      onFunctionSelect(
+        node.connectionKey,
+        node.connectionName,
+        node.schema,
+        node.name,
+        node.type as 'function' | 'procedure' | 'trigger'
+      );
+    }
+  };
+
   const handleDisconnect = async (connectionKey: string) => {
     await api?.disconnectFromDatabase(connectionKey);
     loadConnections();
@@ -902,6 +917,8 @@ export function Sidebar({ onTableSelect, onQueryOpen, onERDiagramOpen, onAddConn
       // For tables and views, open the data instead of expanding
       if (node.type === "table" || node.type === "view") {
         handleTableClick(node);
+      } else if (node.type === "function" || node.type === "procedure" || node.type === "trigger") {
+        handleFunctionClick(node);
       } else if (hasChildren) {
         toggleNode(node);
       }

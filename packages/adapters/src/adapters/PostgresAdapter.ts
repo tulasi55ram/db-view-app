@@ -1,5 +1,15 @@
 import { Pool, type PoolConfig, type QueryResult, type QueryResultRow } from "pg";
-import type { ConnectionConfig, PostgresConnectionConfig } from "@dbview/types";
+import type {
+  ConnectionConfig,
+  PostgresConnectionConfig,
+  FunctionDetails,
+  TriggerDetails,
+  FunctionParameter,
+  FunctionExecutionResult,
+  FunctionVolatility,
+  FunctionKind,
+  ParameterMode
+} from "@dbview/types";
 import { EventEmitter } from "events";
 import type {
   DatabaseAdapter,
@@ -674,6 +684,247 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
       [schema]
     );
     return result.rows.map((row) => row.typname);
+  }
+
+  async listTriggers(schema: string): Promise<string[]> {
+    const result = await this.query<{ tgname: string }>(
+      `select t.tgname
+       from pg_trigger t
+       join pg_class c on t.tgrelid = c.oid
+       join pg_namespace n on c.relnamespace = n.oid
+       where n.nspname = $1 and not t.tgisinternal
+       order by t.tgname`,
+      [schema]
+    );
+    return result.rows.map((row) => row.tgname);
+  }
+
+  async getFunctionDetails(schema: string, functionName: string): Promise<FunctionDetails> {
+    interface FunctionRow {
+      proname: string;
+      nspname: string;
+      lanname: string;
+      definition: string;
+      arguments: string;
+      return_type: string;
+      provolatile: FunctionVolatility;
+      proisstrict: boolean;
+      prosecdef: boolean;
+      procost: number;
+      prorows: number;
+      prokind: FunctionKind;
+      proargtypes: string;
+      proargnames: string[] | null;
+      proargmodes: string[] | null;
+      proargdefaults: string | null;
+      description: string | null;
+      oid: number;
+    }
+
+    const result = await this.query<FunctionRow>(
+      `select
+         p.proname,
+         n.nspname,
+         l.lanname,
+         pg_get_functiondef(p.oid) as definition,
+         pg_get_function_arguments(p.oid) as arguments,
+         pg_get_function_result(p.oid) as return_type,
+         p.provolatile,
+         p.proisstrict,
+         p.prosecdef,
+         p.procost,
+         p.prorows,
+         p.prokind,
+         p.proargtypes::text,
+         p.proargnames,
+         p.proargmodes,
+         pg_get_expr(p.proargdefaults, 0) as proargdefaults,
+         obj_description(p.oid, 'pg_proc') as description,
+         p.oid
+       from pg_proc p
+       join pg_namespace n on p.pronamespace = n.oid
+       left join pg_language l on p.prolang = l.oid
+       where n.nspname = $1 and p.proname = $2`,
+      [schema, functionName]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error(`Function ${schema}.${functionName} not found`);
+    }
+
+    const row = result.rows[0];
+
+    // Parse parameters from metadata
+    const parameters: FunctionParameter[] = [];
+    if (row.proargnames && row.proargnames.length > 0) {
+      const argNames = row.proargnames;
+      const argModes = row.proargmodes || [];
+
+      // Parse argument types from proargtypes string
+      const argTypesResult = await this.query<{ typname: string }>(
+        `select typname from pg_type where oid = any(string_to_array($1, ' ')::oid[])`,
+        [row.proargtypes]
+      );
+      const argTypes = argTypesResult.rows.map(r => r.typname);
+
+      for (let i = 0; i < argNames.length; i++) {
+        const modeChar = argModes[i] || 'i';
+        let mode: ParameterMode = 'IN';
+        switch (modeChar) {
+          case 'o': mode = 'OUT'; break;
+          case 'b': mode = 'INOUT'; break;
+          case 'v': mode = 'VARIADIC'; break;
+          case 't': mode = 'TABLE'; break;
+          default: mode = 'IN';
+        }
+
+        parameters.push({
+          name: argNames[i],
+          type: argTypes[i] || 'unknown',
+          mode,
+          position: i + 1
+        });
+      }
+    }
+
+    return {
+      name: row.proname,
+      schema: row.nspname,
+      language: row.lanname,
+      definition: row.definition,
+      arguments: row.arguments,
+      returnType: row.return_type,
+      volatility: row.provolatile,
+      isStrict: row.proisstrict,
+      isSecurityDefiner: row.prosecdef,
+      cost: row.procost,
+      estimatedRows: row.prorows,
+      kind: row.prokind,
+      parameters,
+      description: row.description || undefined,
+      oid: row.oid
+    };
+  }
+
+  async getTriggerDetails(schema: string, triggerName: string): Promise<TriggerDetails> {
+    interface TriggerRow {
+      tgname: string;
+      nspname: string;
+      relname: string;
+      proname: string;
+      definition: string;
+      tgenabled: string;
+      timing: string;
+      events: string;
+      description: string | null;
+    }
+
+    const result = await this.query<TriggerRow>(
+      `select
+         t.tgname,
+         n.nspname,
+         c.relname,
+         p.proname,
+         pg_get_triggerdef(t.oid) as definition,
+         t.tgenabled,
+         case
+           when t.tgtype & 66 = 2 then 'BEFORE'
+           when t.tgtype & 66 = 64 then 'INSTEAD OF'
+           else 'AFTER'
+         end as timing,
+         array_to_string(array_remove(array[
+           case when t.tgtype & 4 = 4 then 'INSERT' end,
+           case when t.tgtype & 8 = 8 then 'DELETE' end,
+           case when t.tgtype & 16 = 16 then 'UPDATE' end,
+           case when t.tgtype & 32 = 32 then 'TRUNCATE' end
+         ], null), ', ') as events,
+         obj_description(t.oid, 'pg_trigger') as description
+       from pg_trigger t
+       join pg_class c on t.tgrelid = c.oid
+       join pg_namespace n on c.relnamespace = n.oid
+       join pg_proc p on t.tgfoid = p.oid
+       where n.nspname = $1 and t.tgname = $2 and not t.tgisinternal`,
+      [schema, triggerName]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error(`Trigger ${schema}.${triggerName} not found`);
+    }
+
+    const row = result.rows[0];
+
+    // Parse events string into array
+    const events = row.events.split(', ').filter(Boolean) as Array<'INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE'>;
+
+    return {
+      name: row.tgname,
+      schema: row.nspname,
+      tableName: row.relname,
+      functionName: row.proname,
+      definition: row.definition,
+      isEnabled: row.tgenabled === 'O', // O = enabled, D = disabled
+      timing: row.timing as 'BEFORE' | 'AFTER' | 'INSTEAD OF',
+      events,
+      description: row.description || undefined
+    };
+  }
+
+  async updateFunctionDefinition(definition: string): Promise<void> {
+    // Execute CREATE OR REPLACE FUNCTION/PROCEDURE statement
+    await this.query(definition);
+  }
+
+  async executeFunction(schema: string, functionName: string, parameters: any[]): Promise<FunctionExecutionResult> {
+    const startTime = Date.now();
+
+    try {
+      // Build parameter placeholders
+      const paramPlaceholders = parameters.map((_, i) => `$${i + 1}`).join(', ');
+      const sql = `SELECT * FROM ${schema}.${functionName}(${paramPlaceholders})`;
+
+      const result = await this.query(sql, parameters);
+      const executionTime = Date.now() - startTime;
+
+      // Check if it's a set-returning function or scalar
+      if (result.rows.length > 0 && typeof result.rows[0] === 'object' && result.rows[0] !== null) {
+        const firstRow = result.rows[0] as Record<string, unknown>;
+        const columns = Object.keys(firstRow);
+
+        // If there's only one column, it might be a scalar
+        if (columns.length === 1 && columns[0] === functionName) {
+          return {
+            success: true,
+            result: firstRow[functionName],
+            executionTime,
+            rowCount: 1
+          };
+        }
+
+        // Set-returning function
+        return {
+          success: true,
+          columns,
+          rows: result.rows as Record<string, unknown>[],
+          executionTime,
+          rowCount: result.rows.length
+        };
+      }
+
+      // Empty result
+      return {
+        success: true,
+        result: null,
+        executionTime,
+        rowCount: 0
+      };
+    } catch (error) {
+      const executionTime = Date.now() - startTime;
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        executionTime
+      };
+    }
   }
 
   // ==================== Query Execution ====================

@@ -443,7 +443,7 @@ export interface SavedView {
 // Phase 3.4: Multi-Tab Support Types
 // ============================================
 
-export type TabType = 'table' | 'query' | 'er-diagram';
+export type TabType = 'table' | 'query' | 'er-diagram' | 'function';
 
 export interface BaseTab {
   id: string;
@@ -508,7 +508,20 @@ export interface ERDiagramTab extends BaseTab {
   error?: string;
 }
 
-export type Tab = TableTab | QueryTab | ERDiagramTab;
+export interface FunctionTab extends BaseTab {
+  type: 'function';
+  schema: string;
+  functionName: string;
+  functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger';
+  loading: boolean;
+  definition?: string; // Cached function definition
+  functionDetails?: FunctionDetails | TriggerDetails; // Cached metadata
+  error?: string;
+  /** Database type */
+  dbType?: DatabaseType;
+}
+
+export type Tab = TableTab | QueryTab | ERDiagramTab | FunctionTab;
 
 export interface TabState {
   tabs: Tab[];
@@ -741,4 +754,93 @@ export interface ImportDataResponse {
   insertedCount?: number;
   error?: string;
   errors?: string[]; // Per-row errors
+}
+
+// ============================================
+// Function/Procedure/Trigger Viewer Types
+// ============================================
+
+/**
+ * PostgreSQL function volatility classification
+ */
+export type FunctionVolatility = 'i' | 's' | 'v'; // immutable | stable | volatile
+
+/**
+ * PostgreSQL function/procedure kind
+ */
+export type FunctionKind = 'f' | 'p' | 'a' | 'w'; // function | procedure | aggregate | window
+
+/**
+ * Parameter mode for function/procedure parameters
+ */
+export type ParameterMode = 'IN' | 'OUT' | 'INOUT' | 'VARIADIC' | 'TABLE';
+
+/**
+ * Function parameter details
+ */
+export interface FunctionParameter {
+  name: string;
+  type: string; // PostgreSQL type name
+  mode: ParameterMode;
+  defaultValue?: string;
+  position: number;
+}
+
+/**
+ * Complete function/procedure details from PostgreSQL
+ */
+export interface FunctionDetails {
+  name: string;
+  schema: string;
+  language: string; // e.g., 'sql', 'plpgsql', 'plpython3u'
+  definition: string; // Full CREATE FUNCTION/PROCEDURE statement
+  arguments: string; // Human-readable argument list
+  returnType: string; // Return type description
+  volatility: FunctionVolatility;
+  isStrict: boolean; // Returns NULL on NULL input
+  isSecurityDefiner: boolean; // Executes with function owner's privileges
+  cost: number; // Estimated execution cost
+  estimatedRows: number; // Estimated rows returned (for set-returning functions)
+  kind: FunctionKind;
+  parameters: FunctionParameter[];
+  description?: string; // Comment/documentation
+  oid?: number; // PostgreSQL object identifier
+}
+
+/**
+ * Trigger timing
+ */
+export type TriggerTiming = 'BEFORE' | 'AFTER' | 'INSTEAD OF';
+
+/**
+ * Trigger event types
+ */
+export type TriggerEvent = 'INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE';
+
+/**
+ * Complete trigger details from PostgreSQL
+ */
+export interface TriggerDetails {
+  name: string;
+  schema: string;
+  tableName: string;
+  functionName: string;
+  definition: string; // Full CREATE TRIGGER statement
+  isEnabled: boolean;
+  timing: TriggerTiming;
+  events: TriggerEvent[];
+  description?: string;
+}
+
+/**
+ * Function execution result
+ */
+export interface FunctionExecutionResult {
+  success: boolean;
+  result?: any; // Scalar value, array, or table result
+  columns?: string[]; // For set-returning functions
+  rows?: Record<string, unknown>[]; // For set-returning functions
+  error?: string;
+  executionTime?: number; // Milliseconds
+  rowCount?: number;
 }

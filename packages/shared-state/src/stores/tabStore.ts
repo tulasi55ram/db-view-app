@@ -10,7 +10,7 @@
 import { useCallback } from 'react';
 import { create } from 'zustand';
 import { devtools, persist, createJSONStorage } from 'zustand/middleware';
-import type { Tab, TableTab, QueryTab, ERDiagramTab, DatabaseType } from '@dbview/types';
+import type { Tab, TableTab, QueryTab, ERDiagramTab, FunctionTab, DatabaseType } from '@dbview/types';
 import { useSelectionStore } from './selectionStore.js';
 
 interface TabState {
@@ -54,6 +54,16 @@ interface TabActions {
     connectionName?: string;
     connectionKey?: string;
     connectionColor?: string;
+  }) => string;
+
+  findOrCreateFunctionTab: (params: {
+    schema: string;
+    functionName: string;
+    functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger';
+    connectionName?: string;
+    connectionKey?: string;
+    connectionColor?: string;
+    dbType?: DatabaseType;
   }) => string;
 
   // Split view (Desktop only)
@@ -286,6 +296,67 @@ export const useTabStore = create<TabState & TabActions>()(
             }),
             false,
             'addERDiagramTab'
+          );
+
+          return tabId;
+        },
+
+        // Find existing function tab or create new one
+        findOrCreateFunctionTab: ({
+          schema,
+          functionName,
+          functionType,
+          connectionName,
+          connectionKey,
+          connectionColor,
+          dbType,
+        }) => {
+          const state = get();
+
+          // Check if tab already exists for this function (and same connection)
+          const existingTab = state.tabs.find(
+            (t) =>
+              t.type === 'function' &&
+              (t as FunctionTab).schema === schema &&
+              (t as FunctionTab).functionName === functionName &&
+              (t as FunctionTab).functionType === functionType &&
+              (connectionKey
+                ? t.connectionKey === connectionKey
+                : connectionName
+                  ? t.connectionName === connectionName
+                  : false)
+          );
+
+          if (existingTab) {
+            set({ activeTabId: existingTab.id }, false, 'findOrCreateFunctionTab:existing');
+            return existingTab.id;
+          }
+
+          // Create new function tab
+          const tabId = generateTabId();
+          const newTab: FunctionTab = {
+            id: tabId,
+            type: 'function',
+            title: functionName,
+            schema,
+            functionName,
+            functionType,
+            loading: true,
+            createdAt: Date.now(),
+            connectionName,
+            connectionKey,
+            connectionColor,
+            dbType,
+            isDirty: false,
+          };
+
+          set(
+            (s) => ({
+              tabs: [...s.tabs, newTab],
+              activeTabId: tabId,
+            }),
+            false,
+            'findOrCreateFunctionTab:create'
           );
 
           return tabId;

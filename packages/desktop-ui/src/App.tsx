@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { TabBar } from "@/components/TabBar";
 import { DataView } from "@/components/DataView";
 import { QueryViewRouter } from "@/components/QueryView";
+import { FunctionView } from "@/components/FunctionView/FunctionView";
 import { ERDiagramPanel } from "@/components/ERDiagramPanel";
 import { AddConnectionView } from "@/components/AddConnectionView";
 import { HomeView } from "@/components/HomeView";
@@ -53,6 +54,7 @@ function AppContent() {
     findOrCreateTableTab,
     addQueryTab,
     addERDiagramTab,
+    findOrCreateFunctionTab,
     setSplitMode,
     setSecondActiveTab,
   } = useTabStore();
@@ -159,6 +161,22 @@ function AppContent() {
       });
     },
     [findOrCreateTableTab, getConnectionColor, closeConnectionDialog]
+  );
+
+  const handleFunctionSelect = useCallback(
+    async (connectionKey: string, connectionName: string, schema: string, functionName: string, functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger') => {
+      closeConnectionDialog();
+      const connectionColor = await getConnectionColor(connectionKey);
+      findOrCreateFunctionTab({
+        schema,
+        functionName,
+        functionType,
+        connectionName,
+        connectionKey,
+        connectionColor,
+      });
+    },
+    [findOrCreateFunctionTab, getConnectionColor, closeConnectionDialog]
   );
 
   const handleQueryOpen = useCallback(
@@ -282,6 +300,21 @@ function AppContent() {
           connectionKey={tab.connectionKey}
           connectionName={tab.connectionName}
           schemas={erTab.selectedSchemas}
+        />
+      );
+    }
+
+    if (tab.type === "function" && tab.connectionKey) {
+      const functionTab = tab as import("@dbview/types").FunctionTab;
+      return (
+        <FunctionView
+          key={tab.id}
+          connectionKey={tab.connectionKey}
+          connectionName={tab.connectionName || ''}
+          schema={functionTab.schema}
+          functionName={functionTab.functionName}
+          functionType={functionTab.functionType}
+          tabId={tab.id}
         />
       );
     }
@@ -449,6 +482,7 @@ function AppContent() {
         sidebar={
           <Sidebar
             onTableSelect={handleTableSelect}
+            onFunctionSelect={handleFunctionSelect}
             onQueryOpen={handleQueryOpen}
             onERDiagramOpen={handleERDiagramOpen}
             onAddConnection={openAddConnection}

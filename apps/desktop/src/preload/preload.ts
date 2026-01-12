@@ -23,7 +23,14 @@ const electronAPI: ElectronAPI = {
   listFunctions: (connectionKey, schema) => ipcRenderer.invoke("schema:getFunctions", connectionKey, schema),
   listProcedures: (connectionKey, schema) => ipcRenderer.invoke("schema:getProcedures", connectionKey, schema),
   listTypes: (connectionKey, schema) => ipcRenderer.invoke("schema:getTypes", connectionKey, schema),
+  listTriggers: (connectionKey, schema) => ipcRenderer.invoke("schema:getTriggers", connectionKey, schema),
   listColumns: (connectionKey, schema, table) => ipcRenderer.invoke("table:getColumns", connectionKey, schema, table),
+
+  // Function/Trigger operations
+  getFunctionDetails: (connectionKey, schema, functionName) => ipcRenderer.invoke("schema:getFunctionDetails", connectionKey, schema, functionName),
+  getTriggerDetails: (connectionKey, schema, triggerName) => ipcRenderer.invoke("schema:getTriggerDetails", connectionKey, schema, triggerName),
+  updateFunctionDefinition: (connectionKey, definition) => ipcRenderer.invoke("schema:updateFunctionDefinition", connectionKey, definition),
+  executeFunction: (connectionKey, schema, functionName, parameters) => ipcRenderer.invoke("schema:executeFunction", connectionKey, schema, functionName, parameters),
 
   // Table operations
   loadTableRows: (params) => ipcRenderer.invoke("table:loadRows", params),
