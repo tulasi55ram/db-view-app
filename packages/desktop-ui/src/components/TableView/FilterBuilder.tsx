@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { X, Plus, Filter } from "lucide-react";
 import type { FilterCondition, ColumnMetadata, FilterOperator } from "@dbview/types";
 import { generateUniqueId } from "@/utils/generateId";
@@ -37,14 +37,40 @@ export function FilterBuilder({ columns, onApply, initialFilters = [], initialLo
   const [logic, setLogic] = useState<"AND" | "OR">(initialLogic);
   const [internalIsOpen, setInternalIsOpen] = useState(false);
 
+  // Track the last applied initialFilters to prevent unnecessary updates
+  const lastInitialFiltersRef = useRef<FilterCondition[]>(initialFilters);
+  const lastInitialLogicRef = useRef<"AND" | "OR">(initialLogic);
+
   // Sync internal state when props change (e.g., when filters are removed via chips or loaded from preset)
+  // Only update if the content actually changed (not just reference)
   useEffect(() => {
-    if (initialFilters.length > 0) {
-      setFilters(initialFilters);
-    } else {
-      setFilters([{ id: generateUniqueId('filter'), columnName: columns[0]?.name || "", operator: "equals", value: "" }]);
+    const filtersChanged =
+      lastInitialFiltersRef.current.length !== initialFilters.length ||
+      lastInitialFiltersRef.current.some((filter, index) => {
+        const newFilter = initialFilters[index];
+        return !newFilter ||
+          filter.id !== newFilter.id ||
+          filter.columnName !== newFilter.columnName ||
+          filter.operator !== newFilter.operator ||
+          filter.value !== newFilter.value ||
+          filter.value2 !== newFilter.value2;
+      });
+
+    const logicChanged = lastInitialLogicRef.current !== initialLogic;
+
+    if (filtersChanged) {
+      lastInitialFiltersRef.current = initialFilters;
+      if (initialFilters.length > 0) {
+        setFilters(initialFilters);
+      } else {
+        setFilters([{ id: generateUniqueId('filter'), columnName: columns[0]?.name || "", operator: "equals", value: "" }]);
+      }
     }
-    setLogic(initialLogic);
+
+    if (logicChanged) {
+      lastInitialLogicRef.current = initialLogic;
+      setLogic(initialLogic);
+    }
   }, [initialFilters, initialLogic, columns]);
 
   // Use controlled state if provided, otherwise use internal state

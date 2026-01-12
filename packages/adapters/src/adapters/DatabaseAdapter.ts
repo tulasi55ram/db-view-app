@@ -685,6 +685,37 @@ export interface DatabaseAdapter extends EventEmitter {
    */
   listTriggers?(schema: string): Promise<string[]>;
 
+  /**
+   * Get detailed information about a function or procedure (if supported)
+   * @param schema Schema name
+   * @param functionName Function/procedure name
+   * @returns Complete function details including definition, parameters, and metadata
+   */
+  getFunctionDetails?(schema: string, functionName: string): Promise<import('@dbview/types').FunctionDetails>;
+
+  /**
+   * Get detailed information about a trigger (if supported)
+   * @param schema Schema name
+   * @param triggerName Trigger name
+   * @returns Complete trigger details including definition, timing, and events
+   */
+  getTriggerDetails?(schema: string, triggerName: string): Promise<import('@dbview/types').TriggerDetails>;
+
+  /**
+   * Update (CREATE OR REPLACE) a function or procedure definition (if supported)
+   * @param definition Complete CREATE OR REPLACE FUNCTION/PROCEDURE statement
+   */
+  updateFunctionDefinition?(definition: string): Promise<void>;
+
+  /**
+   * Execute a function with parameters (if supported)
+   * @param schema Schema name
+   * @param functionName Function name
+   * @param parameters Array of parameter values
+   * @returns Execution result with output, error, and timing information
+   */
+  executeFunction?(schema: string, functionName: string, parameters: any[]): Promise<import('@dbview/types').FunctionExecutionResult>;
+
   // ==================== Query Execution ====================
 
   /**

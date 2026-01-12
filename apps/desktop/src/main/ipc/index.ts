@@ -241,6 +241,61 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.listTypes(schema);
   });
 
+  ipcMain.handle("schema:getTriggers", async (_event, connectionKey: string, schema: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    if (!adapter.listTriggers) {
+      return [];
+    }
+    return adapter.listTriggers(schema);
+  });
+
+  ipcMain.handle("schema:getFunctionDetails", async (_event, connectionKey: string, schema: string, functionName: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    if (!adapter.getFunctionDetails) {
+      throw new Error(`getFunctionDetails not supported by ${adapter.type} adapter`);
+    }
+    return adapter.getFunctionDetails(schema, functionName);
+  });
+
+  ipcMain.handle("schema:getTriggerDetails", async (_event, connectionKey: string, schema: string, triggerName: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    if (!adapter.getTriggerDetails) {
+      throw new Error(`getTriggerDetails not supported by ${adapter.type} adapter`);
+    }
+    return adapter.getTriggerDetails(schema, triggerName);
+  });
+
+  ipcMain.handle("schema:updateFunctionDefinition", async (_event, connectionKey: string, definition: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    if (!adapter.updateFunctionDefinition) {
+      throw new Error(`updateFunctionDefinition not supported by ${adapter.type} adapter`);
+    }
+    return adapter.updateFunctionDefinition(definition);
+  });
+
+  ipcMain.handle("schema:executeFunction", async (_event, connectionKey: string, schema: string, functionName: string, parameters: any[]) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    if (!adapter.executeFunction) {
+      throw new Error(`executeFunction not supported by ${adapter.type} adapter`);
+    }
+    return adapter.executeFunction(schema, functionName, parameters);
+  });
+
   ipcMain.handle("table:getColumns", async (_event, connectionKey: string, schema: string, table: string) => {
     const adapter = connectionManager.getAdapter(connectionKey);
     if (!adapter) {

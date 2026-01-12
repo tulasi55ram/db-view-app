@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Play, Wand2, History, Activity, BookOpen, Save, Bookmark, X } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { SqlEditor } from "./SqlEditor";
+import { SqlEditor, type SqlEditorRef } from "./SqlEditor";
 import { QueryResultsGrid } from "./QueryResultsGrid";
 import { QueryHistoryPanel } from "./QueryHistoryPanel";
 import { ExplainPlanPanel } from "./ExplainPlanPanel";
@@ -393,6 +393,7 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
   const [explainError, setExplainError] = useState<string | undefined>();
 
   const api = getElectronAPI();
+  const sqlEditorRef = useRef<SqlEditorRef>(null);
 
   // Use shared stores for query history and saved queries
   const {
@@ -442,8 +443,10 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
         }
       })
       .catch((err) => {
-        // Only log if effect is still active (avoid logging after unmount)
-        if (isActive) {
+        // Silently ignore "Not connected" errors - they're expected when the app loads
+        // before the user has connected to the database
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        if (isActive && !errorMessage.includes("Not connected")) {
           console.error("Failed to load autocomplete data:", err);
         }
       });
@@ -455,8 +458,11 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
   }, [tab.connectionKey, api]);
 
   // Handle run query
-  const handleRunQuery = useCallback(async () => {
-    if (!tab.sql?.trim() || !tab.connectionKey || !api) {
+  const handleRunQuery = useCallback(async (sqlToExecute?: string) => {
+    // Use provided SQL (selected text) or fall back to full tab SQL
+    const sqlToRun = sqlToExecute?.trim() || tab.sql?.trim();
+
+    if (!sqlToRun || !tab.connectionKey || !api) {
       if (!tab.connectionKey) {
         toast.error("No connection selected");
       }
@@ -469,13 +475,13 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     try {
       const result = await api.runQuery({
         connectionKey: tab.connectionKey,
-        sql: tab.sql,
+        sql: sqlToRun,
       });
 
       const duration = Date.now() - startTime;
 
       // Add to shared query history store
-      addQueryToHistory(tab.sql, true, duration, result.rows.length);
+      addQueryToHistory(sqlToRun, true, duration, result.rows.length);
 
       onTabUpdate(tab.id, {
         columns: result.columns,
@@ -493,7 +499,7 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
       const errorMessage = getErrorMessage(error);
 
       // Add failed query to shared history store
-      addQueryToHistory(tab.sql, false, duration, undefined, errorMessage);
+      addQueryToHistory(sqlToRun, false, duration, undefined, errorMessage);
 
       onTabUpdate(tab.id, {
         loading: false,
@@ -668,7 +674,10 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
             </button>
           ) : (
             <button
-              onClick={handleRunQuery}
+              onClick={() => {
+                const selectedText = sqlEditorRef.current?.getSelectedText();
+                handleRunQuery(selectedText);
+              }}
               disabled={!tab.sql?.trim()}
               className="h-7 px-3 rounded flex items-center gap-1.5 bg-accent hover:bg-accent/90 text-white text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -778,9 +787,10 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
       <div className="flex-1 flex flex-col overflow-hidden">
         <PanelGroup direction="vertical">
           {/* SQL Editor Panel - Resizable */}
-          <Panel defaultSize={25} minSize={15} maxSize={60}>
+          <Panel defaultSize={30} minSize={15} maxSize={60}>
             <div className="h-full flex flex-col">
               <SqlEditor
+                ref={sqlEditorRef}
                 value={tab.sql || ""}
                 onChange={handleSqlChange}
                 onRunQuery={handleRunQuery}
@@ -800,7 +810,7 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
           <PanelResizeHandle className="h-1 bg-border hover:bg-accent transition-colors cursor-row-resize" />
 
           {/* Results Panel */}
-          <Panel defaultSize={75} minSize={30}>
+          <Panel defaultSize={70} minSize={30}>
             <div className="h-full flex flex-col overflow-hidden">
               {/* Warning Banner - Show when limit was auto-applied */}
               {tab.limitApplied && (

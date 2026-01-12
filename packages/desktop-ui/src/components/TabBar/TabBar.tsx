@@ -23,7 +23,7 @@ import { CSS } from "@dnd-kit/utilities";
 
 interface Tab {
   id: string;
-  type: "table" | "query" | "er-diagram";
+  type: "table" | "query" | "er-diagram" | "function";
   title: string;
   schema?: string;
   table?: string;
@@ -395,6 +395,10 @@ export function TabBar({
         return <FileCode className="w-3.5 h-3.5" />;
       case "er-diagram":
         return <Workflow className="w-3.5 h-3.5" />;
+      case "function":
+        return <FileCode className="w-3.5 h-3.5 text-blue-500" />;
+      default:
+        return <FileCode className="w-3.5 h-3.5" />;
     }
   };
 

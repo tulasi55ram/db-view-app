@@ -1,4 +1,4 @@
-import { type FC, useEffect, useRef } from "react";
+import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
@@ -20,11 +20,12 @@ import {
   type ForeignKeyRelation,
   type EnhancedAutocompleteData,
 } from "@/utils/sqlAutocomplete";
+import { getQueryAtCursor } from "@/utils/queryParser";
 
 export interface SqlEditorProps {
   value: string;
   onChange: (value: string) => void;
-  onRunQuery: () => void;
+  onRunQuery: (sqlToExecute?: string) => void;
   height?: string;
   readOnly?: boolean;
   loading?: boolean;
@@ -37,6 +38,10 @@ export interface SqlEditorProps {
   columns?: Record<string, ColumnMetadata[]>;
   // Foreign key relationships for JOIN suggestions
   foreignKeys?: ForeignKeyRelation[];
+}
+
+export interface SqlEditorRef {
+  getSelectedText: () => string | undefined;
 }
 
 /**
@@ -58,11 +63,11 @@ function getSqlDialect(dbType?: SqlDatabaseType) {
   }
 }
 
-export const SqlEditor: FC<SqlEditorProps> = ({
+export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
   value,
   onChange,
   onRunQuery,
-  height = "200px",
+  height: _height = "200px", // Unused, editor now fills container
   readOnly = false,
   loading = false,
   error,
@@ -71,11 +76,28 @@ export const SqlEditor: FC<SqlEditorProps> = ({
   tables = [],
   columns = {},
   foreignKeys = [],
-}) => {
+}, ref) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const readOnlyCompartment = useRef(new Compartment());
   const themeCompartment = useRef(new Compartment());
+
+  // Expose methods to parent via ref
+  useImperativeHandle(ref, () => ({
+    getSelectedText: () => {
+      if (!viewRef.current) return undefined;
+      const { from, to } = viewRef.current.state.selection.main;
+
+      // If text is selected, return it
+      if (from !== to) {
+        return viewRef.current.state.doc.sliceString(from, to);
+      }
+
+      // Otherwise, find the query at cursor position
+      const fullText = viewRef.current.state.doc.toString();
+      return getQueryAtCursor(fullText, from);
+    },
+  }));
 
   // Get current theme
   const { resolvedTheme } = useTheme();
@@ -135,10 +157,17 @@ export const SqlEditor: FC<SqlEditorProps> = ({
           "&": {
             backgroundColor: isDark ? "#171717" : "#ffffff",
             color: isDark ? "#fafafa" : "#171717",
-            height: height,
+            minHeight: "100%",
             fontSize: "13px",
             lineHeight: "1.5",
             fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+            display: "flex",
+            flexDirection: "column",
+          },
+          ".cm-scroller": {
+            overflow: "auto",
+            height: "100%",
+            flex: "1",
           },
           ".cm-content": {
             caretColor: "#3b82f6",
@@ -253,9 +282,22 @@ export const SqlEditor: FC<SqlEditorProps> = ({
     const customKeybindings = keymap.of([
       {
         key: "Mod-Enter",
-        run: () => {
+        run: (view) => {
           if (!loading && value.trim()) {
-            onRunQuery();
+            const { from, to } = view.state.selection.main;
+            let queryToRun: string | undefined;
+
+            // If text is selected, use it
+            if (from !== to) {
+              queryToRun = view.state.doc.sliceString(from, to);
+            } else {
+              // Otherwise, find the query at cursor position
+              const fullText = view.state.doc.toString();
+              queryToRun = getQueryAtCursor(fullText, from);
+            }
+
+            // Pass query to parent, or undefined to use full text
+            onRunQuery(queryToRun);
           }
           return true;
         },
@@ -382,8 +424,8 @@ export const SqlEditor: FC<SqlEditorProps> = ({
   }, [value]);
 
   return (
-    <div className="relative">
-      <div ref={editorRef} className="rounded border border-border overflow-hidden" style={{ height }} />
+    <div className="relative h-full flex flex-col">
+      <div ref={editorRef} className="rounded border border-border overflow-auto flex-1" style={{ minHeight: 0 }} />
 
       {/* Database type badge */}
       <div className="absolute top-2 right-2 px-2 py-0.5 text-[10px] font-medium rounded bg-bg-tertiary text-text-secondary uppercase tracking-wide">
@@ -404,4 +446,6 @@ export const SqlEditor: FC<SqlEditorProps> = ({
       )}
     </div>
   );
-};
+});
+
+SqlEditor.displayName = "SqlEditor";

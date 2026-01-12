@@ -36,7 +36,7 @@ export interface UseTableFiltersResult {
  * Generate unique ID for filter conditions
  */
 function generateFilterId(): string {
-  return `filter_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  return `filter_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
 }
 
 /**
@@ -52,6 +52,12 @@ function createEmptyCondition(overrides?: Partial<FilterCondition>): FilterCondi
     ...overrides,
   };
 }
+
+/**
+ * Default values for hook parameters - defined as constants to maintain stable references
+ */
+const DEFAULT_INITIAL_CONDITIONS: FilterCondition[] = [];
+const DEFAULT_INITIAL_LOGIC: 'AND' | 'OR' = 'AND';
 
 /**
  * Hook for managing table filter state.
@@ -75,13 +81,16 @@ function createEmptyCondition(overrides?: Partial<FilterCondition>): FilterCondi
  * ```
  */
 export function useTableFilters(
-  initialConditions: FilterCondition[] = [],
-  initialLogic: 'AND' | 'OR' = 'AND'
+  initialConditions: FilterCondition[] = DEFAULT_INITIAL_CONDITIONS,
+  initialLogic: 'AND' | 'OR' = DEFAULT_INITIAL_LOGIC
 ): UseTableFiltersResult {
   const [conditions, setConditions] = useState<FilterCondition[]>(
     initialConditions.length > 0 ? initialConditions : []
   );
   const [logicOperator, setLogicOperator] = useState<'AND' | 'OR'>(initialLogic);
+
+  // Track whether initial sync has happened to prevent initial sync on mount
+  const hasSyncedRef = useRef(false);
 
   // Track previous initial values to detect when caller changes them
   // (e.g., loading a saved view, switching tables)
@@ -90,20 +99,26 @@ export function useTableFilters(
 
   // Sync state when initial values change after mount
   useEffect(() => {
+    // Skip on mount - only sync after mount when values actually change
+    if (!hasSyncedRef.current) {
+      hasSyncedRef.current = true;
+      prevInitialConditions.current = initialConditions;
+      prevInitialLogic.current = initialLogic;
+      return;
+    }
+
     // Check if initialConditions actually changed (by reference)
     if (prevInitialConditions.current !== initialConditions) {
       prevInitialConditions.current = initialConditions;
       setConditions(initialConditions.length > 0 ? initialConditions : []);
     }
-  }, [initialConditions]);
 
-  useEffect(() => {
     // Check if initialLogic actually changed
     if (prevInitialLogic.current !== initialLogic) {
       prevInitialLogic.current = initialLogic;
       setLogicOperator(initialLogic);
     }
-  }, [initialLogic]);
+  }, [initialConditions, initialLogic]);
 
   /**
    * Add a new condition at the end
