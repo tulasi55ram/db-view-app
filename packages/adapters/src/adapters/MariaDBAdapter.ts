@@ -211,15 +211,44 @@ export class MariaDBAdapter extends EventEmitter implements DatabaseAdapter {
       const connection = await this.pool.getConnection();
       try {
         await connection.ping();
-        if (this._status === 'error') {
+        if (this._status === 'error' || this._status === 'disconnected') {
           this.setStatus('connected');
+          this.reconnectAttempts = 0;
         }
         return true;
       } finally {
         connection.release();
       }
     } catch (error) {
+      console.error('[MariaDBAdapter] Health check failed:', error);
       const err = error instanceof Error ? error : new Error(String(error));
+
+      // Check if this is a connection error that requires reconnection
+      if (this.isConnectionError(err)) {
+        console.log('[MariaDBAdapter] Connection error detected in ping, closing pool and attempting reconnection');
+
+        // Close the existing pool since it's in a bad state
+        if (this.pool) {
+          try {
+            await this.pool.end();
+          } catch (endError) {
+            console.error('[MariaDBAdapter] Error ending pool:', endError);
+          }
+          this.pool = undefined;
+        }
+
+        // Attempt to reconnect
+        try {
+          const reconnected = await this.reconnect();
+          if (reconnected) {
+            console.log('[MariaDBAdapter] Successfully reconnected after ping failure');
+            return true;
+          }
+        } catch (reconnectError) {
+          console.error('[MariaDBAdapter] Reconnection failed:', reconnectError);
+        }
+      }
+
       this.setStatus('error', err);
       return false;
     }
@@ -232,9 +261,15 @@ export class MariaDBAdapter extends EventEmitter implements DatabaseAdapter {
       try {
         await this.ping();
       } catch (error) {
-        console.error('[MariaDBAdapter] Health check error:', error);
+        // Catch any unhandled errors from ping to prevent them from bubbling up
+        // ping() already handles errors internally, so this is just a safety net
+        console.error('[MariaDBAdapter] Unhandled health check error:', error);
         const err = error instanceof Error ? error : new Error(String(error));
-        this.setStatus('error', err);
+
+        // Only update status if it's a connection error
+        if (this.isConnectionError(err)) {
+          this.setStatus('error', err);
+        }
       }
     }, 30000); // Check every 30 seconds
   }

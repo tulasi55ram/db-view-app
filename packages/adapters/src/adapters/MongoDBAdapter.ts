@@ -178,11 +178,50 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
   async ping(): Promise<boolean> {
     try {
       if (!this.db) {
-        throw new Error('Not connected to MongoDB database');
+        return false;
       }
       const result = await this.db.command({ ping: 1 });
+
+      if (this.connectionStatus === 'error' || this.connectionStatus === 'disconnected') {
+        this.connectionStatus = 'connected';
+        this.error = undefined;
+        this.emit('statusChange', { status: 'connected', message: 'Health check passed' });
+      }
       return result.ok === 1;
     } catch (error) {
+      console.error('[MongoDBAdapter] Health check failed:', error);
+      const err = error instanceof Error ? error : new Error(String(error));
+
+      // Check if this is a connection error that requires reconnection
+      if (this.isConnectionError(err)) {
+        console.log('[MongoDBAdapter] Connection error detected in ping, closing client and attempting reconnection');
+
+        // Close the existing client since it's in a bad state
+        if (this.client) {
+          try {
+            await this.client.close();
+          } catch (closeError) {
+            console.error('[MongoDBAdapter] Error closing client:', closeError);
+          }
+          this.client = undefined;
+          this.db = undefined;
+        }
+
+        // Attempt to reconnect
+        try {
+          const reconnected = await this.reconnect();
+          if (reconnected) {
+            console.log('[MongoDBAdapter] Successfully reconnected after ping failure');
+            return true;
+          }
+        } catch (reconnectError) {
+          console.error('[MongoDBAdapter] Reconnection failed:', reconnectError);
+        }
+      }
+
+      this.connectionStatus = 'error';
+      this.error = err;
+      this.emit('statusChange', { status: 'error', error: err, message: 'Health check failed' });
       return false;
     }
   }
@@ -1189,6 +1228,38 @@ export class MongoDBAdapter extends EventEmitter implements DatabaseAdapter {
   formatParameter(index: number): string {
     // MongoDB doesn't use parameter placeholders like SQL
     return `$${index}`;
+  }
+
+  private isConnectionError(error: Error): boolean {
+    const connectionErrorPatterns = [
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'ENOTFOUND',
+      'MongoNetworkError',
+      'MongoServerSelectionError',
+      'MongoTimeoutError',
+      'Connection lost',
+      'Connection refused',
+      'Connection timed out',
+      'connect ETIMEDOUT',
+      'Topology is closed',
+      'Server selection timed out',
+      'no primary found in replicaset',
+    ];
+
+    const errorMessage = error.message.toLowerCase();
+    const errorCode = (error as any).code;
+    const errorName = error.name?.toLowerCase();
+
+    return connectionErrorPatterns.some(pattern => {
+      const patternLower = pattern.toLowerCase();
+      return errorMessage.includes(patternLower) ||
+             errorCode === pattern ||
+             errorName?.includes(patternLower);
+    });
   }
 
   private buildConnectionString(): string {

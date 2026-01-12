@@ -243,6 +243,33 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
     } catch (error) {
       console.error("[dbview] Health check failed:", error);
       const err = error instanceof Error ? error : new Error(String(error));
+
+      // Check if this is a connection error that requires reconnection
+      if (this.isConnectionError(err)) {
+        console.log("[dbview] Connection error detected in ping, closing pool and attempting reconnection");
+
+        // Close the existing pool since it's in a bad state
+        if (this.pool) {
+          try {
+            await this.pool.end();
+          } catch (endError) {
+            console.error("[dbview] Error ending pool:", endError);
+          }
+          this.pool = undefined;
+        }
+
+        // Attempt to reconnect
+        try {
+          const reconnected = await this.reconnect();
+          if (reconnected) {
+            console.log("[dbview] Successfully reconnected after ping failure");
+            return true;
+          }
+        } catch (reconnectError) {
+          console.error("[dbview] Reconnection failed:", reconnectError);
+        }
+      }
+
       this.setStatus('error', 'Health check failed', err);
       return false;
     }
@@ -254,9 +281,15 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
       try {
         await this.ping();
       } catch (error) {
-        console.error("[dbview] Health check error:", error);
+        // Catch any unhandled errors from ping to prevent them from bubbling up
+        // ping() already handles errors internally, so this is just a safety net
+        console.error("[dbview] Unhandled health check error:", error);
         const err = error instanceof Error ? error : new Error(String(error));
-        this.setStatus('error', 'Health check failed', err);
+
+        // Only update status if it's a connection error
+        if (this.isConnectionError(err)) {
+          this.setStatus('error', 'Health check failed - connection lost', err);
+        }
       }
     }, this.healthCheckIntervalMs);
   }

@@ -182,8 +182,43 @@ export class RedisAdapter extends EventEmitter implements DatabaseAdapter {
 
     try {
       const result = await this.client.ping();
+      if (this._status === 'error' || this._status === 'disconnected') {
+        this.status = 'connected';
+        this._lastError = undefined;
+      }
       return result === "PONG";
-    } catch {
+    } catch (error) {
+      console.error('[RedisAdapter] Health check failed:', error);
+      const err = error instanceof Error ? error : new Error(String(error));
+
+      // Check if this is a connection error that requires reconnection
+      if (this.isConnectionError(err)) {
+        console.log('[RedisAdapter] Connection error detected in ping, closing client and attempting reconnection');
+
+        // Close the existing client since it's in a bad state
+        if (this.client) {
+          try {
+            await this.client.quit();
+          } catch (quitError) {
+            console.error('[RedisAdapter] Error quitting client:', quitError);
+          }
+          this.client = null;
+        }
+
+        // Attempt to reconnect
+        try {
+          const reconnected = await this.reconnect();
+          if (reconnected) {
+            console.log('[RedisAdapter] Successfully reconnected after ping failure');
+            return true;
+          }
+        } catch (reconnectError) {
+          console.error('[RedisAdapter] Reconnection failed:', reconnectError);
+        }
+      }
+
+      this._lastError = err;
+      this.status = 'error';
       return false;
     }
   }
@@ -210,9 +245,16 @@ export class RedisAdapter extends EventEmitter implements DatabaseAdapter {
             this.status = "error";
           }
         } catch (error) {
-          console.error('[RedisAdapter] Health check error:', error);
-          this._lastError = error instanceof Error ? error : new Error(String(error));
-          this.status = "error";
+          // Catch any unhandled errors from ping to prevent them from bubbling up
+          // ping() already handles errors internally, so this is just a safety net
+          console.error('[RedisAdapter] Unhandled health check error:', error);
+          const err = error instanceof Error ? error : new Error(String(error));
+
+          // Only update status if it's a connection error
+          if (this.isConnectionError(err)) {
+            this._lastError = err;
+            this.status = "error";
+          }
         }
       }
     }, intervalMs);
@@ -1076,6 +1118,32 @@ export class RedisAdapter extends EventEmitter implements DatabaseAdapter {
   // ============================================
   // Private Helper Methods
   // ============================================
+
+  private isConnectionError(error: Error): boolean {
+    const connectionErrorPatterns = [
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'ENOTFOUND',
+      'Connection is closed',
+      'Connection refused',
+      'Connection timed out',
+      'connect ETIMEDOUT',
+      'Socket closed unexpectedly',
+      'Connection lost',
+      'NOAUTH',
+      'WRONGPASS',
+    ];
+
+    const errorMessage = error.message.toLowerCase();
+    const errorCode = (error as any).code;
+
+    return connectionErrorPatterns.some(pattern =>
+      errorMessage.includes(pattern.toLowerCase()) || errorCode === pattern
+    );
+  }
 
   private createClient(): Redis {
     const { host, port, username, password, database, ssl } = this.connectionConfig;

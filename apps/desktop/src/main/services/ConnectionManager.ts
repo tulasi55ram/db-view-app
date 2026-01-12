@@ -253,6 +253,45 @@ export class ConnectionManager {
   }
 
   /**
+   * Get adapter for a specific database when in "show all databases" mode.
+   * If database is provided, creates a new adapter connection to that database.
+   * Otherwise, returns the existing adapter.
+   */
+  async getAdapterForDatabase(connectionKey: string, database?: string): Promise<DatabaseAdapter | undefined> {
+    // If no database specified, return existing adapter
+    if (!database) {
+      return this.getAdapter(connectionKey);
+    }
+
+    // Find the original connection config
+    const connections = getAllConnections();
+    const originalConfig = connections.find((c) => this.getConnectionKey(c as any) === connectionKey);
+    if (!originalConfig) {
+      throw new Error(`Connection config not found for key: ${connectionKey}`);
+    }
+
+    // Create a new config with the specific database
+    const dbSpecificConfig = {
+      ...originalConfig,
+      database,
+      name: `${originalConfig.name}:${database}` // Make the name unique
+    } as StoredConnectionConfig;
+
+    // Get the key for this database-specific connection
+    const dbSpecificKey = this.getConnectionKey(dbSpecificConfig);
+
+    // Check if we already have an adapter for this database
+    const existingAdapter = this.adapters.get(dbSpecificKey);
+    if (existingAdapter && existingAdapter.status === "connected") {
+      return existingAdapter;
+    }
+
+    // Create a new adapter for this database
+    console.log(`[ConnectionManager] Creating adapter for database: ${database} (key: ${dbSpecificKey})`);
+    return this.getOrCreateAdapter(dbSpecificConfig);
+  }
+
+  /**
    * Clear reconnect timer for a connection
    */
   private clearReconnectTimer(key: string): void {

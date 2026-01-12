@@ -261,6 +261,33 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
     } catch (error) {
       console.error('[SQLServerAdapter] Health check failed:', error);
       const err = error instanceof Error ? error : new Error(String(error));
+
+      // Check if this is a connection error that requires reconnection
+      if (this.isConnectionError(err)) {
+        console.log('[SQLServerAdapter] Connection error detected in ping, closing pool and attempting reconnection');
+
+        // Close the existing pool since it's in a bad state
+        if (this.pool) {
+          try {
+            await this.pool.close();
+          } catch (closeError) {
+            console.error('[SQLServerAdapter] Error closing pool:', closeError);
+          }
+          this.pool = undefined;
+        }
+
+        // Attempt to reconnect
+        try {
+          const reconnected = await this.reconnect();
+          if (reconnected) {
+            console.log('[SQLServerAdapter] Successfully reconnected after ping failure');
+            return true;
+          }
+        } catch (reconnectError) {
+          console.error('[SQLServerAdapter] Reconnection failed:', reconnectError);
+        }
+      }
+
       this.setStatus('error', 'Health check failed', err);
       return false;
     }
@@ -272,9 +299,15 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
       try {
         await this.ping();
       } catch (error) {
-        console.error('[SQLServerAdapter] Health check error:', error);
+        // Catch any unhandled errors from ping to prevent them from bubbling up
+        // ping() already handles errors internally, so this is just a safety net
+        console.error('[SQLServerAdapter] Unhandled health check error:', error);
         const err = error instanceof Error ? error : new Error(String(error));
-        this.setStatus('error', 'Health check failed', err);
+
+        // Only update status if it's a connection error
+        if (this.isConnectionError(err)) {
+          this.setStatus('error', 'Health check failed - connection lost', err);
+        }
       }
     }, this.healthCheckIntervalMs);
   }
@@ -356,10 +389,11 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
 
   async listSchemas(database?: string): Promise<string[]> {
     // SQL Server requires switching databases or using fully qualified names
-    // For simplicity, list schemas from current database
+    // If a specific database is provided (for show all databases mode), query that database's schemas
+    const dbPrefix = database ? `[${database}].` : '';
     const result = await this.query<{ schema_name: string }>(`
       SELECT name as schema_name
-      FROM sys.schemas
+      FROM ${dbPrefix}sys.schemas
       WHERE name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest', 'db_owner', 'db_accessadmin',
                          'db_securityadmin', 'db_ddladmin', 'db_backupoperator', 'db_datareader',
                          'db_datawriter', 'db_denydatareader', 'db_denydatawriter')
@@ -371,7 +405,9 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Table Operations ====================
 
-  async listTables(schema: string): Promise<TableInfo[]> {
+  async listTables(schema: string, database?: string): Promise<TableInfo[]> {
+    // Use fully qualified names if database is specified (for show all databases mode)
+    const dbPrefix = database ? `[${database}].` : '';
     const result = await this.query<{
       table_name: string;
       total_bytes: number | null;
@@ -381,11 +417,11 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
         t.TABLE_NAME as table_name,
         SUM(p.rows) as row_count,
         SUM(a.total_pages) * 8 * 1024 as total_bytes
-      FROM INFORMATION_SCHEMA.TABLES t
-      LEFT JOIN sys.tables st ON t.TABLE_NAME = st.name
-      LEFT JOIN sys.indexes i ON st.object_id = i.object_id
-      LEFT JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-      LEFT JOIN sys.allocation_units a ON p.partition_id = a.container_id
+      FROM ${dbPrefix}INFORMATION_SCHEMA.TABLES t
+      LEFT JOIN ${dbPrefix}sys.tables st ON t.TABLE_NAME = st.name
+      LEFT JOIN ${dbPrefix}sys.indexes i ON st.object_id = i.object_id
+      LEFT JOIN ${dbPrefix}sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+      LEFT JOIN ${dbPrefix}sys.allocation_units a ON p.partition_id = a.container_id
       WHERE t.TABLE_SCHEMA = @schema
         AND t.TABLE_TYPE = 'BASE TABLE'
       GROUP BY t.TABLE_NAME
@@ -661,10 +697,11 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Optional Objects ====================
 
-  async listViews(schema: string): Promise<string[]> {
+  async listViews(schema: string, database?: string): Promise<string[]> {
+    const dbPrefix = database ? `[${database}].` : '';
     const result = await this.query<{ table_name: string }>(`
       SELECT TABLE_NAME as table_name
-      FROM INFORMATION_SCHEMA.VIEWS
+      FROM ${dbPrefix}INFORMATION_SCHEMA.VIEWS
       WHERE TABLE_SCHEMA = @schema
       ORDER BY TABLE_NAME
     `, { schema });
@@ -672,10 +709,11 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
     return result.recordset.map((row) => row.table_name);
   }
 
-  async listProcedures(schema: string): Promise<string[]> {
+  async listProcedures(schema: string, database?: string): Promise<string[]> {
+    const dbPrefix = database ? `[${database}].` : '';
     const result = await this.query<{ routine_name: string }>(`
       SELECT ROUTINE_NAME as routine_name
-      FROM INFORMATION_SCHEMA.ROUTINES
+      FROM ${dbPrefix}INFORMATION_SCHEMA.ROUTINES
       WHERE ROUTINE_SCHEMA = @schema
         AND ROUTINE_TYPE = 'PROCEDURE'
       ORDER BY ROUTINE_NAME
@@ -684,10 +722,11 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
     return result.recordset.map((row) => row.routine_name);
   }
 
-  async listFunctions(schema: string): Promise<string[]> {
+  async listFunctions(schema: string, database?: string): Promise<string[]> {
+    const dbPrefix = database ? `[${database}].` : '';
     const result = await this.query<{ routine_name: string }>(`
       SELECT ROUTINE_NAME as routine_name
-      FROM INFORMATION_SCHEMA.ROUTINES
+      FROM ${dbPrefix}INFORMATION_SCHEMA.ROUTINES
       WHERE ROUTINE_SCHEMA = @schema
         AND ROUTINE_TYPE = 'FUNCTION'
       ORDER BY ROUTINE_NAME
@@ -696,12 +735,13 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
     return result.recordset.map((row) => row.routine_name);
   }
 
-  async listTriggers(schema: string): Promise<string[]> {
+  async listTriggers(schema: string, database?: string): Promise<string[]> {
+    const dbPrefix = database ? `[${database}].` : '';
     const result = await this.query<{ trigger_name: string }>(`
       SELECT tr.name as trigger_name
-      FROM sys.triggers tr
-      JOIN sys.tables t ON tr.parent_id = t.object_id
-      JOIN sys.schemas s ON t.schema_id = s.schema_id
+      FROM ${dbPrefix}sys.triggers tr
+      JOIN ${dbPrefix}sys.tables t ON tr.parent_id = t.object_id
+      JOIN ${dbPrefix}sys.schemas s ON t.schema_id = s.schema_id
       WHERE s.name = @schema
       ORDER BY tr.name
     `, { schema });
@@ -1000,26 +1040,27 @@ export class SQLServerAdapter extends EventEmitter implements DatabaseAdapter {
     return result.recordset[0]?.size_bytes || 0;
   }
 
-  async getObjectCounts(schema: string): Promise<ObjectCounts> {
+  async getObjectCounts(schema: string, database?: string): Promise<ObjectCounts> {
+    const dbPrefix = database ? `[${database}].` : '';
     const [tables, views, procedures, functions] = await Promise.all([
       this.query<{ count: number }>(`
         SELECT COUNT(*) as count
-        FROM INFORMATION_SCHEMA.TABLES
+        FROM ${dbPrefix}INFORMATION_SCHEMA.TABLES
         WHERE TABLE_SCHEMA = @schema AND TABLE_TYPE = 'BASE TABLE'
       `, { schema }),
       this.query<{ count: number }>(`
         SELECT COUNT(*) as count
-        FROM INFORMATION_SCHEMA.VIEWS
+        FROM ${dbPrefix}INFORMATION_SCHEMA.VIEWS
         WHERE TABLE_SCHEMA = @schema
       `, { schema }),
       this.query<{ count: number }>(`
         SELECT COUNT(*) as count
-        FROM INFORMATION_SCHEMA.ROUTINES
+        FROM ${dbPrefix}INFORMATION_SCHEMA.ROUTINES
         WHERE ROUTINE_SCHEMA = @schema AND ROUTINE_TYPE = 'PROCEDURE'
       `, { schema }),
       this.query<{ count: number }>(`
         SELECT COUNT(*) as count
-        FROM INFORMATION_SCHEMA.ROUTINES
+        FROM ${dbPrefix}INFORMATION_SCHEMA.ROUTINES
         WHERE ROUTINE_SCHEMA = @schema AND ROUTINE_TYPE = 'FUNCTION'
       `, { schema }),
     ]);
