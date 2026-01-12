@@ -139,7 +139,7 @@ interface TreeNode {
 }
 
 interface SidebarProps {
-  onTableSelect: (connectionKey: string, connectionName: string, schema: string, table: string) => void;
+  onTableSelect: (connectionKey: string, connectionName: string, schema: string, table: string, database?: string) => void;
   onFunctionSelect?: (connectionKey: string, connectionName: string, schema: string, functionName: string, functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger') => void;
   onQueryOpen: (connectionKey: string, connectionName: string) => void;
   onERDiagramOpen?: (connectionKey: string, connectionName: string, schemas: string[]) => void;
@@ -544,6 +544,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionName,
             schema,
             dbType,
+            database,
             table: table.name,
             rowCount: table.rowCount,
             sizeBytes: table.sizeBytes,
@@ -844,7 +845,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
     if ((node.type === "table" || node.type === "view") && node.connectionKey && node.connectionName && node.schema !== undefined) {
       // For tables, use node.table; for views, use node.name
       const tableName = node.type === "table" ? (node.table || node.name) : node.name;
-      onTableSelect(node.connectionKey, node.connectionName, node.schema, tableName);
+      onTableSelect(node.connectionKey, node.connectionName, node.schema, tableName, node.database);
     }
   };
 

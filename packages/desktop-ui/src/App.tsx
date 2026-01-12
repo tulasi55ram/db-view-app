@@ -149,12 +149,13 @@ function AppContent() {
 
   // Handlers
   const handleTableSelect = useCallback(
-    async (connectionKey: string, connectionName: string, schema: string, table: string) => {
+    async (connectionKey: string, connectionName: string, schema: string, table: string, database?: string) => {
       closeConnectionDialog();
       const connectionColor = await getConnectionColor(connectionKey);
       findOrCreateTableTab({
         schema,
         table,
+        database,
         connectionName,
         connectionKey,
         connectionColor,

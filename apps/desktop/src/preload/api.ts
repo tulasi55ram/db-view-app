@@ -259,6 +259,7 @@ export interface LoadTableRowsParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   limit: number;
   offset: number;
   filters?: FilterCondition[];
@@ -273,6 +274,7 @@ export interface GetRowCountParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   filters?: FilterCondition[];
   filterLogic?: "AND" | "OR";
 }
@@ -282,6 +284,7 @@ export interface GetTableMetadataParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
 }
 
 // Update cell params
@@ -289,6 +292,7 @@ export interface UpdateCellParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   primaryKey: Record<string, unknown>;
   column: string;
   value: unknown;
@@ -299,6 +303,7 @@ export interface InsertRowParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   values: Record<string, unknown>;
 }
 
@@ -307,6 +312,7 @@ export interface DeleteRowsParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   primaryKeys: Record<string, unknown>[];
 }
 

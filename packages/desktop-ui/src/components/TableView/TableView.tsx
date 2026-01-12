@@ -27,6 +27,7 @@ interface TableViewProps {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
 }
 
 interface EditingCell {
@@ -42,10 +43,10 @@ interface PendingEdit {
   newValue: string;
 }
 
-export function TableView({ connectionKey, schema, table }: TableViewProps) {
+export function TableView({ connectionKey, schema, table, database }: TableViewProps) {
   // Track table identity to force complete re-render on table change
-  const [currentTableKey, setCurrentTableKey] = useState(`${connectionKey}-${schema}-${table}`);
-  const tableKey = `${connectionKey}-${schema}-${table}`;
+  const [currentTableKey, setCurrentTableKey] = useState(`${connectionKey}-${schema}-${table}-${database || ''}`);
+  const tableKey = `${connectionKey}-${schema}-${table}-${database || ''}`;
   const isTableChanging = currentTableKey !== tableKey;
 
   const [columns, setColumns] = useState<string[]>([]);
@@ -334,6 +335,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
         connectionKey,
         schema,
         table,
+        database,
       });
 
       // Get primary key columns for stable ordering
@@ -347,6 +349,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           connectionKey,
           schema,
           table,
+          database,
           limit,
           offset,
           filters: hasActiveFilters ? filters : undefined,
@@ -359,6 +362,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           connectionKey,
           schema,
           table,
+          database,
           filters: hasActiveFilters ? filters : undefined,
           filterLogic: hasActiveFilters ? filterLogic : undefined,
         }),

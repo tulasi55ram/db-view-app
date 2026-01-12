@@ -34,6 +34,7 @@ interface TabActions {
   findOrCreateTableTab: (params: {
     schema: string;
     table: string;
+    database?: string;
     connectionName?: string;
     connectionKey?: string;
     connectionColor?: string;
@@ -180,6 +181,7 @@ export const useTabStore = create<TabState & TabActions>()(
         findOrCreateTableTab: ({
           schema,
           table,
+          database,
           connectionName,
           connectionKey,
           connectionColor,
@@ -189,13 +191,14 @@ export const useTabStore = create<TabState & TabActions>()(
         }) => {
           const state = get();
 
-          // Check if tab already exists for this table (and same connection)
+          // Check if tab already exists for this table (and same connection and database)
           // Require at least one identifier to match - don't match if both are undefined
           const existingTab = state.tabs.find(
             (t) =>
               t.type === 'table' &&
               (t as TableTab).schema === schema &&
               (t as TableTab).table === table &&
+              (t as TableTab).database === database &&
               (connectionKey
                 ? t.connectionKey === connectionKey
                 : connectionName
@@ -216,6 +219,7 @@ export const useTabStore = create<TabState & TabActions>()(
             title: table, // Just the table name, not schema.table
             schema,
             table,
+            database,
             limit,
             offset: 0,
             totalRows: null,

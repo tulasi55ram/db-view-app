@@ -313,8 +313,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.executeFunction(schema, functionName, parameters);
   });
 
-  ipcMain.handle("table:getColumns", async (_event, connectionKey: string, schema: string, table: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("table:getColumns", async (_event, connectionKey: string, schema: string, table: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -324,7 +324,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   // ==================== Table Operations ====================
 
   ipcMain.handle("table:loadRows", async (_event, params: LoadTableRowsParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -340,7 +340,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:getRowCount", async (_event, params: GetRowCountParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -351,7 +351,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:getMetadata", async (_event, params: GetTableMetadataParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -359,7 +359,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:getStatistics", async (_event, params: GetTableMetadataParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -367,7 +367,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:getIndexes", async (_event, params: GetTableMetadataParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -378,7 +378,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:updateCell", async (_event, params: UpdateCellParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -386,7 +386,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:insertRow", async (_event, params: InsertRowParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -394,7 +394,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:deleteRows", async (_event, params: DeleteRowsParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }

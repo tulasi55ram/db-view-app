@@ -27,7 +27,7 @@ export interface DataViewRouterProps extends DataViewProps {}
  * />
  * ```
  */
-export function DataView({ connectionKey, schema, table }: DataViewRouterProps) {
+export function DataView({ connectionKey, schema, table, database }: DataViewRouterProps) {
   const { dbType, category } = useDbType(connectionKey);
 
   // Route to appropriate view based on database category
@@ -38,6 +38,7 @@ export function DataView({ connectionKey, schema, table }: DataViewRouterProps) 
           connectionKey={connectionKey}
           schema={schema}
           table={table}
+          database={database}
         />
       );
 
@@ -47,6 +48,7 @@ export function DataView({ connectionKey, schema, table }: DataViewRouterProps) 
           connectionKey={connectionKey}
           schema={schema}
           table={table}
+          database={database}
           dbType={dbType as DocumentDbType}
         />
       );
@@ -58,6 +60,7 @@ export function DataView({ connectionKey, schema, table }: DataViewRouterProps) 
           connectionKey={connectionKey}
           schema={schema}
           table={table}
+          database={database}
         />
       );
   }

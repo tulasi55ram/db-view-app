@@ -130,6 +130,7 @@ export interface DocumentDataViewProps {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string; // Optional database name (for show all databases mode)
   dbType: DocumentDbType;
 }
 
