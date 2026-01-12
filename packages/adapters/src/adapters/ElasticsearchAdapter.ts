@@ -181,11 +181,49 @@ export class ElasticsearchAdapter extends EventEmitter implements DatabaseAdapte
   async ping(): Promise<boolean> {
     try {
       if (!this.client) {
-        throw new Error('Not connected to Elasticsearch');
+        return false;
       }
       await this.client.ping();
+
+      if (this.connectionStatus === 'error' || this.connectionStatus === 'disconnected') {
+        this.connectionStatus = 'connected';
+        this.error = undefined;
+        this.emit('statusChange', { status: 'connected', message: 'Health check passed' });
+      }
       return true;
     } catch (error) {
+      console.error('[ElasticsearchAdapter] Health check failed:', error);
+      const err = error instanceof Error ? error : new Error(String(error));
+
+      // Check if this is a connection error that requires reconnection
+      if (this.isConnectionError(err)) {
+        console.log('[ElasticsearchAdapter] Connection error detected in ping, closing client and attempting reconnection');
+
+        // Close the existing client since it's in a bad state
+        if (this.client) {
+          try {
+            await this.client.close();
+          } catch (closeError) {
+            console.error('[ElasticsearchAdapter] Error closing client:', closeError);
+          }
+          this.client = undefined;
+        }
+
+        // Attempt to reconnect
+        try {
+          const reconnected = await this.reconnect();
+          if (reconnected) {
+            console.log('[ElasticsearchAdapter] Successfully reconnected after ping failure');
+            return true;
+          }
+        } catch (reconnectError) {
+          console.error('[ElasticsearchAdapter] Reconnection failed:', reconnectError);
+        }
+      }
+
+      this.connectionStatus = 'error';
+      this.error = this.parseElasticsearchError(err, 'Health check failed');
+      this.emit('statusChange', { status: 'error', error: this.error });
       return false;
     }
   }
@@ -1226,6 +1264,38 @@ export class ElasticsearchAdapter extends EventEmitter implements DatabaseAdapte
   formatParameter(index: number): string {
     // Elasticsearch doesn't use parameter placeholders
     return `$${index}`;
+  }
+
+  private isConnectionError(error: Error): boolean {
+    const connectionErrorPatterns = [
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'ENOTFOUND',
+      'ConnectionError',
+      'TimeoutError',
+      'NoLivingConnectionsError',
+      'Connection lost',
+      'Connection refused',
+      'Connection timed out',
+      'connect ETIMEDOUT',
+      'No living connections',
+      'Unable to revive connection',
+      'Request timed out',
+    ];
+
+    const errorMessage = error.message.toLowerCase();
+    const errorCode = (error as any).code;
+    const errorName = error.name?.toLowerCase();
+
+    return connectionErrorPatterns.some(pattern => {
+      const patternLower = pattern.toLowerCase();
+      return errorMessage.includes(patternLower) ||
+             errorCode === pattern ||
+             errorName?.includes(patternLower);
+    });
   }
 
   private buildClientOptions(): any {

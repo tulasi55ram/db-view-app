@@ -366,8 +366,45 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
         return false;
       }
       await this.client.execute('SELECT key FROM system.local WHERE key = \'local\'');
+
+      if (this.connectionStatus === 'error' || this.connectionStatus === 'disconnected') {
+        this.connectionStatus = 'connected';
+        this.emit('statusChange', { status: 'connected', message: 'Health check passed' });
+      }
       return true;
     } catch (error) {
+      console.error('[CassandraAdapter] Health check failed:', error);
+      const err = error instanceof Error ? error : new Error(String(error));
+
+      // Check if this is a connection error that requires reconnection
+      if (this.isConnectionError(err)) {
+        console.log('[CassandraAdapter] Connection error detected in ping, closing client and attempting reconnection');
+
+        // Close the existing client since it's in a bad state
+        if (this.client) {
+          try {
+            await this.client.shutdown();
+          } catch (shutdownError) {
+            console.error('[CassandraAdapter] Error shutting down client:', shutdownError);
+          }
+          this.client = undefined;
+        }
+
+        // Attempt to reconnect
+        try {
+          const reconnected = await this.reconnect();
+          if (reconnected) {
+            console.log('[CassandraAdapter] Successfully reconnected after ping failure');
+            return true;
+          }
+        } catch (reconnectError) {
+          console.error('[CassandraAdapter] Reconnection failed:', reconnectError);
+        }
+      }
+
+      this.connectionStatus = 'error';
+      this.error = err;
+      this.emit('statusChange', { status: 'error', error: err, message: 'Health check failed' });
       return false;
     }
   }
@@ -378,13 +415,20 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
     }
 
     this.healthCheckInterval = setInterval(async () => {
-      const isAlive = await this.ping();
-      if (!isAlive && this.connectionStatus === 'connected') {
-        this.connectionStatus = 'error';
-        this.emit('statusChange', {
-          status: 'error',
-          message: 'Health check failed',
-        });
+      try {
+        await this.ping();
+      } catch (error) {
+        // Catch any unhandled errors from ping to prevent them from bubbling up
+        // ping() already handles errors internally, so this is just a safety net
+        console.error('[CassandraAdapter] Unhandled health check error:', error);
+        const err = error instanceof Error ? error : new Error(String(error));
+
+        // Only update status if it's a connection error
+        if (this.isConnectionError(err)) {
+          this.connectionStatus = 'error';
+          this.error = err;
+          this.emit('statusChange', { status: 'error', error: err, message: 'Health check failed - connection lost' });
+        }
       }
     }, 30000); // Check every 30 seconds
   }
@@ -1104,6 +1148,39 @@ export class CassandraAdapter extends EventEmitter implements DatabaseAdapter {
       nextCursor,
       prevCursor,
     };
+  }
+
+  // ==================== Private Helper Methods ====================
+
+  private isConnectionError(error: Error): boolean {
+    const connectionErrorPatterns = [
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'ENOTFOUND',
+      'Connection lost',
+      'Connection refused',
+      'Connection timed out',
+      'connect ETIMEDOUT',
+      'Socket closed',
+      'No host available',
+      'All host(s) tried for query failed',
+      'OperationTimedOutError',
+      'ResponseError',
+    ];
+
+    const errorMessage = error.message.toLowerCase();
+    const errorCode = (error as any).code;
+    const errorName = error.name?.toLowerCase();
+
+    return connectionErrorPatterns.some(pattern => {
+      const patternLower = pattern.toLowerCase();
+      return errorMessage.includes(patternLower) ||
+             errorCode === pattern ||
+             errorName?.includes(patternLower);
+    });
   }
 
   // ==================== Metadata Operations ====================

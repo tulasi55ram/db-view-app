@@ -171,16 +171,16 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return databases;
   });
 
-  ipcMain.handle("schema:list", async (_event, connectionKey: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:list", async (_event, connectionKey: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
     return adapter.listSchemas();
   });
 
-  ipcMain.handle("schema:getTables", async (_event, connectionKey: string, schema: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:getTables", async (_event, connectionKey: string, schema: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -195,16 +195,16 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.getHierarchy();
   });
 
-  ipcMain.handle("schema:getObjectCounts", async (_event, connectionKey: string, schema: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:getObjectCounts", async (_event, connectionKey: string, schema: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
     return adapter.getObjectCounts(schema);
   });
 
-  ipcMain.handle("schema:getViews", async (_event, connectionKey: string, schema: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:getViews", async (_event, connectionKey: string, schema: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -214,8 +214,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.listViews(schema);
   });
 
-  ipcMain.handle("schema:getMaterializedViews", async (_event, connectionKey: string, schema: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:getMaterializedViews", async (_event, connectionKey: string, schema: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -225,8 +225,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.listMaterializedViews(schema);
   });
 
-  ipcMain.handle("schema:getFunctions", async (_event, connectionKey: string, schema: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:getFunctions", async (_event, connectionKey: string, schema: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -236,8 +236,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.listFunctions(schema);
   });
 
-  ipcMain.handle("schema:getProcedures", async (_event, connectionKey: string, schema: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:getProcedures", async (_event, connectionKey: string, schema: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -247,8 +247,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.listProcedures(schema);
   });
 
-  ipcMain.handle("schema:getTypes", async (_event, connectionKey: string, schema: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:getTypes", async (_event, connectionKey: string, schema: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -258,8 +258,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.listTypes(schema);
   });
 
-  ipcMain.handle("schema:getTriggers", async (_event, connectionKey: string, schema: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:getTriggers", async (_event, connectionKey: string, schema: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }

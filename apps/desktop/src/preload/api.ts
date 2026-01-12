@@ -389,16 +389,16 @@ export interface ElectronAPI {
 
   // Schema operations
   listDatabases(connectionKey: string): Promise<string[]>;
-  listSchemas(connectionKey: string): Promise<string[]>;
-  listTables(connectionKey: string, schema: string): Promise<TableInfo[]>;
+  listSchemas(connectionKey: string, database?: string): Promise<string[]>;
+  listTables(connectionKey: string, schema: string, database?: string): Promise<TableInfo[]>;
   getHierarchy(connectionKey: string): Promise<any>;
-  getObjectCounts(connectionKey: string, schema: string): Promise<ObjectCounts>;
-  listViews(connectionKey: string, schema: string): Promise<string[]>;
-  listMaterializedViews(connectionKey: string, schema: string): Promise<string[]>;
-  listFunctions(connectionKey: string, schema: string): Promise<string[]>;
-  listProcedures(connectionKey: string, schema: string): Promise<string[]>;
-  listTypes(connectionKey: string, schema: string): Promise<string[]>;
-  listTriggers(connectionKey: string, schema: string): Promise<string[]>;
+  getObjectCounts(connectionKey: string, schema: string, database?: string): Promise<ObjectCounts>;
+  listViews(connectionKey: string, schema: string, database?: string): Promise<string[]>;
+  listMaterializedViews(connectionKey: string, schema: string, database?: string): Promise<string[]>;
+  listFunctions(connectionKey: string, schema: string, database?: string): Promise<string[]>;
+  listProcedures(connectionKey: string, schema: string, database?: string): Promise<string[]>;
+  listTypes(connectionKey: string, schema: string, database?: string): Promise<string[]>;
+  listTriggers(connectionKey: string, schema: string, database?: string): Promise<string[]>;
   listColumns(connectionKey: string, schema: string, table: string): Promise<ColumnInfo[]>;
 
   // Function/Trigger operations

@@ -174,15 +174,44 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       const connection = await this.pool.getConnection();
       try {
         await connection.ping();
-        if (this._status === 'error') {
+        if (this._status === 'error' || this._status === 'disconnected') {
           this.setStatus('connected');
+          this.reconnectAttempts = 0;
         }
         return true;
       } finally {
         connection.release();
       }
     } catch (error) {
+      console.error('[MySQLAdapter] Health check failed:', error);
       const err = error instanceof Error ? error : new Error(String(error));
+
+      // Check if this is a connection error that requires reconnection
+      if (this.isConnectionError(err)) {
+        console.log('[MySQLAdapter] Connection error detected in ping, closing pool and attempting reconnection');
+
+        // Close the existing pool since it's in a bad state
+        if (this.pool) {
+          try {
+            await this.pool.end();
+          } catch (endError) {
+            console.error('[MySQLAdapter] Error ending pool:', endError);
+          }
+          this.pool = undefined;
+        }
+
+        // Attempt to reconnect
+        try {
+          const reconnected = await this.reconnect();
+          if (reconnected) {
+            console.log('[MySQLAdapter] Successfully reconnected after ping failure');
+            return true;
+          }
+        } catch (reconnectError) {
+          console.error('[MySQLAdapter] Reconnection failed:', reconnectError);
+        }
+      }
+
       this.setStatus('error', err);
       return false;
     }
@@ -195,9 +224,15 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       try {
         await this.ping();
       } catch (error) {
-        console.error('[MySQLAdapter] Health check error:', error);
+        // Catch any unhandled errors from ping to prevent them from bubbling up
+        // ping() already handles errors internally, so this is just a safety net
+        console.error('[MySQLAdapter] Unhandled health check error:', error);
         const err = error instanceof Error ? error : new Error(String(error));
-        this.setStatus('error', err);
+
+        // Only update status if it's a connection error
+        if (this.isConnectionError(err)) {
+          this.setStatus('error', err);
+        }
       }
     }, 30000); // Check every 30 seconds
   }
@@ -1208,6 +1243,32 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       dbType: 'mysql',
       quoteIdentifier: this.quoteIdentifier.bind(this),
     });
+  }
+
+  private isConnectionError(error: Error): boolean {
+    const connectionErrorPatterns = [
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'PROTOCOL_CONNECTION_LOST',
+      'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR',
+      'Connection lost',
+      'Connection refused',
+      'Connection timed out',
+      'connect ETIMEDOUT',
+      'Server has gone away',
+      'Lost connection to MySQL server',
+      'Too many connections',
+    ];
+
+    const errorMessage = error.message.toLowerCase();
+    const errorCode = (error as any).code;
+
+    return connectionErrorPatterns.some(pattern =>
+      errorMessage.includes(pattern.toLowerCase()) || errorCode === pattern
+    );
   }
 
   private async execute<T = any>(sql: string, params?: unknown[]): Promise<[T, mysql.FieldPacket[]]> {

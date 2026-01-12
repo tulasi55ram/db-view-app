@@ -586,9 +586,10 @@ export interface DatabaseAdapter extends EventEmitter {
   /**
    * List all tables in a schema/database
    * @param schema Schema name (or database name for databases without schemas)
+   * @param database Optional database name (for show all databases mode)
    * @returns Array of table information
    */
-  listTables(schema: string): Promise<TableInfo[]>;
+  listTables(schema: string, database?: string): Promise<TableInfo[]>;
 
   /**
    * Get table metadata for editing
@@ -648,42 +649,47 @@ export interface DatabaseAdapter extends EventEmitter {
    * @param schema Schema name
    * @returns Array of view names
    */
-  listViews?(schema: string): Promise<string[]>;
+  listViews?(schema: string, database?: string): Promise<string[]>;
 
   /**
    * List materialized views in a schema (if supported)
    * @param schema Schema name
+   * @param database Optional database name (for show all databases mode)
    * @returns Array of materialized view names
    */
-  listMaterializedViews?(schema: string): Promise<string[]>;
+  listMaterializedViews?(schema: string, database?: string): Promise<string[]>;
 
   /**
    * List functions in a schema (if supported)
    * @param schema Schema name
+   * @param database Optional database name (for show all databases mode)
    * @returns Array of function names
    */
-  listFunctions?(schema: string): Promise<string[]>;
+  listFunctions?(schema: string, database?: string): Promise<string[]>;
 
   /**
    * List stored procedures in a schema (if supported)
    * @param schema Schema name
+   * @param database Optional database name (for show all databases mode)
    * @returns Array of procedure names
    */
-  listProcedures?(schema: string): Promise<string[]>;
+  listProcedures?(schema: string, database?: string): Promise<string[]>;
 
   /**
    * List user-defined types in a schema (if supported)
    * @param schema Schema name
+   * @param database Optional database name (for show all databases mode)
    * @returns Array of type names
    */
-  listTypes?(schema: string): Promise<string[]>;
+  listTypes?(schema: string, database?: string): Promise<string[]>;
 
   /**
    * List triggers in a schema (if supported)
    * @param schema Schema name
+   * @param database Optional database name (for show all databases mode)
    * @returns Array of trigger names
    */
-  listTriggers?(schema: string): Promise<string[]>;
+  listTriggers?(schema: string, database?: string): Promise<string[]>;
 
   /**
    * Get detailed information about a function or procedure (if supported)
@@ -853,7 +859,7 @@ export interface DatabaseAdapter extends EventEmitter {
    * @param schema Schema name
    * @returns Object counts
    */
-  getObjectCounts(schema: string): Promise<ObjectCounts>;
+  getObjectCounts(schema: string, database?: string): Promise<ObjectCounts>;
 
   /**
    * Get currently running queries (if supported)

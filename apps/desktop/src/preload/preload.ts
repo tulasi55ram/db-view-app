@@ -15,16 +15,16 @@ const electronAPI: ElectronAPI = {
 
   // Schema operations
   listDatabases: (connectionKey) => ipcRenderer.invoke("database:list", connectionKey),
-  listSchemas: (connectionKey) => ipcRenderer.invoke("schema:list", connectionKey),
-  listTables: (connectionKey, schema) => ipcRenderer.invoke("schema:getTables", connectionKey, schema),
+  listSchemas: (connectionKey, database) => ipcRenderer.invoke("schema:list", connectionKey, database),
+  listTables: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getTables", connectionKey, schema, database),
   getHierarchy: (connectionKey) => ipcRenderer.invoke("schema:getHierarchy", connectionKey),
-  getObjectCounts: (connectionKey, schema) => ipcRenderer.invoke("schema:getObjectCounts", connectionKey, schema),
-  listViews: (connectionKey, schema) => ipcRenderer.invoke("schema:getViews", connectionKey, schema),
-  listMaterializedViews: (connectionKey, schema) => ipcRenderer.invoke("schema:getMaterializedViews", connectionKey, schema),
-  listFunctions: (connectionKey, schema) => ipcRenderer.invoke("schema:getFunctions", connectionKey, schema),
-  listProcedures: (connectionKey, schema) => ipcRenderer.invoke("schema:getProcedures", connectionKey, schema),
-  listTypes: (connectionKey, schema) => ipcRenderer.invoke("schema:getTypes", connectionKey, schema),
-  listTriggers: (connectionKey, schema) => ipcRenderer.invoke("schema:getTriggers", connectionKey, schema),
+  getObjectCounts: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getObjectCounts", connectionKey, schema, database),
+  listViews: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getViews", connectionKey, schema, database),
+  listMaterializedViews: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getMaterializedViews", connectionKey, schema, database),
+  listFunctions: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getFunctions", connectionKey, schema, database),
+  listProcedures: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getProcedures", connectionKey, schema, database),
+  listTypes: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getTypes", connectionKey, schema, database),
+  listTriggers: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getTriggers", connectionKey, schema, database),
   listColumns: (connectionKey, schema, table) => ipcRenderer.invoke("table:getColumns", connectionKey, schema, table),
 
   // Function/Trigger operations
