@@ -97,6 +97,7 @@ type ObjectType = "tables" | "views" | "materializedViews" | "functions" | "proc
 
 type TreeNodeType =
   | "connection"
+  | "database"
   | "schema"
   | "objectTypeContainer"
   | "table"
@@ -114,6 +115,7 @@ interface TreeNode {
   name: string;
   connectionKey?: string;
   connectionName?: string; // Display name for the connection
+  database?: string; // Database name (for multi-database connections)
   schema?: string;
   table?: string;
   objectType?: ObjectType;
@@ -124,6 +126,7 @@ interface TreeNode {
   color?: string; // Connection color
   readOnly?: boolean; // Connection read-only status
   isLoading?: boolean;
+  showAllDatabases?: boolean; // Whether connection shows all databases
   // Table metadata
   rowCount?: number;
   sizeBytes?: number;
@@ -297,6 +300,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
           dbType: conn.config.dbType,
           color: conn.config.color,
           readOnly: conn.config.readOnly,
+          showAllDatabases: (conn.config as any).showAllDatabases,
           // Preserve existing children if they exist
           children: existingNode?.children || [],
         };
@@ -383,16 +387,37 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
     return config.dbType;
   };
 
-  const loadSchemas = async (connectionKey: string, connectionName: string, dbType?: string): Promise<TreeNode[]> => {
+  const loadDatabases = async (connectionKey: string, connectionName: string, dbType?: string): Promise<TreeNode[]> => {
+    if (!api) return [];
+    try {
+      const databases = await api.listDatabases(connectionKey);
+      return databases.map((database: string) => ({
+        id: `${connectionKey}:database:${database}`,
+        type: "database" as const,
+        name: database,
+        connectionKey,
+        connectionName,
+        database,
+        dbType,
+        children: [],
+      }));
+    } catch (error) {
+      console.error("Failed to load databases:", error);
+      return [];
+    }
+  };
+
+  const loadSchemas = async (connectionKey: string, connectionName: string, database?: string, dbType?: string): Promise<TreeNode[]> => {
     if (!api) return [];
     try {
       const schemas = await api.listSchemas(connectionKey);
       return schemas.map((schema: string) => ({
-        id: `${connectionKey}:schema:${schema}`,
+        id: `${connectionKey}:${database ? `database:${database}:` : ''}schema:${schema}`,
         type: "schema" as const,
         name: schema,
         connectionKey,
         connectionName,
+        database,
         schema,
         dbType,
         children: [],
@@ -638,9 +663,13 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
               // Use empty string as the "schema" since these DBs don't have schemas
               const containers = await loadObjectTypeContainers(node.connectionKey, node.connectionName, "", node.dbType);
               setTreeData((prev) => updateTreeNode(prev, node.id, { children: containers, status: "connected" }));
+            } else if (node.showAllDatabases) {
+              // For SQL databases with showAllDatabases, load database list first
+              const databases = await loadDatabases(node.connectionKey, node.connectionName, node.dbType);
+              setTreeData((prev) => updateTreeNode(prev, node.id, { children: databases, status: "connected" }));
             } else {
               // For SQL databases, load schemas first
-              const schemas = await loadSchemas(node.connectionKey, node.connectionName, node.dbType);
+              const schemas = await loadSchemas(node.connectionKey, node.connectionName, undefined, node.dbType);
               setTreeData((prev) => updateTreeNode(prev, node.id, { children: schemas, status: "connected" }));
             }
           }
@@ -657,11 +686,32 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             return next;
           });
         }
+      } else if (node.type === "database" && (!node.children || node.children.length === 0) && node.connectionKey && node.connectionName && node.database) {
+        // Handle database node expansion - load schemas for this database
+        setLoadingNodes((prev) => new Set(prev).add(node.id));
+        try {
+          const schemas = await loadSchemas(node.connectionKey, node.connectionName, node.database, node.dbType);
+          setTreeData((prev) => updateTreeNode(prev, node.id, { children: schemas }));
+        } catch (error) {
+          console.error("Failed to load database schemas:", error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          toast.error(`Failed to load database schemas: ${errorMessage}`);
+        } finally {
+          setLoadingNodes((prev) => {
+            const next = new Set(prev);
+            next.delete(node.id);
+            return next;
+          });
+        }
       } else if (node.type === "schema" && (!node.children || node.children.length === 0) && node.connectionKey && node.connectionName && node.schema) {
         setLoadingNodes((prev) => new Set(prev).add(node.id));
         try {
           const containers = await loadObjectTypeContainers(node.connectionKey, node.connectionName, node.schema, node.dbType);
           setTreeData((prev) => updateTreeNode(prev, node.id, { children: containers }));
+        } catch (error) {
+          console.error("Failed to load schema objects:", error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          toast.error(`Failed to load schema objects: ${errorMessage}`);
         } finally {
           setLoadingNodes((prev) => {
             const next = new Set(prev);
@@ -674,6 +724,10 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         try {
           const objects = await loadObjectsForType(node.connectionKey, node.connectionName, node.schema, node.objectType, node.dbType);
           setTreeData((prev) => updateTreeNode(prev, node.id, { children: objects }));
+        } catch (error) {
+          console.error("Failed to load objects:", error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          toast.error(`Failed to load objects: ${errorMessage}`);
         } finally {
           setLoadingNodes((prev) => {
             const next = new Set(prev);
@@ -687,9 +741,14 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         try {
           const columns = await loadColumns(node.connectionKey, node.connectionName, node.schema, node.table);
           setTreeData((prev) => updateTreeNode(prev, node.id, { children: columns }));
+        } catch (error) {
+          console.error("Failed to load table columns:", error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          toast.error(`Failed to load columns: ${errorMessage}`);
         } finally {
           setLoadingNodes((prev) => {
             const next = new Set(prev);
+            next.delete(node.id);
             return next;
           });
         }
@@ -791,9 +850,12 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
     switch (node.type) {
       case "connection":
         return Database;
+      case "database":
+        return Database;
       case "schema":
         return Folder;
       case "objectTypeContainer":
+
         switch (node.objectType) {
           case "tables": return Table2;
           case "views": return Eye;
@@ -834,6 +896,8 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
           case "error": return "text-red-400";
           default: return "text-text-tertiary";
         }
+      case "database":
+        return "text-cyan-400";
       case "schema":
         return "text-purple-400";
       case "objectTypeContainer":
@@ -871,6 +935,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
   const isExpandable = (node: TreeNode): boolean => {
     switch (node.type) {
       case "connection":
+      case "database":
       case "schema":
       case "table":
         return true;
@@ -973,23 +1038,46 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
               >
               {/* Expand/Collapse Icon */}
               {hasChildren ? (
-                isLoading ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-text-tertiary flex-shrink-0" />
-                ) : isExpanded ? (
-                  <div
-                    className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0 hover:text-text-primary cursor-pointer"
-                    onClick={handleChevronClick}
-                  >
-                    <ChevronDown className="w-full h-full" />
-                  </div>
-                ) : (
-                  <div
-                    className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0 hover:text-text-primary cursor-pointer"
-                    onClick={handleChevronClick}
-                  >
-                    <ChevronRight className="w-full h-full" />
-                  </div>
-                )
+                <div className="w-3.5 h-3.5 flex-shrink-0 relative">
+                  <AnimatePresence mode="wait" initial={false}>
+                    {isLoading ? (
+                      <motion.div
+                        key="loading"
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.8 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute inset-0"
+                      >
+                        <RefreshCw className="w-full h-full animate-spin text-text-tertiary" />
+                      </motion.div>
+                    ) : isExpanded ? (
+                      <motion.div
+                        key="expanded"
+                        initial={{ opacity: 0, rotate: -90 }}
+                        animate={{ opacity: 1, rotate: 0 }}
+                        exit={{ opacity: 0, rotate: -90 }}
+                        transition={{ duration: 0.2, ease: "easeOut" }}
+                        className="absolute inset-0 text-text-tertiary hover:text-text-primary cursor-pointer transition-colors"
+                        onClick={handleChevronClick}
+                      >
+                        <ChevronDown className="w-full h-full" />
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key="collapsed"
+                        initial={{ opacity: 0, rotate: 90 }}
+                        animate={{ opacity: 1, rotate: 0 }}
+                        exit={{ opacity: 0, rotate: 90 }}
+                        transition={{ duration: 0.2, ease: "easeOut" }}
+                        className="absolute inset-0 text-text-tertiary hover:text-text-primary cursor-pointer transition-colors"
+                        onClick={handleChevronClick}
+                      >
+                        <ChevronRight className="w-full h-full" />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               ) : (
                 <span className="w-3.5 flex-shrink-0" />
               )}

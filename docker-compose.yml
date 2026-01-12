@@ -11,7 +11,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./docker/postgres/init-multi-db.sql:/docker-entrypoint-initdb.d/01-init-multi-db.sql:ro
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/02-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dbview -d dbview_dev"]
       interval: 5s
@@ -31,7 +32,8 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./docker/mysql/init-multi-db.sql:/docker-entrypoint-initdb.d/01-init-multi-db.sql:ro
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/02-init.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "dbview", "-pdbview123"]
       interval: 5s
@@ -51,7 +53,8 @@ services:
       - "3307:3306"
     volumes:
       - mariadb_data:/var/lib/mysql
-      - ./docker/mariadb/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./docker/mariadb/init-multi-db.sql:/docker-entrypoint-initdb.d/01-init-multi-db.sql:ro
+      - ./docker/mariadb/init.sql:/docker-entrypoint-initdb.d/02-init.sql:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s

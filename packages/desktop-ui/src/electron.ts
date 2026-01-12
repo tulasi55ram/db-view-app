@@ -48,6 +48,7 @@ export interface ElectronAPI {
   disconnectFromDatabase(connectionKey: string): Promise<void>;
 
   // Schema operations
+  listDatabases(connectionKey: string): Promise<string[]>;
   listSchemas(connectionKey: string): Promise<string[]>;
   listTables(connectionKey: string, schema: string): Promise<TableInfo[]>;
   getHierarchy(connectionKey: string): Promise<unknown>;

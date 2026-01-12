@@ -31,6 +31,7 @@ export interface PostgresConnectionConfig {
   user: string;
   password?: string;
   database: string;
+  showAllDatabases?: boolean; // When true, show all databases instead of just one
   ssl?: boolean | SSLConfig;
   sslMode?: PostgresSslMode; // SSL verification mode
   savePassword?: boolean;
@@ -54,6 +55,7 @@ export interface MySQLConnectionConfig {
   user: string;
   password?: string;
   database: string;
+  showAllDatabases?: boolean; // When true, show all databases instead of just one
   ssl?: boolean | SSLConfig;
   sslMode?: MySqlSslMode; // SSL verification mode
   charset?: string; // Default: 'utf8mb4'
@@ -79,6 +81,7 @@ export interface MariaDBConnectionConfig {
   user: string;
   password?: string;
   database: string;
+  showAllDatabases?: boolean; // When true, show all databases instead of just one
   ssl?: boolean | SSLConfig;
   sslMode?: MariaDBSslMode; // SSL verification mode
   charset?: string; // Default: 'utf8mb4'
@@ -98,6 +101,7 @@ export interface SQLServerConnectionConfig {
   user?: string;
   password?: string;
   database: string;
+  showAllDatabases?: boolean; // When true, show all databases instead of just one
   instanceName?: string; // e.g., 'SQLEXPRESS'
   authenticationType: 'sql' | 'windows';
   domain?: string; // For Windows Authentication
