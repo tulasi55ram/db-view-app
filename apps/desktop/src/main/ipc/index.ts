@@ -154,6 +154,17 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
 
   // ==================== Schema Operations ====================
 
+  ipcMain.handle("database:list", async (_event, connectionKey: string) => {
+    const adapter = connectionManager.getAdapter(connectionKey);
+    if (!adapter) {
+      throw new Error(`Not connected: ${connectionKey}`);
+    }
+    if (!adapter.listDatabases) {
+      throw new Error(`listDatabases not supported for this database type`);
+    }
+    return adapter.listDatabases();
+  });
+
   ipcMain.handle("schema:list", async (_event, connectionKey: string) => {
     const adapter = connectionManager.getAdapter(connectionKey);
     if (!adapter) {

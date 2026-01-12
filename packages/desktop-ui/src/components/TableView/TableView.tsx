@@ -1839,7 +1839,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           <table key={`${connectionKey}-${schema}-${table}-${visibilityKey}`} className="w-full text-sm">
             <thead className="sticky top-0 z-10 bg-bg-tertiary border-b border-border shadow-sm">
               <tr style={{ display: "flex" }}>
-                <th className="px-3 py-2 bg-bg-tertiary" style={{ width: 40, flexShrink: 0, display: "flex", alignItems: "center" }}>
+                <th className="px-3 py-2 bg-bg-tertiary border-r border-border" style={{ width: 40, flexShrink: 0, display: "flex", alignItems: "center" }}>
                   <input
                     type="checkbox"
                     checked={selectedRows.size === rows.length && rows.length > 0}
@@ -1851,7 +1851,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                 {columns.map((column) => (
                   <th
                     key={column}
-                    className="group text-left font-medium text-text-primary whitespace-nowrap bg-bg-tertiary cursor-pointer hover:bg-bg-hover select-none transition-colors relative"
+                    className="group text-left font-medium text-text-primary whitespace-nowrap bg-bg-tertiary cursor-pointer hover:bg-bg-hover select-none transition-colors relative border-r border-border"
                     style={{ width: columnWidths[column] || 150, minWidth: 60, flexShrink: 0 }}
                     onClick={() => handleColumnSort(column)}
                     title={`Sort by ${column}${sortColumn === column ? (sortDirection === "ASC" ? " (ascending)" : " (descending)") : ""}`}
@@ -1912,7 +1912,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                       display: "flex",
                     }}
                   >
-                    <td className="px-3 py-2" style={{ width: 40, flexShrink: 0, display: "flex", alignItems: "center" }}>
+                    <td className="px-3 py-2 border-r border-border" style={{ width: 40, flexShrink: 0, display: "flex", alignItems: "center" }}>
                       <input
                         type="checkbox"
                         checked={selectedRows.has(rowIndex)}
@@ -1936,7 +1936,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                         <td
                           key={column}
                           className={cn(
-                            "px-3 py-2 text-text-primary whitespace-nowrap relative overflow-hidden",
+                            "px-3 py-2 text-text-primary whitespace-nowrap relative overflow-hidden border-r border-border",
                             !isEditing && "cursor-pointer hover:bg-bg-tertiary/50",
                             hasPendingEdit && "border-2 border-orange-500 bg-orange-500/10",
                             isFocused && !hasPendingEdit && "ring-1 ring-accent/50 bg-accent/5"

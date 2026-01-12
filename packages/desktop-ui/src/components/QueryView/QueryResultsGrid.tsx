@@ -146,9 +146,9 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
           <thead className="sticky top-0 bg-bg-tertiary border-b border-border z-10">
             <tr>
               {/* Row number column */}
-              <th className="px-3 py-2 text-left font-medium text-text-secondary whitespace-nowrap w-12">#</th>
+              <th className="px-3 py-2 text-left font-medium text-text-secondary whitespace-nowrap w-12 border-r border-border">#</th>
               {columns.map((column) => (
-                <th key={column} className="px-3 py-2 text-left font-medium text-text-primary whitespace-nowrap">
+                <th key={column} className="px-3 py-2 text-left font-medium text-text-primary whitespace-nowrap border-r border-border">
                   {column}
                 </th>
               ))}
@@ -158,13 +158,13 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
             {rows.map((row, index) => (
               <tr key={index} className="border-b border-border hover:bg-bg-hover transition-colors">
                 {/* Row number */}
-                <td className="px-3 py-2 text-text-tertiary whitespace-nowrap font-mono text-xs w-12">
+                <td className="px-3 py-2 text-text-tertiary whitespace-nowrap font-mono text-xs w-12 border-r border-border">
                   {index + 1}
                 </td>
                 {columns.map((column) => (
                   <td
                     key={column}
-                    className="px-3 py-2 whitespace-nowrap"
+                    className="px-3 py-2 whitespace-nowrap border-r border-border"
                   >
                     <CellValue value={row[column]} />
                   </td>

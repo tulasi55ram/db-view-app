@@ -127,6 +127,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
   const [cassConsistency, setCassConsistency] = useState<"one" | "quorum" | "localQuorum" | "all">("localQuorum");
   const [color, setColor] = useState("#3B82F6"); // Default blue
   const [readOnly, setReadOnly] = useState(false);
+  const [showAllDatabases, setShowAllDatabases] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingConnection, setIsLoadingConnection] = useState(false);
@@ -194,6 +195,9 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           if ((config as any).readOnly !== undefined) {
             setReadOnly((config as any).readOnly);
           }
+          if ((config as any).showAllDatabases !== undefined) {
+            setShowAllDatabases((config as any).showAllDatabases);
+          }
         }
       })
       .catch((err) => {
@@ -257,6 +261,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           database,
           user,
           password,
+          showAllDatabases: showAllDatabases || undefined,
           ssl: ssl || undefined,
           sslMode: ssl ? sslMode : undefined,
           color,
@@ -271,6 +276,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           database,
           user,
           password,
+          showAllDatabases: showAllDatabases || undefined,
           ssl: ssl || undefined,
           color,
           readOnly
@@ -284,6 +290,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           database,
           user,
           password,
+          showAllDatabases: showAllDatabases || undefined,
           ssl: ssl || undefined,
           color,
           readOnly
@@ -297,6 +304,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           database,
           user: authenticationType === "sql" ? user : undefined,
           password: authenticationType === "sql" ? password : undefined,
+          showAllDatabases: showAllDatabases || undefined,
           instanceName: instanceName || undefined,
           authenticationType,
           domain: authenticationType === "windows" ? domain : undefined,
@@ -570,14 +578,36 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
 
             {/* Database */}
             {needsDatabase && (
-              <FormField label="Database">
-                <StyledInput
-                  type="text"
-                  value={database}
-                  onChange={(e) => setDatabase(e.target.value)}
-                  placeholder="database_name"
-                />
-              </FormField>
+              <>
+                <FormField label="Database">
+                  <StyledInput
+                    type="text"
+                    value={database}
+                    onChange={(e) => setDatabase(e.target.value)}
+                    placeholder="database_name"
+                    disabled={showAllDatabases && (dbType === "postgres" || dbType === "mysql" || dbType === "mariadb" || dbType === "sqlserver")}
+                  />
+                </FormField>
+
+                {/* Show All Databases Checkbox - only for SQL databases that support it */}
+                {(dbType === "postgres" || dbType === "mysql" || dbType === "mariadb" || dbType === "sqlserver") && (
+                  <div className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      id="showAllDatabases"
+                      checked={showAllDatabases}
+                      onChange={(e) => setShowAllDatabases(e.target.checked)}
+                      className="mt-1 rounded"
+                    />
+                    <label htmlFor="showAllDatabases" className="text-sm text-text-secondary cursor-pointer select-none">
+                      <div className="text-text-primary font-medium">Show all databases</div>
+                      <div className="text-xs text-text-tertiary mt-0.5">
+                        Display all databases on the server in the sidebar tree. Great for browsing multiple databases with the same credentials.
+                      </div>
+                    </label>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Redis Database */}

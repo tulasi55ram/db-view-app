@@ -14,6 +14,7 @@ const electronAPI: ElectronAPI = {
   saveConnectionOrder: (order) => ipcRenderer.invoke("connections:saveOrder", order),
 
   // Schema operations
+  listDatabases: (connectionKey) => ipcRenderer.invoke("database:list", connectionKey),
   listSchemas: (connectionKey) => ipcRenderer.invoke("schema:list", connectionKey),
   listTables: (connectionKey, schema) => ipcRenderer.invoke("schema:getTables", connectionKey, schema),
   getHierarchy: (connectionKey) => ipcRenderer.invoke("schema:getHierarchy", connectionKey),
