@@ -314,7 +314,8 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
       .filter((db: string) => !systemDbs.includes(db));
   }
 
-  async listTables(schema: string): Promise<TableInfo[]> {
+  async listTables(schema: string, _database?: string): Promise<TableInfo[]> {
+    // MySQL doesn't need the database parameter - information_schema is global
     const query = `
       SELECT
         table_name as name,
@@ -335,7 +336,8 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     }));
   }
 
-  async listViews(schema: string): Promise<string[]> {
+  async listViews(schema: string, _database?: string): Promise<string[]> {
+    // MySQL doesn't need the database parameter - information_schema is global
     const query = `
       SELECT table_name
       FROM information_schema.tables
@@ -456,7 +458,8 @@ export class MySQLAdapter extends EventEmitter implements DatabaseAdapter {
     });
   }
 
-  async getObjectCounts(schema: string): Promise<ObjectCounts> {
+  async getObjectCounts(schema: string, _database?: string): Promise<ObjectCounts> {
+    // MySQL doesn't need the database parameter - information_schema is global
     const tablesQuery = `
       SELECT COUNT(*) as count
       FROM information_schema.tables

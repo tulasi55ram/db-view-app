@@ -270,15 +270,15 @@ export class ConnectionManager {
       throw new Error(`Connection config not found for key: ${connectionKey}`);
     }
 
-    // Create a new config with the specific database
-    const dbSpecificConfig = {
+    // Create a key for this database-specific connection
+    // We create a temporary config just to generate the key
+    // Handle database type conversion (Redis uses number, others use string)
+    const tempConfig: any = {
       ...originalConfig,
-      database,
-      name: `${originalConfig.name}:${database}` // Make the name unique
-    } as StoredConnectionConfig;
-
-    // Get the key for this database-specific connection
-    const dbSpecificKey = this.getConnectionKey(dbSpecificConfig);
+      database: originalConfig.dbType === 'redis' ? parseInt(database, 10) : database,
+      name: `${originalConfig.name}:${database}` // Make the name unique for the key
+    };
+    const dbSpecificKey = this.getConnectionKey(tempConfig);
 
     // Check if we already have an adapter for this database
     const existingAdapter = this.adapters.get(dbSpecificKey);
@@ -286,9 +286,39 @@ export class ConnectionManager {
       return existingAdapter;
     }
 
+    // Get full config with password from the ORIGINAL connection (not the temp one)
+    const fullOriginalConfig = await this.getFullConnectionConfig(originalConfig);
+
+    // Now create the database-specific config with the password included
+    // Handle database type conversion (Redis uses number, others use string)
+    const dbSpecificConfig: any = {
+      ...fullOriginalConfig,
+      database: originalConfig.dbType === 'redis' ? parseInt(database, 10) : database,
+      // Don't change the name - keep original so it doesn't affect password lookup
+    };
+
     // Create a new adapter for this database
     console.log(`[ConnectionManager] Creating adapter for database: ${database} (key: ${dbSpecificKey})`);
-    return this.getOrCreateAdapter(dbSpecificConfig);
+
+    try {
+      this.connectionStatus.set(dbSpecificKey, "connecting");
+      const adapter = DatabaseAdapterFactory.create(dbSpecificConfig as DatabaseConnectionConfig);
+
+      await adapter.connect();
+      this.adapters.set(dbSpecificKey, adapter);
+      this.connectionStatus.set(dbSpecificKey, "connected");
+
+      // Start health checks
+      adapter.startHealthCheck();
+
+      // Store config for reconnection (use the original config, not the db-specific one)
+      this.connectionConfigs.set(dbSpecificKey, originalConfig as StoredConnectionConfig);
+
+      return adapter;
+    } catch (error) {
+      this.connectionStatus.set(dbSpecificKey, "error");
+      throw error;
+    }
   }
 
   /**

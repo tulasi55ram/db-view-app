@@ -370,7 +370,8 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
     return result.rows.map((row) => row.datname);
   }
 
-  async listSchemas(): Promise<string[]> {
+  async listSchemas(_database?: string): Promise<string[]> {
+    // PostgreSQL database switching is handled by ConnectionManager creating new connections
     const result = await this.query<{ schema_name: string }>(
       `select schema_name
        from information_schema.schemata
@@ -382,7 +383,8 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Table Operations ====================
 
-  async listTables(schema: string): Promise<TableInfo[]> {
+  async listTables(schema: string, _database?: string): Promise<TableInfo[]> {
+    // PostgreSQL database switching is handled by ConnectionManager creating new connections
     const result = await this.query<TableListRow>(
       `SELECT
         t.table_name,
@@ -672,7 +674,8 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
 
   // ==================== Optional Objects ====================
 
-  async listViews(schema: string): Promise<string[]> {
+  async listViews(schema: string, _database?: string): Promise<string[]> {
+    // PostgreSQL database switching is handled by ConnectionManager creating new connections
     const result = await this.query<{ table_name: string }>(
       `select table_name
        from information_schema.views
@@ -683,7 +686,8 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
     return result.rows.map((row) => row.table_name);
   }
 
-  async listMaterializedViews(schema: string): Promise<string[]> {
+  async listMaterializedViews(schema: string, _database?: string): Promise<string[]> {
+    // PostgreSQL database switching is handled by ConnectionManager creating new connections
     const result = await this.query<{ matviewname: string }>(
       `select matviewname
        from pg_matviews
@@ -694,7 +698,8 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
     return result.rows.map((row) => row.matviewname);
   }
 
-  async listFunctions(schema: string): Promise<string[]> {
+  async listFunctions(schema: string, _database?: string): Promise<string[]> {
+    // PostgreSQL database switching is handled by ConnectionManager creating new connections
     const result = await this.query<{ proname: string }>(
       `select p.proname
        from pg_proc p
@@ -706,7 +711,8 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
     return result.rows.map((row) => row.proname);
   }
 
-  async listProcedures(schema: string): Promise<string[]> {
+  async listProcedures(schema: string, _database?: string): Promise<string[]> {
+    // PostgreSQL database switching is handled by ConnectionManager creating new connections
     const result = await this.query<{ proname: string }>(
       `select p.proname
        from pg_proc p
@@ -718,7 +724,8 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
     return result.rows.map((row) => row.proname);
   }
 
-  async listTypes(schema: string): Promise<string[]> {
+  async listTypes(schema: string, _database?: string): Promise<string[]> {
+    // PostgreSQL database switching is handled by ConnectionManager creating new connections
     const result = await this.query<{ typname: string }>(
       `select t.typname
        from pg_type t
@@ -730,7 +737,8 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
     return result.rows.map((row) => row.typname);
   }
 
-  async listTriggers(schema: string): Promise<string[]> {
+  async listTriggers(schema: string, _database?: string): Promise<string[]> {
+    // PostgreSQL database switching is handled by ConnectionManager creating new connections
     const result = await this.query<{ tgname: string }>(
       `select t.tgname
        from pg_trigger t
@@ -1506,7 +1514,8 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
     return parseInt(result.rows[0]?.size ?? "0", 10);
   }
 
-  async getObjectCounts(schema: string): Promise<ObjectCounts> {
+  async getObjectCounts(schema: string, _database?: string): Promise<ObjectCounts> {
+    // PostgreSQL database switching is handled by ConnectionManager creating new connections
     const tablesResult = await this.query<{ count: string }>(
       `select count(*) as count
        from information_schema.tables
