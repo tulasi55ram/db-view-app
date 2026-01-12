@@ -261,7 +261,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           database,
           user,
           password,
-          showAllDatabases: showAllDatabases || undefined,
+          showAllDatabases,
           ssl: ssl || undefined,
           sslMode: ssl ? sslMode : undefined,
           color,
@@ -276,7 +276,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           database,
           user,
           password,
-          showAllDatabases: showAllDatabases || undefined,
+          showAllDatabases,
           ssl: ssl || undefined,
           color,
           readOnly
@@ -290,7 +290,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           database,
           user,
           password,
-          showAllDatabases: showAllDatabases || undefined,
+          showAllDatabases,
           ssl: ssl || undefined,
           color,
           readOnly
@@ -304,7 +304,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           database,
           user: authenticationType === "sql" ? user : undefined,
           password: authenticationType === "sql" ? password : undefined,
-          showAllDatabases: showAllDatabases || undefined,
+          showAllDatabases,
           instanceName: instanceName || undefined,
           authenticationType,
           domain: authenticationType === "windows" ? domain : undefined,
@@ -398,6 +398,11 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
     setIsSaving(true);
     try {
       const config = buildConfig();
+      console.log(`Saving connection with config:`, {
+        name: config.name,
+        dbType: config.dbType,
+        showAllDatabases: (config as any).showAllDatabases,
+      });
       await api.saveConnection(config);
       onSave();
     } catch (error) {

@@ -326,6 +326,17 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
     };
   }
 
+  async listDatabases(): Promise<string[]> {
+    const result = await this.query<{ datname: string }>(
+      `SELECT datname
+       FROM pg_database
+       WHERE datistemplate = false
+       AND datname != 'postgres'
+       ORDER BY datname`
+    );
+    return result.rows.map((row) => row.datname);
+  }
+
   async listSchemas(): Promise<string[]> {
     const result = await this.query<{ schema_name: string }>(
       `select schema_name

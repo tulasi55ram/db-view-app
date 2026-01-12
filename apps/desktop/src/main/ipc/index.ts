@@ -159,10 +159,16 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
-    if (!adapter.listDatabases) {
-      throw new Error(`listDatabases not supported for this database type`);
+    console.log(`[IPC] database:list called for ${connectionKey}, adapter type: ${adapter.type}, has listDatabases: ${typeof adapter.listDatabases}`);
+
+    if (typeof adapter.listDatabases !== 'function') {
+      console.error(`[IPC] listDatabases is not a function for adapter type: ${adapter.type}`);
+      throw new Error(`listDatabases not supported for this database type: ${adapter.type}`);
     }
-    return adapter.listDatabases();
+
+    const databases = await adapter.listDatabases();
+    console.log(`[IPC] database:list returned ${databases.length} databases:`, databases);
+    return databases;
   });
 
   ipcMain.handle("schema:list", async (_event, connectionKey: string) => {
