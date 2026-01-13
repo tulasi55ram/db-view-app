@@ -274,7 +274,7 @@ export class ConnectionManager {
       throw new Error(`Connection config not found for key: ${connectionKey}`);
     }
 
-    console.log(`[ConnectionManager] Found original config: ${originalConfig.name}, original database: ${originalConfig.database}, target database: ${database}`);
+    console.log(`[ConnectionManager] Found original config: ${originalConfig.name}, original database: ${'database' in originalConfig ? originalConfig.database : 'N/A'}, target database: ${database}`);
 
     // Create a key for this database-specific connection
     // We create a temporary config just to generate the key
