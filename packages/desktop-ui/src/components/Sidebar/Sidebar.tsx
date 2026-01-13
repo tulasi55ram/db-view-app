@@ -561,6 +561,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionName,
             schema,
             dbType,
+            database,
           }));
         }
         case "materializedViews": {
@@ -573,6 +574,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionName,
             schema,
             dbType,
+            database,
           }));
         }
         case "functions": {
@@ -585,6 +587,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionName,
             schema,
             dbType,
+            database,
           }));
         }
         case "procedures": {
@@ -597,6 +600,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionName,
             schema,
             dbType,
+            database,
           }));
         }
         case "types": {
@@ -609,6 +613,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionName,
             schema,
             dbType,
+            database,
           }));
         }
         default:

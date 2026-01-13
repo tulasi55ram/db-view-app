@@ -324,6 +324,15 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   // ==================== Table Operations ====================
 
   ipcMain.handle("table:loadRows", async (_event, params: LoadTableRowsParams) => {
+    console.log(`[IPC] table:loadRows called with params:`, {
+      connectionKey: params.connectionKey,
+      schema: params.schema,
+      table: params.table,
+      database: params.database,
+      limit: params.limit,
+      offset: params.offset
+    });
+
     const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);

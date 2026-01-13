@@ -330,6 +330,15 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
     try {
       setLoading(true);
 
+      console.log(`[TableView] Loading data for table:`, {
+        connectionKey,
+        schema,
+        table,
+        database,
+        limit,
+        offset
+      });
+
       // First load metadata to get primary key columns
       const metadataResult = await api.getTableMetadata({
         connectionKey,
