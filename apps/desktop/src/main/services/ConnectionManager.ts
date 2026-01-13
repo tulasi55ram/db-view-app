@@ -258,8 +258,11 @@ export class ConnectionManager {
    * Otherwise, returns the existing adapter.
    */
   async getAdapterForDatabase(connectionKey: string, database?: string): Promise<DatabaseAdapter | undefined> {
+    console.log(`[ConnectionManager] getAdapterForDatabase called with connectionKey: ${connectionKey}, database: ${database}`);
+
     // If no database specified, return existing adapter
     if (!database) {
+      console.log(`[ConnectionManager] No database specified, returning existing adapter for key: ${connectionKey}`);
       return this.getAdapter(connectionKey);
     }
 
@@ -267,8 +270,11 @@ export class ConnectionManager {
     const connections = getAllConnections();
     const originalConfig = connections.find((c) => this.getConnectionKey(c as any) === connectionKey);
     if (!originalConfig) {
+      console.error(`[ConnectionManager] Connection config not found for key: ${connectionKey}`);
       throw new Error(`Connection config not found for key: ${connectionKey}`);
     }
+
+    console.log(`[ConnectionManager] Found original config: ${originalConfig.name}, original database: ${originalConfig.database}, target database: ${database}`);
 
     // Create a key for this database-specific connection
     // We create a temporary config just to generate the key
@@ -279,10 +285,12 @@ export class ConnectionManager {
       name: `${originalConfig.name}:${database}` // Make the name unique for the key
     };
     const dbSpecificKey = this.getConnectionKey(tempConfig);
+    console.log(`[ConnectionManager] Generated database-specific key: ${dbSpecificKey}`);
 
     // Check if we already have an adapter for this database
     const existingAdapter = this.adapters.get(dbSpecificKey);
     if (existingAdapter && existingAdapter.status === "connected") {
+      console.log(`[ConnectionManager] Reusing existing adapter for database: ${database}`);
       return existingAdapter;
     }
 
@@ -298,7 +306,13 @@ export class ConnectionManager {
     };
 
     // Create a new adapter for this database
-    console.log(`[ConnectionManager] Creating adapter for database: ${database} (key: ${dbSpecificKey})`);
+    console.log(`[ConnectionManager] Creating NEW adapter for database: ${database} with config:`, {
+      host: dbSpecificConfig.host,
+      port: dbSpecificConfig.port,
+      database: dbSpecificConfig.database,
+      user: dbSpecificConfig.user,
+      dbType: dbSpecificConfig.dbType
+    });
 
     try {
       this.connectionStatus.set(dbSpecificKey, "connecting");
@@ -307,6 +321,7 @@ export class ConnectionManager {
       await adapter.connect();
       this.adapters.set(dbSpecificKey, adapter);
       this.connectionStatus.set(dbSpecificKey, "connected");
+      console.log(`[ConnectionManager] Successfully created and connected adapter for database: ${database}`);
 
       // Start health checks
       adapter.startHealthCheck();
@@ -316,6 +331,7 @@ export class ConnectionManager {
 
       return adapter;
     } catch (error) {
+      console.error(`[ConnectionManager] Failed to create adapter for database: ${database}`, error);
       this.connectionStatus.set(dbSpecificKey, "error");
       throw error;
     }

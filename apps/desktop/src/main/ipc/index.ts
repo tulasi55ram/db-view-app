@@ -340,6 +340,14 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:getRowCount", async (_event, params: GetRowCountParams) => {
+    console.log(`[IPC] table:getRowCount called with params:`, {
+      connectionKey: params.connectionKey,
+      schema: params.schema,
+      table: params.table,
+      database: params.database,
+      hasFilters: !!params.filters && params.filters.length > 0
+    });
+
     const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);

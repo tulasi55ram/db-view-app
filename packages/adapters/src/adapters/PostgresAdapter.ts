@@ -535,6 +535,9 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
     const { filters = [], filterLogic = 'AND' } = options;
     const qualified = `${this.quoteIdentifier(schema)}.${this.quoteIdentifier(table)}`;
 
+    // Log which database we're connected to
+    console.log(`[PostgresAdapter] getTableRowCount called for ${qualified}, config database: ${this.config.database}`);
+
     // Build WHERE clause if filters are provided
     let sql = `SELECT COUNT(*) as count FROM ${qualified}`;
     let params: unknown[] = [];
@@ -546,6 +549,8 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
         params = filterParams;
       }
     }
+
+    console.log(`[PostgresAdapter] Executing count query: ${sql}`);
 
     // Always use COUNT(*) for accuracy instead of pg_class.reltuples estimate
     const countResult = await this.query<{ count: string }>(sql, params);
