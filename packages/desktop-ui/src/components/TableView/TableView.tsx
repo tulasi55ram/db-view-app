@@ -386,7 +386,7 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
 
   // Reset state when table changes to prevent data overlap
   useEffect(() => {
-    const newTableKey = `${connectionKey}-${schema}-${table}`;
+    const newTableKey = `${connectionKey}-${schema}-${table}-${database || ''}`;
 
     // Clear all data state immediately when switching tables
     setColumns([]);
@@ -421,7 +421,7 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
     }
     // Update the current table key to match - this triggers re-render with fresh state
     setCurrentTableKey(newTableKey);
-  }, [connectionKey, schema, table]);
+  }, [connectionKey, schema, table, database]);
 
   useEffect(() => {
     loadData();
