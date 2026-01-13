@@ -464,14 +464,17 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
       const isRedis = dbType === "redis";
       const isElasticsearch = dbType === "elasticsearch";
 
+      // Build ID prefix that includes database if present (for showAllDatabases mode)
+      const idPrefix = database ? `${connectionKey}:database:${database}:schema:${schema}` : `${connectionKey}:${schema}`;
+
       // For MongoDB, only show Collections (and optionally Views for aggregation pipelines)
       if (isMongoDB) {
         const containers: TreeNode[] = [
-          { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Collections", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, database, children: [] },
+          { id: `${idPrefix}:tables`, type: "objectTypeContainer", name: "Collections", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, database, children: [] },
         ];
         // Only show Views if there are any (MongoDB aggregation views)
         if (counts.views > 0) {
-          containers.push({ id: `${connectionKey}:${schema}:views`, type: "objectTypeContainer", name: "Views", objectType: "views", count: counts.views, connectionKey, connectionName, schema, dbType, database, children: [] });
+          containers.push({ id: `${idPrefix}:views`, type: "objectTypeContainer", name: "Views", objectType: "views", count: counts.views, connectionKey, connectionName, schema, dbType, database, children: [] });
         }
         return containers;
       }
@@ -479,7 +482,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
       // For Elasticsearch, only show Indices
       if (isElasticsearch) {
         const containers: TreeNode[] = [
-          { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Indices", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, database, children: [] },
+          { id: `${idPrefix}:tables`, type: "objectTypeContainer", name: "Indices", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, database, children: [] },
         ];
         return containers;
       }
@@ -487,7 +490,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
       // For Redis, only show Keys
       if (isRedis) {
         const containers: TreeNode[] = [
-          { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Keys", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, database, children: [] },
+          { id: `${idPrefix}:tables`, type: "objectTypeContainer", name: "Keys", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, database, children: [] },
         ];
         return containers;
       }
@@ -497,31 +500,31 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
       const isCassandra = dbType === "cassandra";
       if (isCassandra) {
         const containers: TreeNode[] = [
-          { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Tables", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, database, children: [] },
+          { id: `${idPrefix}:tables`, type: "objectTypeContainer", name: "Tables", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, database, children: [] },
         ];
         // Only show Materialized Views if there are any
         if (counts.materializedViews > 0) {
-          containers.push({ id: `${connectionKey}:${schema}:materializedViews`, type: "objectTypeContainer", name: "Materialized Views", objectType: "materializedViews", count: counts.materializedViews, connectionKey, connectionName, schema, dbType, database, children: [] });
+          containers.push({ id: `${idPrefix}:materializedViews`, type: "objectTypeContainer", name: "Materialized Views", objectType: "materializedViews", count: counts.materializedViews, connectionKey, connectionName, schema, dbType, database, children: [] });
         }
         // Only show Functions (UDFs) if there are any
         if (counts.functions > 0) {
-          containers.push({ id: `${connectionKey}:${schema}:functions`, type: "objectTypeContainer", name: "Functions", objectType: "functions", connectionKey, connectionName, schema, dbType, database, children: [] });
+          containers.push({ id: `${idPrefix}:functions`, type: "objectTypeContainer", name: "Functions", objectType: "functions", connectionKey, connectionName, schema, dbType, database, children: [] });
         }
         // Only show User-Defined Types if there are any
         if (counts.types > 0) {
-          containers.push({ id: `${connectionKey}:${schema}:types`, type: "objectTypeContainer", name: "User-Defined Types", objectType: "types", count: counts.types, connectionKey, connectionName, schema, dbType, database, children: [] });
+          containers.push({ id: `${idPrefix}:types`, type: "objectTypeContainer", name: "User-Defined Types", objectType: "types", count: counts.types, connectionKey, connectionName, schema, dbType, database, children: [] });
         }
         return containers;
       }
 
       // For SQL databases, show all object types
       const containers: TreeNode[] = [
-        { id: `${connectionKey}:${schema}:tables`, type: "objectTypeContainer", name: "Tables", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, database, children: [] },
-        { id: `${connectionKey}:${schema}:views`, type: "objectTypeContainer", name: "Views", objectType: "views", count: counts.views, connectionKey, connectionName, schema, dbType, database, children: [] },
-        { id: `${connectionKey}:${schema}:materializedViews`, type: "objectTypeContainer", name: "Materialized Views", objectType: "materializedViews", count: counts.materializedViews, connectionKey, connectionName, schema, dbType, database, children: [] },
-        { id: `${connectionKey}:${schema}:functions`, type: "objectTypeContainer", name: "Functions", objectType: "functions", count: counts.functions, connectionKey, connectionName, schema, dbType, database, children: [] },
-        { id: `${connectionKey}:${schema}:procedures`, type: "objectTypeContainer", name: "Procedures", objectType: "procedures", count: counts.procedures, connectionKey, connectionName, schema, dbType, database, children: [] },
-        { id: `${connectionKey}:${schema}:types`, type: "objectTypeContainer", name: "Types", objectType: "types", count: counts.types, connectionKey, connectionName, schema, dbType, database, children: [] },
+        { id: `${idPrefix}:tables`, type: "objectTypeContainer", name: "Tables", objectType: "tables", count: counts.tables, connectionKey, connectionName, schema, dbType, database, children: [] },
+        { id: `${idPrefix}:views`, type: "objectTypeContainer", name: "Views", objectType: "views", count: counts.views, connectionKey, connectionName, schema, dbType, database, children: [] },
+        { id: `${idPrefix}:materializedViews`, type: "objectTypeContainer", name: "Materialized Views", objectType: "materializedViews", count: counts.materializedViews, connectionKey, connectionName, schema, dbType, database, children: [] },
+        { id: `${idPrefix}:functions`, type: "objectTypeContainer", name: "Functions", objectType: "functions", count: counts.functions, connectionKey, connectionName, schema, dbType, database, children: [] },
+        { id: `${idPrefix}:procedures`, type: "objectTypeContainer", name: "Procedures", objectType: "procedures", count: counts.procedures, connectionKey, connectionName, schema, dbType, database, children: [] },
+        { id: `${idPrefix}:types`, type: "objectTypeContainer", name: "Types", objectType: "types", count: counts.types, connectionKey, connectionName, schema, dbType, database, children: [] },
       ];
       return containers;
     } catch (error) {
@@ -533,11 +536,14 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
   const loadObjectsForType = async (connectionKey: string, connectionName: string, schema: string, objectType: ObjectType, dbType?: string, database?: string): Promise<TreeNode[]> => {
     if (!api) return [];
     try {
+      // Build ID prefix that includes database if present (for showAllDatabases mode)
+      const idPrefix = database ? `${connectionKey}:database:${database}:schema:${schema}` : `${connectionKey}:${schema}`;
+
       switch (objectType) {
         case "tables": {
           const tables: TableInfo[] = await api.listTables(connectionKey, schema, database);
           return tables.map((table) => ({
-            id: `${connectionKey}:${schema}:table:${table.name}`,
+            id: `${idPrefix}:table:${table.name}`,
             type: "table" as const,
             name: table.name,
             connectionKey,
@@ -554,7 +560,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         case "views": {
           const views: string[] = await api.listViews(connectionKey, schema, database);
           return views.map((name) => ({
-            id: `${connectionKey}:${schema}:view:${name}`,
+            id: `${idPrefix}:view:${name}`,
             type: "view" as const,
             name,
             connectionKey,
@@ -567,7 +573,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         case "materializedViews": {
           const matViews: string[] = await api.listMaterializedViews(connectionKey, schema, database);
           return matViews.map((name) => ({
-            id: `${connectionKey}:${schema}:matview:${name}`,
+            id: `${idPrefix}:matview:${name}`,
             type: "materializedView" as const,
             name,
             connectionKey,
@@ -580,7 +586,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         case "functions": {
           const functions: string[] = await api.listFunctions(connectionKey, schema, database);
           return functions.map((name) => ({
-            id: `${connectionKey}:${schema}:function:${name}`,
+            id: `${idPrefix}:function:${name}`,
             type: "function" as const,
             name,
             connectionKey,
@@ -593,7 +599,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         case "procedures": {
           const procedures: string[] = await api.listProcedures(connectionKey, schema, database);
           return procedures.map((name) => ({
-            id: `${connectionKey}:${schema}:procedure:${name}`,
+            id: `${idPrefix}:procedure:${name}`,
             type: "procedure" as const,
             name,
             connectionKey,
@@ -606,7 +612,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         case "types": {
           const types: string[] = await api.listTypes(connectionKey, schema, database);
           return types.map((name) => ({
-            id: `${connectionKey}:${schema}:type:${name}`,
+            id: `${idPrefix}:type:${name}`,
             type: "type" as const,
             name,
             connectionKey,
@@ -625,12 +631,14 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
     }
   };
 
-  const loadColumns = async (connectionKey: string, connectionName: string, schema: string, table: string): Promise<TreeNode[]> => {
+  const loadColumns = async (connectionKey: string, connectionName: string, schema: string, table: string, database?: string): Promise<TreeNode[]> => {
     if (!api) return [];
     try {
       const columns: ColumnInfo[] = await api.listColumns(connectionKey, schema, table);
+      // Build ID prefix that includes database if present (for showAllDatabases mode)
+      const idPrefix = database ? `${connectionKey}:database:${database}:schema:${schema}` : `${connectionKey}:${schema}`;
       return columns.map((col) => ({
-        id: `${connectionKey}:${schema}:${table}:column:${col.name}`,
+        id: `${idPrefix}:${table}:column:${col.name}`,
         type: "column" as const,
         name: col.name,
         connectionKey,
@@ -813,7 +821,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         // Note: node.schema can be empty string for NoSQL databases (MongoDB, Redis)
         setLoadingNodes((prev) => new Set(prev).add(node.id));
         try {
-          const columns = await loadColumns(node.connectionKey, node.connectionName, node.schema, node.table);
+          const columns = await loadColumns(node.connectionKey, node.connectionName, node.schema, node.table, node.database);
           setTreeData((prev) => updateTreeNode(prev, node.id, { children: columns }));
         } catch (error) {
           console.error("Failed to load table columns:", error);
