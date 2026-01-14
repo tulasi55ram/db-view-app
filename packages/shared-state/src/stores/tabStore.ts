@@ -34,6 +34,7 @@ interface TabActions {
   findOrCreateTableTab: (params: {
     schema: string;
     table: string;
+    database?: string;
     connectionName?: string;
     connectionKey?: string;
     connectionColor?: string;
@@ -60,6 +61,7 @@ interface TabActions {
     schema: string;
     functionName: string;
     functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger';
+    database?: string;
     connectionName?: string;
     connectionKey?: string;
     connectionColor?: string;
@@ -180,6 +182,7 @@ export const useTabStore = create<TabState & TabActions>()(
         findOrCreateTableTab: ({
           schema,
           table,
+          database,
           connectionName,
           connectionKey,
           connectionColor,
@@ -196,6 +199,7 @@ export const useTabStore = create<TabState & TabActions>()(
               t.type === 'table' &&
               (t as TableTab).schema === schema &&
               (t as TableTab).table === table &&
+              (t as TableTab).database === database &&
               (connectionKey
                 ? t.connectionKey === connectionKey
                 : connectionName
@@ -216,6 +220,7 @@ export const useTabStore = create<TabState & TabActions>()(
             title: table, // Just the table name, not schema.table
             schema,
             table,
+            database,
             limit,
             offset: 0,
             totalRows: null,
@@ -306,6 +311,7 @@ export const useTabStore = create<TabState & TabActions>()(
           schema,
           functionName,
           functionType,
+          database,
           connectionName,
           connectionKey,
           connectionColor,
@@ -320,6 +326,7 @@ export const useTabStore = create<TabState & TabActions>()(
               (t as FunctionTab).schema === schema &&
               (t as FunctionTab).functionName === functionName &&
               (t as FunctionTab).functionType === functionType &&
+              (t as FunctionTab).database === database &&
               (connectionKey
                 ? t.connectionKey === connectionKey
                 : connectionName
@@ -341,6 +348,7 @@ export const useTabStore = create<TabState & TabActions>()(
             schema,
             functionName,
             functionType,
+            database,
             loading: true,
             createdAt: Date.now(),
             connectionName,

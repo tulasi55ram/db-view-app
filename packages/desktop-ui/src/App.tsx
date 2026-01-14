@@ -361,6 +361,7 @@ function AppContent() {
               connectionKey={tab.connectionKey}
               schema={tableTab.schema}
               table={tableTab.table}
+              database={tableTab.database}
             />
           </div>
         );

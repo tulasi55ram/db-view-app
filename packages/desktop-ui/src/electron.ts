@@ -232,18 +232,21 @@ export interface ExplainQueryParams {
 export interface GetViewsParams {
   schema: string;
   table: string;
+  database?: string;
 }
 
 export interface SaveViewParams {
   schema: string;
   table: string;
   view: SavedView;
+  database?: string;
 }
 
 export interface DeleteViewParams {
   schema: string;
   table: string;
   viewId: string;
+  database?: string;
 }
 
 export interface ExportDataParams {

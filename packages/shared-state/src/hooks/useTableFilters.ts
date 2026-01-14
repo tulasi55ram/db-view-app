@@ -198,11 +198,31 @@ export function useTableFilters(
   }, [conditions]);
 
   /**
-   * Valid conditions - those with columnName and operator set
+   * Valid conditions - those with columnName, operator, and required values set
    * Use these for actual queries
    */
   const validConditions = useMemo(() => {
-    return conditions.filter(c => c.columnName && c.operator);
+    return conditions.filter(c => {
+      // Must have columnName and operator
+      if (!c.columnName || !c.operator) {
+        return false;
+      }
+
+      // Operators that don't need a value
+      if (c.operator === 'is_null' || c.operator === 'is_not_null') {
+        return true;
+      }
+
+      // Between operator needs both value and value2
+      if (c.operator === 'between') {
+        return c.value !== undefined && c.value !== null && c.value !== '' &&
+               c.value2 !== undefined && c.value2 !== null && c.value2 !== '';
+      }
+
+      // All other operators need a value
+      // Check for undefined, null, or empty string
+      return c.value !== undefined && c.value !== null && c.value !== '';
+    });
   }, [conditions]);
 
   /**
