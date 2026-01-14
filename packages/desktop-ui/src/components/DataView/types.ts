@@ -14,6 +14,8 @@ export interface DataViewProps {
   schema: string;
   /** Table/collection/key name */
   table: string;
+  /** Database name for multi-database connections (optional) */
+  database?: string;
 }
 
 /**

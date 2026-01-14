@@ -139,8 +139,8 @@ interface TreeNode {
 }
 
 interface SidebarProps {
-  onTableSelect: (connectionKey: string, connectionName: string, schema: string, table: string) => void;
-  onFunctionSelect?: (connectionKey: string, connectionName: string, schema: string, functionName: string, functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger') => void;
+  onTableSelect: (connectionKey: string, connectionName: string, schema: string, table: string, database?: string) => void;
+  onFunctionSelect?: (connectionKey: string, connectionName: string, schema: string, functionName: string, functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger', database?: string) => void;
   onQueryOpen: (connectionKey: string, connectionName: string) => void;
   onERDiagramOpen?: (connectionKey: string, connectionName: string, schemas: string[]) => void;
   onAddConnection: () => void;
@@ -583,6 +583,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionKey,
             connectionName,
             schema,
+            database,
             dbType,
           }));
         }
@@ -595,6 +596,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionKey,
             connectionName,
             schema,
+            database,
             dbType,
           }));
         }
@@ -619,10 +621,10 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
     }
   };
 
-  const loadColumns = async (connectionKey: string, connectionName: string, schema: string, table: string): Promise<TreeNode[]> => {
+  const loadColumns = async (connectionKey: string, connectionName: string, schema: string, table: string, database?: string): Promise<TreeNode[]> => {
     if (!api) return [];
     try {
-      const columns: ColumnInfo[] = await api.listColumns(connectionKey, schema, table);
+      const columns: ColumnInfo[] = await api.listColumns(connectionKey, schema, table, database);
       return columns.map((col) => ({
         id: `${connectionKey}:${schema}:${table}:column:${col.name}`,
         type: "column" as const,
@@ -807,7 +809,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         // Note: node.schema can be empty string for NoSQL databases (MongoDB, Redis)
         setLoadingNodes((prev) => new Set(prev).add(node.id));
         try {
-          const columns = await loadColumns(node.connectionKey, node.connectionName, node.schema, node.table);
+          const columns = await loadColumns(node.connectionKey, node.connectionName, node.schema, node.table, node.database);
           setTreeData((prev) => updateTreeNode(prev, node.id, { children: columns }));
         } catch (error) {
           console.error("Failed to load table columns:", error);
@@ -844,7 +846,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
     if ((node.type === "table" || node.type === "view") && node.connectionKey && node.connectionName && node.schema !== undefined) {
       // For tables, use node.table; for views, use node.name
       const tableName = node.type === "table" ? (node.table || node.name) : node.name;
-      onTableSelect(node.connectionKey, node.connectionName, node.schema, tableName);
+      onTableSelect(node.connectionKey, node.connectionName, node.schema, tableName, node.database);
     }
   };
 
@@ -856,7 +858,8 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         node.connectionName,
         node.schema,
         node.name,
-        node.type as 'function' | 'procedure' | 'trigger'
+        node.type as 'function' | 'procedure' | 'trigger',
+        node.database
       );
     }
   };

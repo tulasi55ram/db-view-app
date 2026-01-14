@@ -58,7 +58,7 @@ export interface ElectronAPI {
   listFunctions(connectionKey: string, schema: string): Promise<string[]>;
   listProcedures(connectionKey: string, schema: string): Promise<string[]>;
   listTypes(connectionKey: string, schema: string): Promise<string[]>;
-  listColumns(connectionKey: string, schema: string, table: string): Promise<ColumnInfo[]>;
+  listColumns(connectionKey: string, schema: string, table: string, database?: string): Promise<ColumnInfo[]>;
 
   // Table operations
   loadTableRows(params: LoadTableRowsParams): Promise<{ columns: string[]; rows: Record<string, unknown>[] }>;
@@ -118,9 +118,9 @@ export interface ElectronAPI {
   deleteSavedQuery(connectionKey: string, queryId: string): Promise<void>;
 
   // Filter presets
-  getFilterPresets(schema: string, table: string): Promise<FilterPreset[]>;
-  saveFilterPreset(schema: string, table: string, preset: FilterPreset): Promise<void>;
-  deleteFilterPreset(schema: string, table: string, presetId: string): Promise<void>;
+  getFilterPresets(schema: string, table: string, database?: string): Promise<FilterPreset[]>;
+  saveFilterPreset(schema: string, table: string, preset: FilterPreset, database?: string): Promise<void>;
+  deleteFilterPreset(schema: string, table: string, presetId: string, database?: string): Promise<void>;
 
   // Tabs persistence
   loadTabs(): Promise<TabsState | null>;
@@ -159,6 +159,7 @@ export interface LoadTableRowsParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   limit: number;
   offset: number;
   filters?: FilterCondition[];
@@ -172,6 +173,7 @@ export interface GetRowCountParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   filters?: FilterCondition[];
   filterLogic?: "AND" | "OR";
 }
@@ -180,12 +182,14 @@ export interface GetTableMetadataParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
 }
 
 export interface UpdateCellParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   primaryKey: Record<string, unknown>;
   column: string;
   value: unknown;
@@ -195,6 +199,7 @@ export interface InsertRowParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   values: Record<string, unknown>;
 }
 
@@ -202,6 +207,7 @@ export interface DeleteRowsParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   primaryKeys: Record<string, unknown>[];
 }
 

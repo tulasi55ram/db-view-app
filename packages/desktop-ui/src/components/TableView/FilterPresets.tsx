@@ -8,6 +8,7 @@ import type { FilterCondition } from "@dbview/types";
 interface FilterPresetsProps {
   schema: string;
   table: string;
+  database?: string;
   currentFilters: FilterCondition[];
   currentLogic: "AND" | "OR";
   onLoadPreset: (filters: FilterCondition[], logic: "AND" | "OR") => void;
@@ -16,6 +17,7 @@ interface FilterPresetsProps {
 export const FilterPresets = memo(function FilterPresets({
   schema,
   table,
+  database,
   currentFilters,
   currentLogic,
   onLoadPreset,
@@ -33,14 +35,14 @@ export const FilterPresets = memo(function FilterPresets({
     const loadPresets = async () => {
       if (!api) return;
       try {
-        const loaded = await api.getFilterPresets(schema, table);
+        const loaded = await api.getFilterPresets(schema, table, database);
         setPresets(loaded);
       } catch (err) {
         console.error("Failed to load filter presets:", err);
       }
     };
     loadPresets();
-  }, [api, schema, table]);
+  }, [api, schema, table, database]);
 
   const handleSavePreset = useCallback(async () => {
     if (!api || !newPresetName.trim()) {
@@ -68,7 +70,7 @@ export const FilterPresets = memo(function FilterPresets({
         createdAt: Date.now(),
       };
 
-      await api.saveFilterPreset(schema, table, preset);
+      await api.saveFilterPreset(schema, table, preset, database);
       setPresets((prev) => {
         const existing = prev.findIndex((p) => p.name === preset.name);
         if (existing >= 0) {
@@ -87,7 +89,7 @@ export const FilterPresets = memo(function FilterPresets({
     } finally {
       setLoading(false);
     }
-  }, [api, schema, table, currentFilters, currentLogic, newPresetName]);
+  }, [api, schema, table, database, currentFilters, currentLogic, newPresetName]);
 
   const handleLoadPreset = useCallback(
     (preset: FilterPreset) => {
@@ -110,7 +112,7 @@ export const FilterPresets = memo(function FilterPresets({
       if (!api) return;
 
       try {
-        await api.deleteFilterPreset(schema, table, presetId);
+        await api.deleteFilterPreset(schema, table, presetId, database);
         setPresets((prev) => prev.filter((p) => p.id !== presetId));
         toast.success(`Deleted preset "${presetName}"`);
       } catch (err) {
@@ -118,7 +120,7 @@ export const FilterPresets = memo(function FilterPresets({
         toast.error("Failed to delete preset");
       }
     },
-    [api, schema, table]
+    [api, schema, table, database]
   );
 
   const hasValidFilters = currentFilters.some(

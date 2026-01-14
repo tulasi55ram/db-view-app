@@ -8,12 +8,13 @@ interface TableMetadataPanelProps {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   open: boolean;
   onClose: () => void;
   variant?: "inline" | "overlay";
 }
 
-export function TableMetadataPanel({ connectionKey, schema, table, open, onClose, variant = "inline" }: TableMetadataPanelProps) {
+export function TableMetadataPanel({ connectionKey, schema, table, database, open, onClose, variant = "inline" }: TableMetadataPanelProps) {
   const [metadata, setMetadata] = useState<ColumnMetadata[]>([]);
   const [indexes, setIndexes] = useState<TableIndex[]>([]);
   const [statistics, setStatistics] = useState<TableStatistics | null>(null);
@@ -28,9 +29,9 @@ export function TableMetadataPanel({ connectionKey, schema, table, open, onClose
       setLoading(true);
       try {
         const [metadataResult, indexesResult, statsResult] = await Promise.all([
-          api.getTableMetadata({ connectionKey, schema, table }),
-          api.getTableIndexes({ connectionKey, schema, table }),
-          api.getTableStatistics({ connectionKey, schema, table }),
+          api.getTableMetadata({ connectionKey, schema, table, database }),
+          api.getTableIndexes({ connectionKey, schema, table, database }),
+          api.getTableStatistics({ connectionKey, schema, table, database }),
         ]);
 
         setMetadata(metadataResult);
@@ -44,7 +45,7 @@ export function TableMetadataPanel({ connectionKey, schema, table, open, onClose
     };
 
     loadMetadata();
-  }, [open, api, connectionKey, schema, table]);
+  }, [open, api, connectionKey, schema, table, database]);
 
   if (!open) return null;
 

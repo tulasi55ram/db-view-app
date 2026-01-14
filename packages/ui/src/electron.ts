@@ -116,6 +116,7 @@ export interface GetTableMetadataParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
 }
 
 export interface UpdateCellParams {

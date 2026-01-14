@@ -149,12 +149,13 @@ function AppContent() {
 
   // Handlers
   const handleTableSelect = useCallback(
-    async (connectionKey: string, connectionName: string, schema: string, table: string) => {
+    async (connectionKey: string, connectionName: string, schema: string, table: string, database?: string) => {
       closeConnectionDialog();
       const connectionColor = await getConnectionColor(connectionKey);
       findOrCreateTableTab({
         schema,
         table,
+        database,
         connectionName,
         connectionKey,
         connectionColor,
@@ -164,13 +165,14 @@ function AppContent() {
   );
 
   const handleFunctionSelect = useCallback(
-    async (connectionKey: string, connectionName: string, schema: string, functionName: string, functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger') => {
+    async (connectionKey: string, connectionName: string, schema: string, functionName: string, functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger', database?: string) => {
       closeConnectionDialog();
       const connectionColor = await getConnectionColor(connectionKey);
       findOrCreateFunctionTab({
         schema,
         functionName,
         functionType,
+        database,
         connectionName,
         connectionKey,
         connectionColor,
@@ -266,6 +268,7 @@ function AppContent() {
           connectionKey={tab.connectionKey}
           schema={tableTab.schema}
           table={tableTab.table}
+          database={tableTab.database}
         />
       );
     }
@@ -314,6 +317,7 @@ function AppContent() {
           schema={functionTab.schema}
           functionName={functionTab.functionName}
           functionType={functionTab.functionType}
+          database={functionTab.database}
           tabId={tab.id}
         />
       );

@@ -27,6 +27,7 @@ interface TableViewProps {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
 }
 
 interface EditingCell {
@@ -42,7 +43,7 @@ interface PendingEdit {
   newValue: string;
 }
 
-export function TableView({ connectionKey, schema, table }: TableViewProps) {
+export function TableView({ connectionKey, schema, table, database }: TableViewProps) {
   // Track table identity to force complete re-render on table change
   const [currentTableKey, setCurrentTableKey] = useState(`${connectionKey}-${schema}-${table}`);
   const tableKey = `${connectionKey}-${schema}-${table}`;
@@ -334,6 +335,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
         connectionKey,
         schema,
         table,
+        database,
       });
 
       // Get primary key columns for stable ordering
@@ -347,6 +349,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           connectionKey,
           schema,
           table,
+          database,
           limit,
           offset,
           filters: hasActiveFilters ? filters : undefined,
@@ -359,6 +362,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           connectionKey,
           schema,
           table,
+          database,
           filters: hasActiveFilters ? filters : undefined,
           filterLogic: hasActiveFilters ? filterLogic : undefined,
         }),
@@ -766,6 +770,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
               connectionKey,
               schema,
               table,
+              database,
               primaryKey: { _id },
               column: key,
               value: newVal,
@@ -783,6 +788,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
               connectionKey,
               schema,
               table,
+              database,
               primaryKey: { _id },
               column: key,
               value: null,
@@ -1771,6 +1777,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           <FilterPresets
             schema={schema}
             table={table}
+            database={database}
             currentFilters={filters}
             currentLogic={filterLogic}
             onLoadPreset={(loadedFilters, loadedLogic) => {
@@ -2214,6 +2221,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                   connectionKey={connectionKey}
                   schema={schema}
                   table={table}
+                  database={database}
                   open={showMetadataPanel}
                   onClose={() => setShowMetadataPanel(false)}
                   variant="inline"
@@ -2227,6 +2235,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
                   onClose={() => setShowSavedViewsPanel(false)}
                   schema={schema}
                   table={table}
+                  database={database}
                   currentFilters={filters}
                   currentFilterLogic={filterLogic}
                   currentSortColumn={sortColumn}

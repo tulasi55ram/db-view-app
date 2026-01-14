@@ -464,6 +464,8 @@ export interface TableTab extends BaseTab {
   type: 'table';
   schema: string;
   table: string;
+  /** Database name for multi-database connections (e.g., PostgreSQL show all databases mode) */
+  database?: string;
   limit: number;
   offset: number;
   totalRows: number | null;
@@ -490,6 +492,8 @@ export interface TableTab extends BaseTab {
 export interface QueryTab extends BaseTab {
   type: 'query';
   sql: string;
+  /** Database name for multi-database connections (optional) */
+  database?: string;
   columns: string[];
   rows: Record<string, unknown>[];
   loading: boolean;
@@ -505,6 +509,8 @@ export interface QueryTab extends BaseTab {
 
 export interface ERDiagramTab extends BaseTab {
   type: 'er-diagram';
+  /** Database name for multi-database connections (optional) */
+  database?: string;
   availableSchemas: string[];
   selectedSchemas: string[];
   diagramData: ERDiagramData | null;
@@ -517,6 +523,8 @@ export interface FunctionTab extends BaseTab {
   schema: string;
   functionName: string;
   functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger';
+  /** Database name for multi-database connections (optional) */
+  database?: string;
   loading: boolean;
   definition?: string; // Cached function definition
   functionDetails?: FunctionDetails | TriggerDetails; // Cached metadata

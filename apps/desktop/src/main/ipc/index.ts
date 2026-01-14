@@ -269,8 +269,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.listTriggers(schema);
   });
 
-  ipcMain.handle("schema:getFunctionDetails", async (_event, connectionKey: string, schema: string, functionName: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:getFunctionDetails", async (_event, connectionKey: string, schema: string, functionName: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -280,8 +280,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.getFunctionDetails(schema, functionName);
   });
 
-  ipcMain.handle("schema:getTriggerDetails", async (_event, connectionKey: string, schema: string, triggerName: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:getTriggerDetails", async (_event, connectionKey: string, schema: string, triggerName: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -291,8 +291,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.getTriggerDetails(schema, triggerName);
   });
 
-  ipcMain.handle("schema:updateFunctionDefinition", async (_event, connectionKey: string, definition: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:updateFunctionDefinition", async (_event, connectionKey: string, definition: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -302,8 +302,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.updateFunctionDefinition(definition);
   });
 
-  ipcMain.handle("schema:executeFunction", async (_event, connectionKey: string, schema: string, functionName: string, parameters: any[]) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("schema:executeFunction", async (_event, connectionKey: string, schema: string, functionName: string, parameters: any[], database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -313,8 +313,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.executeFunction(schema, functionName, parameters);
   });
 
-  ipcMain.handle("table:getColumns", async (_event, connectionKey: string, schema: string, table: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("table:getColumns", async (_event, connectionKey: string, schema: string, table: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -324,7 +324,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   // ==================== Table Operations ====================
 
   ipcMain.handle("table:loadRows", async (_event, params: LoadTableRowsParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -340,7 +340,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:getRowCount", async (_event, params: GetRowCountParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -351,7 +351,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:getMetadata", async (_event, params: GetTableMetadataParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -359,7 +359,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:getStatistics", async (_event, params: GetTableMetadataParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -367,7 +367,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:getIndexes", async (_event, params: GetTableMetadataParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -378,7 +378,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:updateCell", async (_event, params: UpdateCellParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -386,7 +386,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:insertRow", async (_event, params: InsertRowParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -394,7 +394,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("table:deleteRows", async (_event, params: DeleteRowsParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -404,7 +404,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   // ==================== Query Operations ====================
 
   ipcMain.handle("query:run", async (_event, params: RunQueryParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -444,7 +444,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("query:explain", async (_event, params: ExplainQueryParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }
@@ -454,8 +454,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return adapter.explainQuery(params.sql);
   });
 
-  ipcMain.handle("query:cancel", async (_event, connectionKey: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("query:cancel", async (_event, connectionKey: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -487,35 +487,35 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   // ==================== Saved Views (persisted to disk) ====================
 
   ipcMain.handle("views:getAll", async (_event, params: GetViewsParams) => {
-    return getSavedViews(params.schema, params.table);
+    return getSavedViews(params.schema, params.table, params.database);
   });
 
   ipcMain.handle("views:save", async (_event, params: SaveViewParams) => {
-    saveSavedView(params.schema, params.table, params.view);
+    saveSavedView(params.schema, params.table, params.view, params.database);
   });
 
   ipcMain.handle("views:delete", async (_event, params: DeleteViewParams) => {
-    deleteSavedView(params.schema, params.table, params.viewId);
+    deleteSavedView(params.schema, params.table, params.viewId, params.database);
   });
 
   // ==================== Filter Presets ====================
 
-  ipcMain.handle("filterPresets:getAll", async (_event, params: { schema: string; table: string }) => {
-    return getFilterPresets(params.schema, params.table);
+  ipcMain.handle("filterPresets:getAll", async (_event, params: { schema: string; table: string; database?: string }) => {
+    return getFilterPresets(params.schema, params.table, params.database);
   });
 
-  ipcMain.handle("filterPresets:save", async (_event, params: { schema: string; table: string; preset: FilterPreset }) => {
-    saveFilterPreset(params.schema, params.table, params.preset);
+  ipcMain.handle("filterPresets:save", async (_event, params: { schema: string; table: string; preset: FilterPreset; database?: string }) => {
+    saveFilterPreset(params.schema, params.table, params.preset, params.database);
   });
 
-  ipcMain.handle("filterPresets:delete", async (_event, params: { schema: string; table: string; presetId: string }) => {
-    deleteFilterPreset(params.schema, params.table, params.presetId);
+  ipcMain.handle("filterPresets:delete", async (_event, params: { schema: string; table: string; presetId: string; database?: string }) => {
+    deleteFilterPreset(params.schema, params.table, params.presetId, params.database);
   });
 
   // ==================== ER Diagram ====================
 
-  ipcMain.handle("diagram:getER", async (_event, connectionKey: string, schemas: string[]) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("diagram:getER", async (_event, connectionKey: string, schemas: string[], database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -527,8 +527,8 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
 
   // ==================== Autocomplete ====================
 
-  ipcMain.handle("autocomplete:getData", async (_event, connectionKey: string) => {
-    const adapter = connectionManager.getAdapter(connectionKey);
+  ipcMain.handle("autocomplete:getData", async (_event, connectionKey: string, database?: string) => {
+    const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {
       throw new Error(`Not connected: ${connectionKey}`);
     }
@@ -629,7 +629,7 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
   });
 
   ipcMain.handle("import:data", async (_event, params: ImportDataParams) => {
-    const adapter = connectionManager.getAdapter(params.connectionKey);
+    const adapter = await connectionManager.getAdapterForDatabase(params.connectionKey, params.database);
     if (!adapter) {
       throw new Error(`Not connected: ${params.connectionKey}`);
     }

@@ -25,13 +25,13 @@ const electronAPI: ElectronAPI = {
   listProcedures: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getProcedures", connectionKey, schema, database),
   listTypes: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getTypes", connectionKey, schema, database),
   listTriggers: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getTriggers", connectionKey, schema, database),
-  listColumns: (connectionKey, schema, table) => ipcRenderer.invoke("table:getColumns", connectionKey, schema, table),
+  listColumns: (connectionKey, schema, table, database) => ipcRenderer.invoke("table:getColumns", connectionKey, schema, table, database),
 
   // Function/Trigger operations
-  getFunctionDetails: (connectionKey, schema, functionName) => ipcRenderer.invoke("schema:getFunctionDetails", connectionKey, schema, functionName),
-  getTriggerDetails: (connectionKey, schema, triggerName) => ipcRenderer.invoke("schema:getTriggerDetails", connectionKey, schema, triggerName),
-  updateFunctionDefinition: (connectionKey, definition) => ipcRenderer.invoke("schema:updateFunctionDefinition", connectionKey, definition),
-  executeFunction: (connectionKey, schema, functionName, parameters) => ipcRenderer.invoke("schema:executeFunction", connectionKey, schema, functionName, parameters),
+  getFunctionDetails: (connectionKey, schema, functionName, database) => ipcRenderer.invoke("schema:getFunctionDetails", connectionKey, schema, functionName, database),
+  getTriggerDetails: (connectionKey, schema, triggerName, database) => ipcRenderer.invoke("schema:getTriggerDetails", connectionKey, schema, triggerName, database),
+  updateFunctionDefinition: (connectionKey, definition, database) => ipcRenderer.invoke("schema:updateFunctionDefinition", connectionKey, definition, database),
+  executeFunction: (connectionKey, schema, functionName, parameters, database) => ipcRenderer.invoke("schema:executeFunction", connectionKey, schema, functionName, parameters, database),
 
   // Table operations
   loadTableRows: (params) => ipcRenderer.invoke("table:loadRows", params),
@@ -47,7 +47,7 @@ const electronAPI: ElectronAPI = {
   runQuery: (params) => ipcRenderer.invoke("query:run", params),
   formatSql: (sql) => ipcRenderer.invoke("query:format", sql),
   explainQuery: (params) => ipcRenderer.invoke("query:explain", params),
-  cancelQuery: (connectionKey) => ipcRenderer.invoke("query:cancel", connectionKey),
+  cancelQuery: (connectionKey, database) => ipcRenderer.invoke("query:cancel", connectionKey, database),
 
   // Saved views
   getViews: (params) => ipcRenderer.invoke("views:getAll", params),
@@ -55,10 +55,10 @@ const electronAPI: ElectronAPI = {
   deleteView: (params) => ipcRenderer.invoke("views:delete", params),
 
   // ER Diagram
-  getERDiagram: (connectionKey, schemas) => ipcRenderer.invoke("diagram:getER", connectionKey, schemas),
+  getERDiagram: (connectionKey, schemas, database) => ipcRenderer.invoke("diagram:getER", connectionKey, schemas, database),
 
   // Autocomplete
-  getAutocompleteData: (connectionKey) => ipcRenderer.invoke("autocomplete:getData", connectionKey),
+  getAutocompleteData: (connectionKey, database) => ipcRenderer.invoke("autocomplete:getData", connectionKey, database),
 
   // Export/Import
   exportData: (params) => ipcRenderer.invoke("export:data", params),
@@ -86,9 +86,9 @@ const electronAPI: ElectronAPI = {
   deleteSavedQuery: (connectionKey, queryId) => ipcRenderer.invoke("savedQueries:delete", connectionKey, queryId),
 
   // Filter presets
-  getFilterPresets: (schema, table) => ipcRenderer.invoke("filterPresets:getAll", { schema, table }),
-  saveFilterPreset: (schema, table, preset) => ipcRenderer.invoke("filterPresets:save", { schema, table, preset }),
-  deleteFilterPreset: (schema, table, presetId) => ipcRenderer.invoke("filterPresets:delete", { schema, table, presetId }),
+  getFilterPresets: (schema, table, database) => ipcRenderer.invoke("filterPresets:getAll", { schema, table, database }),
+  saveFilterPreset: (schema, table, preset, database) => ipcRenderer.invoke("filterPresets:save", { schema, table, preset, database }),
+  deleteFilterPreset: (schema, table, presetId, database) => ipcRenderer.invoke("filterPresets:delete", { schema, table, presetId, database }),
 
   // Tabs persistence
   loadTabs: () => ipcRenderer.invoke("tabs:load"),

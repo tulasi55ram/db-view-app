@@ -20,6 +20,7 @@ interface FunctionViewProps {
   schema: string;
   functionName: string;
   functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger';
+  database?: string;
   tabId: string;
 }
 
@@ -37,6 +38,7 @@ export const FunctionView: FC<FunctionViewProps> = ({
   schema,
   functionName,
   functionType,
+  database,
   tabId: _tabId
 }) => {
   const [loading, setLoading] = useState(true);
@@ -66,9 +68,9 @@ export const FunctionView: FC<FunctionViewProps> = ({
 
         let functionDetails;
         if (functionType === 'trigger') {
-          functionDetails = await api.getTriggerDetails(connectionKey, schema, functionName);
+          functionDetails = await api.getTriggerDetails(connectionKey, schema, functionName, database);
         } else {
-          functionDetails = await api.getFunctionDetails(connectionKey, schema, functionName);
+          functionDetails = await api.getFunctionDetails(connectionKey, schema, functionName, database);
         }
 
         setDetails(functionDetails);
@@ -168,7 +170,7 @@ export const FunctionView: FC<FunctionViewProps> = ({
     try {
       setSaving(true);
       setError(null);
-      await api.updateFunctionDefinition(connectionKey, definition);
+      await api.updateFunctionDefinition(connectionKey, definition, database);
       setOriginalDefinition(definition);
       setIsDirty(false);
     } catch (err) {
@@ -176,7 +178,7 @@ export const FunctionView: FC<FunctionViewProps> = ({
     } finally {
       setSaving(false);
     }
-  }, [connectionKey, definition, isDirty, saving]);
+  }, [connectionKey, definition, database, isDirty, saving]);
 
   const handleRevert = useCallback(() => {
     setDefinition(originalDefinition);
@@ -191,8 +193,8 @@ export const FunctionView: FC<FunctionViewProps> = ({
     try {
       setLoading(true);
       const functionDetails = functionType === 'trigger'
-        ? await api.getTriggerDetails(connectionKey, schema, functionName)
-        : await api.getFunctionDetails(connectionKey, schema, functionName);
+        ? await api.getTriggerDetails(connectionKey, schema, functionName, database)
+        : await api.getFunctionDetails(connectionKey, schema, functionName, database);
 
       setDetails(functionDetails);
       setDefinition(functionDetails.definition);
@@ -235,7 +237,7 @@ export const FunctionView: FC<FunctionViewProps> = ({
           return value;
         });
 
-      const result = await api.executeFunction(connectionKey, schema, functionName, parameters);
+      const result = await api.executeFunction(connectionKey, schema, functionName, parameters, database);
       setExecutionResult(result);
     } catch (err) {
       setExecutionResult({

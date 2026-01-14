@@ -306,19 +306,20 @@ export function deleteSavedQuery(connectionKey: string, queryId: string): void {
 }
 
 // Filter Presets management
-function getPresetKey(schema: string, table: string): string {
-  return `${schema}.${table}`;
+function getPresetKey(schema: string, table: string, database?: string): string {
+  // Include database in key to properly scope presets
+  return database ? `${database}.${schema}.${table}` : `${schema}.${table}`;
 }
 
-export function getFilterPresets(schema: string, table: string): FilterPreset[] {
+export function getFilterPresets(schema: string, table: string, database?: string): FilterPreset[] {
   const allPresets = getStore().get("filterPresets", {});
-  const key = getPresetKey(schema, table);
+  const key = getPresetKey(schema, table, database);
   return allPresets[key] || [];
 }
 
-export function saveFilterPreset(schema: string, table: string, preset: FilterPreset): void {
+export function saveFilterPreset(schema: string, table: string, preset: FilterPreset, database?: string): void {
   const allPresets = getStore().get("filterPresets", {});
-  const key = getPresetKey(schema, table);
+  const key = getPresetKey(schema, table, database);
   const tablePresets = allPresets[key] || [];
 
   // Check if preset with same name exists
@@ -333,9 +334,9 @@ export function saveFilterPreset(schema: string, table: string, preset: FilterPr
   getStore().set("filterPresets", allPresets);
 }
 
-export function deleteFilterPreset(schema: string, table: string, presetId: string): void {
+export function deleteFilterPreset(schema: string, table: string, presetId: string, database?: string): void {
   const allPresets = getStore().get("filterPresets", {});
-  const key = getPresetKey(schema, table);
+  const key = getPresetKey(schema, table, database);
   const tablePresets = allPresets[key] || [];
 
   allPresets[key] = tablePresets.filter(p => p.id !== presetId);
@@ -352,19 +353,20 @@ export function saveTabsState(state: TabsState): void {
 }
 
 // Saved Views management
-function getViewKey(schema: string, table: string): string {
-  return `${schema}.${table}`;
+function getViewKey(schema: string, table: string, database?: string): string {
+  // Include database in key to properly scope views
+  return database ? `${database}.${schema}.${table}` : `${schema}.${table}`;
 }
 
-export function getSavedViews(schema: string, table: string): SavedView[] {
+export function getSavedViews(schema: string, table: string, database?: string): SavedView[] {
   const allViews = getStore().get("savedViews", {});
-  const key = getViewKey(schema, table);
+  const key = getViewKey(schema, table, database);
   return allViews[key] || [];
 }
 
-export function saveSavedView(schema: string, table: string, view: SavedView): void {
+export function saveSavedView(schema: string, table: string, view: SavedView, database?: string): void {
   const allViews = getStore().get("savedViews", {});
-  const key = getViewKey(schema, table);
+  const key = getViewKey(schema, table, database);
   const tableViews = allViews[key] || [];
 
   // If setting as default, unset other defaults
@@ -388,9 +390,9 @@ export function saveSavedView(schema: string, table: string, view: SavedView): v
   getStore().set("savedViews", allViews);
 }
 
-export function deleteSavedView(schema: string, table: string, viewId: string): void {
+export function deleteSavedView(schema: string, table: string, viewId: string, database?: string): void {
   const allViews = getStore().get("savedViews", {});
-  const key = getViewKey(schema, table);
+  const key = getViewKey(schema, table, database);
   const tableViews = allViews[key] || [];
 
   allViews[key] = tableViews.filter((v) => v.id !== viewId);

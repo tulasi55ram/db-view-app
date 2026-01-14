@@ -11,6 +11,7 @@ interface SavedViewsPanelProps {
   onClose: () => void;
   schema: string;
   table: string;
+  database?: string;
   onLoadView: (view: SavedView) => void;
   currentFilters: FilterCondition[];
   currentFilterLogic: "AND" | "OR";
@@ -24,6 +25,7 @@ export const SavedViewsPanel = memo(function SavedViewsPanel({
   onClose,
   schema,
   table,
+  database,
   onLoadView,
   currentFilters,
   currentFilterLogic,
@@ -42,7 +44,7 @@ export const SavedViewsPanel = memo(function SavedViewsPanel({
       if (!open || !api) return;
       setLoading(true);
       try {
-        const loaded = await api.getViews({ schema, table });
+        const loaded = await api.getViews({ schema, table, database });
         setViews(loaded);
       } catch (err) {
         console.error("Failed to load views:", err);
@@ -52,7 +54,7 @@ export const SavedViewsPanel = memo(function SavedViewsPanel({
       }
     };
     loadViews();
-  }, [api, open, schema, table]);
+  }, [api, open, schema, table, database]);
 
   const handleSaveView = useCallback(
     async (name: string, description: string, isDefault: boolean) => {
@@ -78,7 +80,7 @@ export const SavedViewsPanel = memo(function SavedViewsPanel({
       };
 
       try {
-        await api.saveView({ schema, table, view });
+        await api.saveView({ schema, table, view, database });
         setViews((prev) => [...prev.filter((v) => v.id !== view.id), view]);
         toast.success(`Saved view "${name}"`);
       } catch (err) {
@@ -86,7 +88,7 @@ export const SavedViewsPanel = memo(function SavedViewsPanel({
         toast.error("Failed to save view");
       }
     },
-    [api, schema, table, currentFilters, currentFilterLogic, currentSortColumn, currentSortDirection]
+    [api, schema, table, database, currentFilters, currentFilterLogic, currentSortColumn, currentSortDirection]
   );
 
   const handleDeleteView = useCallback(
@@ -94,7 +96,7 @@ export const SavedViewsPanel = memo(function SavedViewsPanel({
       if (!api) return;
 
       try {
-        await api.deleteView({ schema, table, viewId });
+        await api.deleteView({ schema, table, viewId, database });
         setViews((prev) => prev.filter((v) => v.id !== viewId));
         toast.success(`Deleted view "${viewName}"`);
       } catch (err) {
@@ -102,7 +104,7 @@ export const SavedViewsPanel = memo(function SavedViewsPanel({
         toast.error("Failed to delete view");
       }
     },
-    [api, schema, table]
+    [api, schema, table, database]
   );
 
   const formatDate = (timestamp: number) => {

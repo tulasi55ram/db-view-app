@@ -282,6 +282,7 @@ export interface GetTableMetadataParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
 }
 
 // Update cell params
@@ -314,18 +315,21 @@ export interface DeleteRowsParams {
 export interface RunQueryParams {
   connectionKey: string;
   sql: string;
+  database?: string;
 }
 
 // Explain query params
 export interface ExplainQueryParams {
   connectionKey: string;
   sql: string;
+  database?: string;
 }
 
 // Get views params
 export interface GetViewsParams {
   schema: string;
   table: string;
+  database?: string;
 }
 
 // Save view params
@@ -333,6 +337,7 @@ export interface SaveViewParams {
   schema: string;
   table: string;
   view: SavedView;
+  database?: string;
 }
 
 // Delete view params
@@ -340,6 +345,7 @@ export interface DeleteViewParams {
   schema: string;
   table: string;
   viewId: string;
+  database?: string;
 }
 
 // Export data params
@@ -356,6 +362,7 @@ export interface ImportDataParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   rows: Record<string, unknown>[];
 }
 
