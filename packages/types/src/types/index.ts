@@ -464,6 +464,8 @@ export interface TableTab extends BaseTab {
   type: 'table';
   schema: string;
   table: string;
+  /** Optional database name (for show all databases mode) */
+  database?: string;
   limit: number;
   offset: number;
   totalRows: number | null;

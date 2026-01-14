@@ -27,6 +27,7 @@ interface TableViewProps {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
 }
 
 interface EditingCell {
@@ -42,10 +43,10 @@ interface PendingEdit {
   newValue: string;
 }
 
-export function TableView({ connectionKey, schema, table }: TableViewProps) {
+export function TableView({ connectionKey, schema, table, database }: TableViewProps) {
   // Track table identity to force complete re-render on table change
-  const [currentTableKey, setCurrentTableKey] = useState(`${connectionKey}-${schema}-${table}`);
-  const tableKey = `${connectionKey}-${schema}-${table}`;
+  const [currentTableKey, setCurrentTableKey] = useState(`${connectionKey}-${schema}-${table}-${database || ''}`);
+  const tableKey = `${connectionKey}-${schema}-${table}-${database || ''}`;
   const isTableChanging = currentTableKey !== tableKey;
 
   const [columns, setColumns] = useState<string[]>([]);
@@ -329,11 +330,21 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     try {
       setLoading(true);
 
+      console.log(`[TableView] Loading data for table:`, {
+        connectionKey,
+        schema,
+        table,
+        database,
+        limit,
+        offset
+      });
+
       // First load metadata to get primary key columns
       const metadataResult = await api.getTableMetadata({
         connectionKey,
         schema,
         table,
+        database,
       });
 
       // Get primary key columns for stable ordering
@@ -347,6 +358,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           connectionKey,
           schema,
           table,
+          database,
           limit,
           offset,
           filters: hasActiveFilters ? filters : undefined,
@@ -359,6 +371,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
           connectionKey,
           schema,
           table,
+          database,
           filters: hasActiveFilters ? filters : undefined,
           filterLogic: hasActiveFilters ? filterLogic : undefined,
         }),
@@ -382,7 +395,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
 
   // Reset state when table changes to prevent data overlap
   useEffect(() => {
-    const newTableKey = `${connectionKey}-${schema}-${table}`;
+    const newTableKey = `${connectionKey}-${schema}-${table}-${database || ''}`;
 
     // Clear all data state immediately when switching tables
     setColumns([]);
@@ -417,7 +430,7 @@ export function TableView({ connectionKey, schema, table }: TableViewProps) {
     }
     // Update the current table key to match - this triggers re-render with fresh state
     setCurrentTableKey(newTableKey);
-  }, [connectionKey, schema, table]);
+  }, [connectionKey, schema, table, database]);
 
   useEffect(() => {
     loadData();

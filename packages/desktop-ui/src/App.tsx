@@ -149,12 +149,20 @@ function AppContent() {
 
   // Handlers
   const handleTableSelect = useCallback(
-    async (connectionKey: string, connectionName: string, schema: string, table: string) => {
+    async (connectionKey: string, connectionName: string, schema: string, table: string, database?: string) => {
+      console.log(`[App] handleTableSelect called:`, {
+        connectionKey,
+        connectionName,
+        schema,
+        table,
+        database
+      });
       closeConnectionDialog();
       const connectionColor = await getConnectionColor(connectionKey);
       findOrCreateTableTab({
         schema,
         table,
+        database,
         connectionName,
         connectionKey,
         connectionColor,
@@ -259,6 +267,12 @@ function AppContent() {
 
     if (tab.type === "table" && tab.connectionKey) {
       const tableTab = tab as import("@dbview/types").TableTab;
+      console.log(`[App] Rendering DataView for tab ${tab.id}:`, {
+        schema: tableTab.schema,
+        table: tableTab.table,
+        database: tableTab.database,
+        connectionKey: tab.connectionKey
+      });
       // Use DataView router which handles SQL, Document, and Redis databases
       return (
         <DataView
@@ -266,6 +280,7 @@ function AppContent() {
           connectionKey={tab.connectionKey}
           schema={tableTab.schema}
           table={tableTab.table}
+          database={tableTab.database}
         />
       );
     }
@@ -350,6 +365,12 @@ function AppContent() {
 
       if (tab.type === "table" && tab.connectionKey) {
         const tableTab = tab as import("@dbview/types").TableTab;
+        console.log(`[App] Rendering DataView (no split) for tab ${tab.id}:`, {
+          schema: tableTab.schema,
+          table: tableTab.table,
+          database: tableTab.database,
+          connectionKey: tab.connectionKey
+        });
         // Use DataView router which handles SQL, Document, and Redis databases
         return (
           <div key={tab.id} style={style}>
@@ -357,6 +378,7 @@ function AppContent() {
               connectionKey={tab.connectionKey}
               schema={tableTab.schema}
               table={tableTab.table}
+              database={tableTab.database}
             />
           </div>
         );

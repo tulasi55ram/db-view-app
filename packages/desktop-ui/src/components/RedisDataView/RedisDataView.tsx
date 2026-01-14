@@ -37,6 +37,7 @@ interface RedisDataViewProps {
   connectionKey: string;
   schema: string; // Redis DB index as string (e.g., "0", "1")
   table: string;  // Key pattern like "[hash] user" or "[string] cache"
+  database?: string; // Optional database name (for show all databases mode)
 }
 
 // Icon component mapping

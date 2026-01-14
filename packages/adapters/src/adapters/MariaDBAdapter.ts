@@ -351,7 +351,8 @@ export class MariaDBAdapter extends EventEmitter implements DatabaseAdapter {
       .filter((db: string) => db && !systemDbs.includes(db));
   }
 
-  async listTables(schema: string): Promise<TableInfo[]> {
+  async listTables(schema: string, _database?: string): Promise<TableInfo[]> {
+    // MariaDB doesn't need the database parameter - information_schema is global
     const query = `
       SELECT
         TABLE_NAME as tbl_name,
@@ -373,7 +374,8 @@ export class MariaDBAdapter extends EventEmitter implements DatabaseAdapter {
     }));
   }
 
-  async listViews(schema: string): Promise<string[]> {
+  async listViews(schema: string, _database?: string): Promise<string[]> {
+    // MariaDB doesn't need the database parameter - information_schema is global
     const query = `
       SELECT TABLE_NAME as view_name
       FROM information_schema.tables
@@ -517,7 +519,8 @@ export class MariaDBAdapter extends EventEmitter implements DatabaseAdapter {
     });
   }
 
-  async getObjectCounts(schema: string): Promise<ObjectCounts> {
+  async getObjectCounts(schema: string, _database?: string): Promise<ObjectCounts> {
+    // MariaDB doesn't need the database parameter - information_schema is global
     const tablesQuery = `
       SELECT COUNT(*) as cnt
       FROM information_schema.tables
