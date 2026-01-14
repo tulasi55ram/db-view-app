@@ -259,6 +259,7 @@ export interface LoadTableRowsParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   limit: number;
   offset: number;
   filters?: FilterCondition[];
@@ -273,6 +274,7 @@ export interface GetRowCountParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   filters?: FilterCondition[];
   filterLogic?: "AND" | "OR";
 }
@@ -290,6 +292,7 @@ export interface UpdateCellParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   primaryKey: Record<string, unknown>;
   column: string;
   value: unknown;
@@ -300,6 +303,7 @@ export interface InsertRowParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   values: Record<string, unknown>;
 }
 
@@ -308,6 +312,7 @@ export interface DeleteRowsParams {
   connectionKey: string;
   schema: string;
   table: string;
+  database?: string;
   primaryKeys: Record<string, unknown>[];
 }
 
@@ -406,13 +411,13 @@ export interface ElectronAPI {
   listProcedures(connectionKey: string, schema: string, database?: string): Promise<string[]>;
   listTypes(connectionKey: string, schema: string, database?: string): Promise<string[]>;
   listTriggers(connectionKey: string, schema: string, database?: string): Promise<string[]>;
-  listColumns(connectionKey: string, schema: string, table: string): Promise<ColumnInfo[]>;
+  listColumns(connectionKey: string, schema: string, table: string, database?: string): Promise<ColumnInfo[]>;
 
   // Function/Trigger operations
-  getFunctionDetails(connectionKey: string, schema: string, functionName: string): Promise<import('@dbview/types').FunctionDetails>;
-  getTriggerDetails(connectionKey: string, schema: string, triggerName: string): Promise<import('@dbview/types').TriggerDetails>;
-  updateFunctionDefinition(connectionKey: string, definition: string): Promise<void>;
-  executeFunction(connectionKey: string, schema: string, functionName: string, parameters: any[]): Promise<import('@dbview/types').FunctionExecutionResult>;
+  getFunctionDetails(connectionKey: string, schema: string, functionName: string, database?: string): Promise<import('@dbview/types').FunctionDetails>;
+  getTriggerDetails(connectionKey: string, schema: string, triggerName: string, database?: string): Promise<import('@dbview/types').TriggerDetails>;
+  updateFunctionDefinition(connectionKey: string, definition: string, database?: string): Promise<void>;
+  executeFunction(connectionKey: string, schema: string, functionName: string, parameters: any[], database?: string): Promise<import('@dbview/types').FunctionExecutionResult>;
 
   // Table operations
   loadTableRows(params: LoadTableRowsParams): Promise<TableDataResult>;
@@ -428,7 +433,7 @@ export interface ElectronAPI {
   runQuery(params: RunQueryParams): Promise<QueryResult>;
   formatSql(sql: string): Promise<string>;
   explainQuery(params: ExplainQueryParams): Promise<ExplainPlan>;
-  cancelQuery(connectionKey: string): Promise<void>;
+  cancelQuery(connectionKey: string, database?: string): Promise<void>;
 
   // Saved views
   getViews(params: GetViewsParams): Promise<SavedView[]>;
@@ -436,10 +441,10 @@ export interface ElectronAPI {
   deleteView(params: DeleteViewParams): Promise<void>;
 
   // ER Diagram
-  getERDiagram(connectionKey: string, schemas: string[]): Promise<ERDiagramData>;
+  getERDiagram(connectionKey: string, schemas: string[], database?: string): Promise<ERDiagramData>;
 
   // Autocomplete
-  getAutocompleteData(connectionKey: string): Promise<AutocompleteData>;
+  getAutocompleteData(connectionKey: string, database?: string): Promise<AutocompleteData>;
 
   // Export/Import
   exportData(params: ExportDataParams): Promise<string | null>;
@@ -467,9 +472,9 @@ export interface ElectronAPI {
   deleteSavedQuery(connectionKey: string, queryId: string): Promise<void>;
 
   // Filter presets
-  getFilterPresets(schema: string, table: string): Promise<FilterPreset[]>;
-  saveFilterPreset(schema: string, table: string, preset: FilterPreset): Promise<void>;
-  deleteFilterPreset(schema: string, table: string, presetId: string): Promise<void>;
+  getFilterPresets(schema: string, table: string, database?: string): Promise<FilterPreset[]>;
+  saveFilterPreset(schema: string, table: string, preset: FilterPreset, database?: string): Promise<void>;
+  deleteFilterPreset(schema: string, table: string, presetId: string, database?: string): Promise<void>;
 
   // Tabs persistence
   loadTabs(): Promise<TabsState | null>;
