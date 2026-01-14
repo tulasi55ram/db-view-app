@@ -115,26 +115,33 @@ export class ConnectionManager {
   async getFullConnectionConfig(storedConfig: StoredConnectionConfig): Promise<DatabaseConnectionConfig> {
     const result: Record<string, unknown> = { ...storedConfig };
 
+    // Use _passwordConnectionName if present (for database-specific adapters),
+    // otherwise use the regular name field
+    const passwordLookupName = (storedConfig as any)._passwordConnectionName || storedConfig.name;
+
     // Retrieve password from keychain if this connection type needs one
     const needsPassword = "host" in storedConfig ||
                           storedConfig.dbType === "elasticsearch" ||
                           storedConfig.dbType === "mongodb";
 
-    if (needsPassword && storedConfig.name) {
-      const password = await passwordStore.getPassword(storedConfig.name);
+    if (needsPassword && passwordLookupName) {
+      const password = await passwordStore.getPassword(passwordLookupName);
       if (password) {
         result.password = password;
       }
     }
 
     // Retrieve connection string from keychain if flagged
-    if ((storedConfig as Record<string, unknown>).hasConnectionString && storedConfig.name) {
-      const connectionString = await passwordStore.getPassword(`${storedConfig.name}:connectionString`);
+    if ((storedConfig as Record<string, unknown>).hasConnectionString && passwordLookupName) {
+      const connectionString = await passwordStore.getPassword(`${passwordLookupName}:connectionString`);
       if (connectionString) {
         result.connectionString = connectionString;
       }
       delete result.hasConnectionString; // Remove the flag, not needed in runtime config
     }
+
+    // Clean up internal fields
+    delete result._passwordConnectionName;
 
     return result as unknown as DatabaseConnectionConfig;
   }
@@ -271,11 +278,13 @@ export class ConnectionManager {
     }
 
     // Create a new config with the specific database
+    // Store the original name for password retrieval, but use unique name for adapter key
     const dbSpecificConfig = {
       ...originalConfig,
       database,
-      name: `${originalConfig.name}:${database}` // Make the name unique
-    } as StoredConnectionConfig;
+      name: `${originalConfig.name}:${database}`, // Make the name unique for adapter key
+      _passwordConnectionName: originalConfig.name // Store original name for password lookup
+    } as StoredConnectionConfig & { _passwordConnectionName?: string };
 
     // Get the key for this database-specific connection
     const dbSpecificKey = this.getConnectionKey(dbSpecificConfig);
