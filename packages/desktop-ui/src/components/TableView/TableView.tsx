@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo, useLayoutEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { RefreshCw, Plus, Trash2, Info, Save, X, Copy, ArrowUp, ArrowDown, ArrowUpDown, Download, Upload, Lock, Bookmark, Pencil } from "lucide-react";
+import { RefreshCw, Plus, Trash2, Info, Save, X, Copy, ArrowUp, ArrowDown, ArrowUpDown, Download, Upload, Lock, Bookmark } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { getElectronAPI } from "@/electron";
 import { toast } from "sonner";
@@ -2104,12 +2104,13 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
                         <td
                           key={column}
                           className={cn(
-                            "group/cell px-3 py-2 text-text-primary whitespace-nowrap relative overflow-hidden border-r border-border",
+                            "text-text-primary whitespace-nowrap relative overflow-hidden border-r border-border",
+                            isEditing ? "p-0.5" : "px-3 py-2",
                             !isEditing && editable && "cursor-pointer hover:bg-bg-tertiary/50",
                             !isEditing && !editable && "cursor-not-allowed",
-                            hasPendingEdit && "border-2 border-orange-500 bg-orange-500/10",
-                            isFocused && !hasPendingEdit && editable && "ring-2 ring-accent bg-accent/10",
-                            isFocused && !hasPendingEdit && !editable && "ring-1 ring-text-tertiary/30 bg-bg-tertiary/30"
+                            hasPendingEdit && !isEditing && "border-2 border-orange-500 bg-orange-500/10",
+                            !isEditing && isFocused && !hasPendingEdit && editable && "ring-2 ring-accent bg-accent/10",
+                            !isEditing && isFocused && !hasPendingEdit && !editable && "ring-1 ring-text-tertiary/30 bg-bg-tertiary/30"
                           )}
                           style={{
                             width: columnWidths[column] || 150,
@@ -2160,43 +2161,27 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
                                     }
                                   }}
                                   autoFocus
-                                  className="w-full min-w-[100px] px-2 py-1 bg-bg-primary border-2 border-accent rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent shadow-lg"
+                                  className="w-full min-w-[100px] px-2 py-1.5 bg-bg-primary border border-accent rounded text-text-primary focus:outline-none"
                                 />
                               );
                             })()
                           ) : isCassandra ? (
                             // Use rich Cassandra value cell for Cassandra connections
-                            <>
-                              <CassandraValueCell
-                                value={displayValue}
-                                columnName={column}
-                                columnType={metadata.find(m => m.name === column)?.type || "text"}
-                                isCompact={true}
-                              />
-                              {/* Edit indicator on hover */}
-                              {editable ? (
-                                <Pencil className="w-3 h-3 text-accent opacity-0 group-hover/cell:opacity-60 transition-opacity absolute right-1 flex-shrink-0" />
-                              ) : (
-                                <Lock className="w-3 h-3 text-text-tertiary opacity-0 group-hover/cell:opacity-40 transition-opacity absolute right-1 flex-shrink-0" />
-                              )}
-                            </>
+                            <CassandraValueCell
+                              value={displayValue}
+                              columnName={column}
+                              columnType={metadata.find(m => m.name === column)?.type || "text"}
+                              isCompact={true}
+                            />
                           ) : (
-                            <>
-                              <span className={cn(
-                                displayValue === null && "text-text-tertiary italic",
-                                hasPendingEdit && "font-medium",
-                                !editable && "text-text-secondary",
-                                "truncate"
-                              )}>
-                                {displayText}
-                              </span>
-                              {/* Edit indicator on hover */}
-                              {editable ? (
-                                <Pencil className="w-3 h-3 text-accent opacity-0 group-hover/cell:opacity-60 transition-opacity absolute right-1 flex-shrink-0" />
-                              ) : (
-                                <Lock className="w-3 h-3 text-text-tertiary opacity-0 group-hover/cell:opacity-40 transition-opacity absolute right-1 flex-shrink-0" />
-                              )}
-                            </>
+                            <span className={cn(
+                              displayValue === null && "text-text-tertiary italic",
+                              hasPendingEdit && "font-medium",
+                              !editable && "text-text-secondary",
+                              "truncate"
+                            )}>
+                              {displayText}
+                            </span>
                           )}
                         </td>
                       );
