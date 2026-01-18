@@ -3,7 +3,8 @@ import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/v
 import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
 import { sql, PostgreSQL, MySQL, MariaSQL, SQLite, MSSQL } from "@codemirror/lang-sql";
-import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import {
   autocompletion,
   nextSnippetField,
@@ -81,6 +82,7 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
   const viewRef = useRef<EditorView | null>(null);
   const readOnlyCompartment = useRef(new Compartment());
   const themeCompartment = useRef(new Compartment());
+  const highlightCompartment = useRef(new Compartment());
 
   // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
@@ -270,10 +272,43 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
         { dark: isDark }
       );
 
-    const editorTheme = createEditorTheme(resolvedTheme === "dark");
+    const isDarkMode = resolvedTheme === "dark";
+    const editorTheme = createEditorTheme(isDarkMode);
 
-    // Custom syntax highlighting for SQL
-    const sqlHighlighting = syntaxHighlighting(defaultHighlightStyle);
+    // Custom syntax highlighting for SQL with proper dark/light mode colors
+    const createSqlHighlighting = (isDark: boolean) => {
+      const sqlHighlightStyle = HighlightStyle.define([
+        // Keywords (SELECT, FROM, WHERE, etc.)
+        { tag: tags.keyword, color: isDark ? "#569cd6" : "#0000ff" },
+        // Operators (=, <>, AND, OR, etc.)
+        { tag: tags.operator, color: isDark ? "#d4d4d4" : "#000000" },
+        // Strings
+        { tag: tags.string, color: isDark ? "#ce9178" : "#a31515" },
+        // Numbers
+        { tag: tags.number, color: isDark ? "#b5cea8" : "#098658" },
+        // Comments
+        { tag: tags.comment, color: isDark ? "#6a9955" : "#008000", fontStyle: "italic" },
+        // Function names
+        { tag: tags.function(tags.variableName), color: isDark ? "#dcdcaa" : "#795e26" },
+        // Types
+        { tag: tags.typeName, color: isDark ? "#4ec9b0" : "#267f99" },
+        // Table/column names (identifiers)
+        { tag: tags.variableName, color: isDark ? "#9cdcfe" : "#001080" },
+        // Property names
+        { tag: tags.propertyName, color: isDark ? "#9cdcfe" : "#001080" },
+        // Special identifiers
+        { tag: tags.special(tags.variableName), color: isDark ? "#4fc1ff" : "#0070c1" },
+        // Punctuation
+        { tag: tags.punctuation, color: isDark ? "#d4d4d4" : "#000000" },
+        // Brackets
+        { tag: tags.bracket, color: isDark ? "#ffd700" : "#795e26" },
+        // NULL, TRUE, FALSE
+        { tag: tags.bool, color: isDark ? "#569cd6" : "#0000ff" },
+        { tag: tags.null, color: isDark ? "#569cd6" : "#0000ff" },
+      ]);
+      return syntaxHighlighting(sqlHighlightStyle);
+    };
+    const sqlHighlighting = createSqlHighlighting(isDarkMode);
 
     // Get the appropriate SQL dialect
     const dialect = getSqlDialect(dbType);
@@ -318,7 +353,7 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
         history(),
         search(),
         sql({ dialect }),
-        sqlHighlighting,
+        highlightCompartment.current.of(sqlHighlighting),
         autocompletion({
           override: [snippetComplete, smartSqlComplete],
           activateOnTyping: true,
@@ -362,7 +397,7 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
     }
   }, [readOnly, loading]);
 
-  // Update theme when resolvedTheme changes
+  // Update theme and syntax highlighting when resolvedTheme changes
   useEffect(() => {
     if (viewRef.current) {
       const isDark = resolvedTheme === "dark";
@@ -401,8 +436,30 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
         },
         { dark: isDark }
       );
+
+      // Update syntax highlighting colors for the new theme
+      const newHighlightStyle = HighlightStyle.define([
+        { tag: tags.keyword, color: isDark ? "#569cd6" : "#0000ff" },
+        { tag: tags.operator, color: isDark ? "#d4d4d4" : "#000000" },
+        { tag: tags.string, color: isDark ? "#ce9178" : "#a31515" },
+        { tag: tags.number, color: isDark ? "#b5cea8" : "#098658" },
+        { tag: tags.comment, color: isDark ? "#6a9955" : "#008000", fontStyle: "italic" },
+        { tag: tags.function(tags.variableName), color: isDark ? "#dcdcaa" : "#795e26" },
+        { tag: tags.typeName, color: isDark ? "#4ec9b0" : "#267f99" },
+        { tag: tags.variableName, color: isDark ? "#9cdcfe" : "#001080" },
+        { tag: tags.propertyName, color: isDark ? "#9cdcfe" : "#001080" },
+        { tag: tags.special(tags.variableName), color: isDark ? "#4fc1ff" : "#0070c1" },
+        { tag: tags.punctuation, color: isDark ? "#d4d4d4" : "#000000" },
+        { tag: tags.bracket, color: isDark ? "#ffd700" : "#795e26" },
+        { tag: tags.bool, color: isDark ? "#569cd6" : "#0000ff" },
+        { tag: tags.null, color: isDark ? "#569cd6" : "#0000ff" },
+      ]);
+
       viewRef.current.dispatch({
-        effects: themeCompartment.current.reconfigure(newTheme),
+        effects: [
+          themeCompartment.current.reconfigure(newTheme),
+          highlightCompartment.current.reconfigure(syntaxHighlighting(newHighlightStyle)),
+        ],
       });
     }
   }, [resolvedTheme]);
