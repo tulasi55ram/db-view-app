@@ -303,16 +303,6 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         const existingNode = existingNodesMap.get(nodeId);
         const showAllDatabases = (conn.config as any).showAllDatabases;
 
-        // Debug: Log connection config details
-        console.log(`Building tree node for "${name}":`, {
-          nodeId,
-          status: conn.status,
-          dbType: conn.config.dbType,
-          showAllDatabases,
-          hasExistingNode: !!existingNode,
-          existingChildren: existingNode?.children?.length || 0,
-        });
-
         return {
           id: nodeId,
           type: "connection" as const,
@@ -414,7 +404,6 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
     if (!api) return [];
     try {
       const databases = await api.listDatabases(connectionKey);
-      console.log(`Loaded ${databases.length} databases for ${connectionName}:`, databases);
       return databases.map((database: string) => ({
         id: `${connectionKey}:database:${database}`,
         type: "database" as const,
@@ -715,13 +704,6 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             const noSchemaDatabases = ["mongodb", "redis", "elasticsearch", "cassandra"];
             const isNoSchemaDb = noSchemaDatabases.includes(node.dbType || "");
 
-            console.log(`Expanding connection node:`, {
-              name: node.connectionName,
-              dbType: node.dbType,
-              showAllDatabases: node.showAllDatabases,
-              isNoSchemaDb,
-            });
-
             if (isNoSchemaDb) {
               // For MongoDB/Redis/Elasticsearch/Cassandra, load object type containers directly (no schema level)
               // Use empty string as the "schema" since these DBs don't have schemas
@@ -729,13 +711,10 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
               setTreeData((prev) => updateTreeNode(prev, node.id, { children: containers, status: "connected" }));
             } else if (node.showAllDatabases) {
               // For SQL databases with showAllDatabases, load database list first
-              console.log(`Loading databases for connection with showAllDatabases=true:`, node.connectionName, node.showAllDatabases);
               const databases = await loadDatabases(node.connectionKey, node.connectionName, node.dbType);
-              console.log(`Loaded databases:`, databases);
               setTreeData((prev) => updateTreeNode(prev, node.id, { children: databases, status: "connected" }));
             } else {
               // For SQL databases, load schemas first
-              console.log(`Loading schemas for connection (no showAllDatabases):`, node.connectionName);
               const schemas = await loadSchemas(node.connectionKey, node.connectionName, undefined, node.dbType);
               setTreeData((prev) => updateTreeNode(prev, node.id, { children: schemas, status: "connected" }));
             }
@@ -1223,14 +1202,21 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
                     className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
                     onSelect={async () => {
                       if (node.connectionKey && node.connectionName) {
-                        // Get schemas from the connection's children
-                        const schemas = node.children?.filter(c => c.type === "schema").map(s => s.name) || [];
-                        if (schemas.length === 0 && api) {
-                          // If no schemas loaded yet, fetch them
-                          const fetchedSchemas = await api.listSchemas(node.connectionKey);
-                          onERDiagramOpen(node.connectionKey, node.connectionName, fetchedSchemas);
-                        } else {
-                          onERDiagramOpen(node.connectionKey, node.connectionName, schemas);
+                        try {
+                          // Get schemas from the connection's children
+                          const schemas = node.children?.filter(c => c.type === "schema").map(s => s.name) || [];
+                          if (schemas.length === 0 && api) {
+                            // If no schemas loaded yet, fetch them
+                            const fetchedSchemas = await api.listSchemas(node.connectionKey);
+                            onERDiagramOpen(node.connectionKey, node.connectionName, fetchedSchemas);
+                          } else {
+                            onERDiagramOpen(node.connectionKey, node.connectionName, schemas);
+                          }
+                        } catch (error) {
+                          console.error("Failed to load schemas for ER diagram:", error);
+                          toast.error("Failed to load schemas", {
+                            description: error instanceof Error ? error.message : "Connection error",
+                          });
                         }
                       }
                     }}

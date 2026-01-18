@@ -382,7 +382,7 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
     } finally {
       setLoading(false);
     }
-  }, [api, connectionKey, schema, table, limit, offset, filters, filterLogic, sortColumn, sortDirection, connectionStatus]);
+  }, [api, connectionKey, schema, table, database, limit, offset, filters, filterLogic, hasActiveFilters, sortColumn, sortDirection, connectionStatus]);
 
   // Reset state when table changes to prevent data overlap
   useEffect(() => {
@@ -1207,7 +1207,7 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
     setFilters(newFilters);
     setFilterLogic(logic);
     setOffset(0); // Reset to first page when filters change
-  }, []);
+  }, [setFilters, setFilterLogic]);
 
   // Handle individual filter removal
   const handleRemoveFilter = useCallback((index: number) => {

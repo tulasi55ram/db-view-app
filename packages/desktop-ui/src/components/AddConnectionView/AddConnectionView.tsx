@@ -398,11 +398,6 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
     setIsSaving(true);
     try {
       const config = buildConfig();
-      console.log(`Saving connection with config:`, {
-        name: config.name,
-        dbType: config.dbType,
-        showAllDatabases: (config as any).showAllDatabases,
-      });
       await api.saveConnection(config);
       onSave();
     } catch (error) {

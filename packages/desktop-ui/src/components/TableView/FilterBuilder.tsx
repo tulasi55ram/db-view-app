@@ -73,6 +73,23 @@ export function FilterBuilder({ columns, onApply, initialFilters = [], initialLo
     }
   }, [initialFilters, initialLogic, columns]);
 
+  // Fix filters with empty columnName when columns become available
+  useEffect(() => {
+    if (columns.length > 0) {
+      setFilters(prev => {
+        const needsUpdate = prev.some(f => !f.columnName || f.columnName === "");
+        if (needsUpdate) {
+          return prev.map(f =>
+            (!f.columnName || f.columnName === "")
+              ? { ...f, columnName: columns[0].name }
+              : f
+          );
+        }
+        return prev;
+      });
+    }
+  }, [columns]);
+
   // Use controlled state if provided, otherwise use internal state
   const isOpen = open !== undefined ? open : internalIsOpen;
   const setIsOpen = (value: boolean) => {

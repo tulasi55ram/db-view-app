@@ -12,6 +12,13 @@ import "@fontsource/jetbrains-mono/500.css";
 
 import "./styles/globals.css";
 
+// Prevent unhandled promise rejections from showing browser alerts
+window.addEventListener("unhandledrejection", (event) => {
+  console.error("Unhandled promise rejection:", event.reason);
+  // Prevent the browser from showing an alert dialog
+  event.preventDefault();
+});
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />
