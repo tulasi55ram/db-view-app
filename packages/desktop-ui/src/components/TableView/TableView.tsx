@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo, useLayoutEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { RefreshCw, Plus, Trash2, Info, Save, X, Copy, ArrowUp, ArrowDown, ArrowUpDown, Download, Upload, Lock, Bookmark } from "lucide-react";
+import { RefreshCw, Plus, Trash2, Info, Save, X, Copy, ArrowUp, ArrowDown, ArrowUpDown, Download, Upload, Lock, Bookmark, Pencil } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { getElectronAPI } from "@/electron";
 import { toast } from "sonner";
@@ -568,6 +568,26 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
     return null;
   }, [showInsertPanel, jsonEditor?.open, documentEditor?.open, cassandraEditor?.open, showMetadataPanel, showSavedViewsPanel]);
 
+  // Helper to check if a column is editable
+  const isColumnEditable = useCallback((columnName: string): boolean => {
+    if (isReadOnly) return false;
+    const colMeta = metadata.find((m) => m.name === columnName);
+    if (!colMeta) return true; // Default to editable if no metadata
+    // Non-editable if: explicitly marked non-editable, auto-increment, or generated
+    return colMeta.editable !== false && !colMeta.isAutoIncrement && !colMeta.isGenerated;
+  }, [isReadOnly, metadata]);
+
+  // Get reason why a column is not editable
+  const getColumnEditableReason = useCallback((columnName: string): string | null => {
+    if (isReadOnly) return "Connection is read-only";
+    const colMeta = metadata.find((m) => m.name === columnName);
+    if (!colMeta) return null;
+    if (colMeta.editable === false) return "Column is not editable";
+    if (colMeta.isAutoIncrement) return "Auto-increment column";
+    if (colMeta.isGenerated) return "Generated column";
+    return null;
+  }, [isReadOnly, metadata]);
+
   // Handler to open panels from QuickAccessBar
   const handleOpenPanel = useCallback((type: PanelType) => {
     // Close all panels first
@@ -717,6 +737,76 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
   const handleEditCancel = useCallback(() => {
     setEditingCell(null);
   }, []);
+
+  // Find next editable cell (for Tab navigation)
+  const findNextEditableCell = useCallback((currentRowIndex: number, currentColumn: string, reverse: boolean = false): { rowIndex: number; column: string } | null => {
+    const colIndex = columns.indexOf(currentColumn);
+    if (colIndex === -1) return null;
+
+    // Iterate through cells
+    let rowIndex = currentRowIndex;
+    let colIdx = colIndex;
+
+    while (true) {
+      // Move to next/prev column
+      if (reverse) {
+        colIdx--;
+        if (colIdx < 0) {
+          colIdx = columns.length - 1;
+          rowIndex--;
+        }
+      } else {
+        colIdx++;
+        if (colIdx >= columns.length) {
+          colIdx = 0;
+          rowIndex++;
+        }
+      }
+
+      // Check bounds
+      if (rowIndex < 0 || rowIndex >= rows.length) {
+        return null; // No more cells
+      }
+
+      // Check if we've looped back to start
+      if (rowIndex === currentRowIndex && colIdx === colIndex) {
+        return null; // No editable cell found
+      }
+
+      // Check if this cell is editable
+      const column = columns[colIdx];
+      const colMeta = metadata.find((m) => m.name === column);
+      const isEditable = !isReadOnly && colMeta?.editable !== false && !colMeta?.isAutoIncrement && !colMeta?.isGenerated;
+
+      if (isEditable) {
+        return { rowIndex, column };
+      }
+    }
+  }, [columns, rows, metadata, isReadOnly]);
+
+  // Handle Tab key in edit mode - save and move to next editable cell
+  const handleEditTabKey = useCallback((e: React.KeyboardEvent, currentRowIndex: number, currentColumn: string) => {
+    e.preventDefault();
+    // First commit the current edit
+    handleEditCommit();
+
+    // Find next editable cell
+    const nextCell = findNextEditableCell(currentRowIndex, currentColumn, e.shiftKey);
+    if (nextCell && rows[nextCell.rowIndex]) {
+      // Focus and start editing the next cell
+      setFocusedCell(nextCell);
+      const currentValue = rows[nextCell.rowIndex][nextCell.column];
+      // Small delay to allow state to settle
+      setTimeout(() => {
+        handleCellDoubleClick(
+          { stopPropagation: () => {}, preventDefault: () => {} } as React.MouseEvent<HTMLTableCellElement>,
+          nextCell.rowIndex,
+          nextCell.column,
+          currentValue
+        );
+      }, 50);
+    }
+  }, [handleEditCommit, findNextEditableCell, rows, handleCellDoubleClick]);
 
   // Handle JSON editor save
   const handleJsonEditorSave = useCallback(async (value: string) => {
@@ -1503,6 +1593,58 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
         return;
       }
 
+      // Enter to start editing focused cell (when not typing and no modal open)
+      if (e.key === "Enter" && !isTyping && !isModalOpen && focusedCell) {
+        const { rowIndex, column } = focusedCell;
+        // Check if column is editable
+        const colMeta = metadata.find((m) => m.name === column);
+        const columnEditable = !isReadOnly && colMeta?.editable !== false && !colMeta?.isAutoIncrement && !colMeta?.isGenerated;
+        if (columnEditable && rows[rowIndex]) {
+          e.preventDefault();
+          // Trigger the edit - simulate double click behavior
+          const currentValue = rows[rowIndex][column];
+          // Use a synthetic event to trigger the double click handler
+          handleCellDoubleClick(
+            { stopPropagation: () => {}, preventDefault: () => {} } as React.MouseEvent<HTMLTableCellElement>,
+            rowIndex,
+            column,
+            currentValue
+          );
+          return;
+        }
+      }
+
+      // Arrow key navigation for focused cell (when not typing and no modal open)
+      if (!isTyping && !isModalOpen && focusedCell && !e.ctrlKey && !e.metaKey) {
+        const { rowIndex, column } = focusedCell;
+        const colIndex = columns.indexOf(column);
+
+        if (e.key === "ArrowUp" && rowIndex > 0) {
+          e.preventDefault();
+          setFocusedCell({ rowIndex: rowIndex - 1, column });
+          return;
+        } else if (e.key === "ArrowDown" && rowIndex < rows.length - 1) {
+          e.preventDefault();
+          setFocusedCell({ rowIndex: rowIndex + 1, column });
+          return;
+        } else if (e.key === "ArrowLeft" && colIndex > 0) {
+          e.preventDefault();
+          setFocusedCell({ rowIndex, column: columns[colIndex - 1] });
+          return;
+        } else if (e.key === "ArrowRight" && colIndex < columns.length - 1) {
+          e.preventDefault();
+          setFocusedCell({ rowIndex, column: columns[colIndex + 1] });
+          return;
+        }
+      }
+
+      // Escape to clear focused cell (when not typing and no modal open)
+      if (e.key === "Escape" && !isTyping && !isModalOpen && focusedCell) {
+        e.preventDefault();
+        setFocusedCell(null);
+        return;
+      }
+
       // Jump to row dialog: Ctrl+G / Cmd+G (when no modal open)
       if ((e.ctrlKey || e.metaKey) && e.key === "g" && !isTyping && !isModalOpen) {
         e.preventDefault();
@@ -1855,37 +1997,47 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
                     title="Select all"
                   />
                 </th>
-                {columns.map((column) => (
-                  <th
-                    key={column}
-                    className="group text-left font-medium text-text-primary whitespace-nowrap bg-bg-tertiary cursor-pointer hover:bg-bg-hover select-none transition-colors relative border-r border-border"
-                    style={{ width: columnWidths[column] || 150, minWidth: 60, flexShrink: 0 }}
-                    onClick={() => handleColumnSort(column)}
-                    title={`Sort by ${column}${sortColumn === column ? (sortDirection === "ASC" ? " (ascending)" : " (descending)") : ""}`}
-                  >
-                    <div className="flex items-center gap-1 px-3 py-2">
-                      <span className="truncate">{column}</span>
-                      {sortColumn === column ? (
-                        sortDirection === "ASC" ? (
-                          <ArrowUp className="w-3.5 h-3.5 text-accent flex-shrink-0" />
+                {columns.map((column) => {
+                  const editable = isColumnEditable(column);
+                  const editableReason = getColumnEditableReason(column);
+                  return (
+                    <th
+                      key={column}
+                      className="group text-left font-medium text-text-primary whitespace-nowrap bg-bg-tertiary cursor-pointer hover:bg-bg-hover select-none transition-colors relative border-r border-border"
+                      style={{ width: columnWidths[column] || 150, minWidth: 60, flexShrink: 0 }}
+                      onClick={() => handleColumnSort(column)}
+                      title={`Sort by ${column}${sortColumn === column ? (sortDirection === "ASC" ? " (ascending)" : " (descending)") : ""}${!editable ? ` • ${editableReason}` : ""}`}
+                    >
+                      <div className="flex items-center gap-1 px-3 py-2">
+                        {/* Editable indicator */}
+                        {!editable && (
+                          <span title={editableReason || "Not editable"}>
+                            <Lock className="w-3 h-3 text-text-tertiary flex-shrink-0" />
+                          </span>
+                        )}
+                        <span className={cn("truncate", !editable && "text-text-secondary")}>{column}</span>
+                        {sortColumn === column ? (
+                          sortDirection === "ASC" ? (
+                            <ArrowUp className="w-3.5 h-3.5 text-accent flex-shrink-0" />
+                          ) : (
+                            <ArrowDown className="w-3.5 h-3.5 text-accent flex-shrink-0" />
+                          )
                         ) : (
-                          <ArrowDown className="w-3.5 h-3.5 text-accent flex-shrink-0" />
-                        )
-                      ) : (
-                        <ArrowUpDown className="w-3.5 h-3.5 text-text-tertiary opacity-0 group-hover:opacity-50 transition-opacity flex-shrink-0" />
-                      )}
-                    </div>
-                    {/* Resize handle */}
-                    <div
-                      className={cn(
-                        "absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-accent/50 transition-colors",
-                        resizingColumn === column && "bg-accent"
-                      )}
-                      onMouseDown={(e) => handleResizeStart(e, column)}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </th>
-                ))}
+                          <ArrowUpDown className="w-3.5 h-3.5 text-text-tertiary opacity-0 group-hover:opacity-50 transition-opacity flex-shrink-0" />
+                        )}
+                      </div>
+                      {/* Resize handle */}
+                      <div
+                        className={cn(
+                          "absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-accent/50 transition-colors",
+                          resizingColumn === column && "bg-accent"
+                        )}
+                        onMouseDown={(e) => handleResizeStart(e, column)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody
@@ -1932,6 +2084,8 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
                       const cellKey = `${rowIndex}-${column}`;
                       const hasPendingEdit = pendingEdits.has(cellKey);
                       const pendingEdit = pendingEdits.get(cellKey);
+                      const editable = isColumnEditable(column);
+                      const editableReason = getColumnEditableReason(column);
 
                       // Get the display value - either pending edit or original
                       const displayValue = hasPendingEdit && pendingEdit ? pendingEdit.newValue : row[column];
@@ -1939,14 +2093,23 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
 
                       const isFocused = focusedCell?.rowIndex === rowIndex && focusedCell?.column === column;
 
+                      // Build tooltip text
+                      const tooltipText = hasPendingEdit
+                        ? "Pending change - Click Save to commit"
+                        : !editable
+                        ? editableReason || "Not editable"
+                        : "Double-click or press Enter to edit • Ctrl+C to copy";
+
                       return (
                         <td
                           key={column}
                           className={cn(
-                            "px-3 py-2 text-text-primary whitespace-nowrap relative overflow-hidden border-r border-border",
-                            !isEditing && "cursor-pointer hover:bg-bg-tertiary/50",
+                            "group/cell px-3 py-2 text-text-primary whitespace-nowrap relative overflow-hidden border-r border-border",
+                            !isEditing && editable && "cursor-pointer hover:bg-bg-tertiary/50",
+                            !isEditing && !editable && "cursor-not-allowed",
                             hasPendingEdit && "border-2 border-orange-500 bg-orange-500/10",
-                            isFocused && !hasPendingEdit && "ring-1 ring-accent/50 bg-accent/5"
+                            isFocused && !hasPendingEdit && editable && "ring-2 ring-accent bg-accent/10",
+                            isFocused && !hasPendingEdit && !editable && "ring-1 ring-text-tertiary/30 bg-bg-tertiary/30"
                           )}
                           style={{
                             width: columnWidths[column] || 150,
@@ -1956,8 +2119,8 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
                             alignItems: "center",
                           }}
                           onClick={() => !isEditing && setFocusedCell({ rowIndex, column })}
-                          onDoubleClick={(e) => !isEditing && handleCellDoubleClick(e, rowIndex, column, row[column])}
-                          title={hasPendingEdit ? "Pending change - Click Save to commit" : "Click to select, double-click to edit, Ctrl+C to copy"}
+                          onDoubleClick={(e) => !isEditing && editable && handleCellDoubleClick(e, rowIndex, column, row[column])}
+                          title={tooltipText}
                         >
                           {isEditing ? (
                             (() => {
@@ -1992,29 +2155,48 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
                                       handleEditCommit();
                                     } else if (e.key === "Escape") {
                                       handleEditCancel();
+                                    } else if (e.key === "Tab") {
+                                      handleEditTabKey(e, rowIndex, column);
                                     }
                                   }}
                                   autoFocus
-                                  className="w-full min-w-[100px] px-2 py-1 bg-bg-primary border border-accent rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                                  className="w-full min-w-[100px] px-2 py-1 bg-bg-primary border-2 border-accent rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent shadow-lg"
                                 />
                               );
                             })()
                           ) : isCassandra ? (
                             // Use rich Cassandra value cell for Cassandra connections
-                            <CassandraValueCell
-                              value={displayValue}
-                              columnName={column}
-                              columnType={metadata.find(m => m.name === column)?.type || "text"}
-                              isCompact={true}
-                            />
+                            <>
+                              <CassandraValueCell
+                                value={displayValue}
+                                columnName={column}
+                                columnType={metadata.find(m => m.name === column)?.type || "text"}
+                                isCompact={true}
+                              />
+                              {/* Edit indicator on hover */}
+                              {editable ? (
+                                <Pencil className="w-3 h-3 text-accent opacity-0 group-hover/cell:opacity-60 transition-opacity absolute right-1 flex-shrink-0" />
+                              ) : (
+                                <Lock className="w-3 h-3 text-text-tertiary opacity-0 group-hover/cell:opacity-40 transition-opacity absolute right-1 flex-shrink-0" />
+                              )}
+                            </>
                           ) : (
-                            <span className={cn(
-                              displayValue === null && "text-text-tertiary italic",
-                              hasPendingEdit && "font-medium",
-                              "truncate"
-                            )}>
-                              {displayText}
-                            </span>
+                            <>
+                              <span className={cn(
+                                displayValue === null && "text-text-tertiary italic",
+                                hasPendingEdit && "font-medium",
+                                !editable && "text-text-secondary",
+                                "truncate"
+                              )}>
+                                {displayText}
+                              </span>
+                              {/* Edit indicator on hover */}
+                              {editable ? (
+                                <Pencil className="w-3 h-3 text-accent opacity-0 group-hover/cell:opacity-60 transition-opacity absolute right-1 flex-shrink-0" />
+                              ) : (
+                                <Lock className="w-3 h-3 text-text-tertiary opacity-0 group-hover/cell:opacity-40 transition-opacity absolute right-1 flex-shrink-0" />
+                              )}
+                            </>
                           )}
                         </td>
                       );
