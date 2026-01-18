@@ -1083,7 +1083,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
 
               {/* Content area with depth-based indentation */}
               <div
-                className="flex items-center gap-1.5 flex-1 min-w-0 pr-2"
+                className="flex items-center gap-1.5 flex-1 pr-2"
                 style={{ paddingLeft: `${depth * 16}px` }}
               >
               {/* Expand/Collapse Icon */}
@@ -1151,7 +1151,9 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
               )}
 
               {/* Node Name */}
-              <span className="truncate flex-1 text-text-primary">{node.name}</span>
+              <Tooltip content={node.name}>
+                <span className="whitespace-nowrap text-text-primary">{node.name}</span>
+              </Tooltip>
 
               {/* Table Badges - Row count and size */}
               {node.type === "table" && (
@@ -1171,9 +1173,11 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
 
               {/* Description */}
               {description && (
-                <span className="text-2xs text-text-tertiary truncate max-w-[120px]">
-                  {description}
-                </span>
+                <Tooltip content={description}>
+                  <span className="text-2xs text-text-tertiary whitespace-nowrap">
+                    {description}
+                  </span>
+                </Tooltip>
               )}
               </div>
             </div>
@@ -1417,24 +1421,26 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             </Button>
           </div>
         ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={treeData.map((node) => node.id)}
-              strategy={verticalListSortingStrategy}
+          <div className="min-w-max">
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
             >
-              {treeData.map((node) => (
-                <SortableConnectionItem key={node.id} node={node}>
-                  {({ attributes, listeners }: { attributes: any; listeners: any }) =>
-                    renderNode(node, 0, { attributes, listeners })
-                  }
-                </SortableConnectionItem>
-              ))}
-            </SortableContext>
-          </DndContext>
+              <SortableContext
+                items={treeData.map((node) => node.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {treeData.map((node) => (
+                  <SortableConnectionItem key={node.id} node={node}>
+                    {({ attributes, listeners }: { attributes: any; listeners: any }) =>
+                      renderNode(node, 0, { attributes, listeners })
+                    }
+                  </SortableConnectionItem>
+                ))}
+              </SortableContext>
+            </DndContext>
+          </div>
         )}
       </div>
     </div>
