@@ -1,7 +1,10 @@
 import { useEffect, useState, useCallback, useRef, useMemo, useLayoutEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { RefreshCw, Plus, Trash2, Info, Save, X, Copy, ArrowUp, ArrowDown, ArrowUpDown, Download, Upload, Lock, Bookmark } from "lucide-react";
+import { RefreshCw, Plus, Trash2, Info, Save, X, Copy, ArrowUp, ArrowDown, ArrowUpDown, Download, Upload, Lock, Bookmark, MoreHorizontal, Check } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { Tooltip } from "@/primitives/Tooltip";
 import { cn } from "@/utils/cn";
 import { getElectronAPI } from "@/electron";
 import { toast } from "sonner";
@@ -1772,12 +1775,6 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
             {rows.length} {rows.length === 1 ? "row" : "rows"}
             {totalRows !== null && ` of ${totalRows}`}
           </span>
-          {selectedRows.size > 0 && (
-            <>
-              <span>•</span>
-              <span className="text-accent">{selectedRows.size} selected</span>
-            </>
-          )}
           {pendingEdits.size > 0 && (
             <>
               <span>•</span>
@@ -1808,101 +1805,93 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
               </button>
             </>
           )}
-          <button
-            onClick={handleStartInsert}
-            disabled={isReadOnly}
-            className={cn(
-              "p-1.5 rounded transition-colors flex items-center gap-1 text-sm",
-              !isReadOnly
-                ? "hover:bg-bg-hover text-text-primary"
-                : "opacity-50 cursor-not-allowed text-text-tertiary"
-            )}
-            title={isReadOnly ? "Read-only connection" : "Insert Row"}
-          >
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">Insert</span>
-          </button>
-          {selectedRows.size > 0 && (
+          <Tooltip content={isReadOnly ? "Read-only connection" : "Insert Row"} side="bottom">
             <button
-              onClick={handleCopySelectedRows}
-              className="p-1.5 rounded hover:bg-bg-hover transition-colors flex items-center gap-1 text-sm text-text-primary"
-              title={`Copy ${selectedRows.size} row${selectedRows.size === 1 ? '' : 's'} to clipboard (Ctrl+C)`}
-            >
-              <Copy className="w-4 h-4" />
-              <span className="hidden sm:inline">Copy</span>
-            </button>
-          )}
-          {selectedRows.size === 1 && !isReadOnly && (
-            <button
-              onClick={handleDuplicateRow}
-              className="p-1.5 rounded hover:bg-bg-hover transition-colors flex items-center gap-1 text-sm text-text-primary"
-              title="Duplicate Selected Row"
+              onClick={handleStartInsert}
+              disabled={isReadOnly}
+              className={cn(
+                "p-1.5 rounded transition-colors flex items-center gap-1 text-sm",
+                !isReadOnly
+                  ? "hover:bg-bg-hover text-text-primary"
+                  : "opacity-50 cursor-not-allowed text-text-tertiary"
+              )}
             >
               <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Duplicate</span>
+              <span className="hidden sm:inline">Insert</span>
             </button>
-          )}
-          {selectedRows.size > 0 && !isReadOnly && (
+          </Tooltip>
+          <div className="w-px h-5 bg-border mx-1" />
+          {/* More Actions Dropdown */}
+          <DropdownMenu.Root>
+            <Tooltip content="More actions" side="bottom">
+              <DropdownMenu.Trigger asChild>
+                <button className="p-1.5 rounded hover:bg-bg-hover transition-colors flex items-center gap-1 text-sm text-text-primary">
+                  <MoreHorizontal className="w-4 h-4" />
+                </button>
+              </DropdownMenu.Trigger>
+            </Tooltip>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                className={cn(
+                  "min-w-[160px] py-1 rounded-md z-50",
+                  "bg-bg-tertiary border border-border shadow-panel",
+                  "animate-scale-in origin-top-right"
+                )}
+                align="end"
+                sideOffset={4}
+              >
+                <DropdownMenu.Item
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none",
+                    rows.length > 0
+                      ? "hover:bg-bg-hover text-text-primary"
+                      : "opacity-50 cursor-not-allowed text-text-tertiary"
+                  )}
+                  disabled={rows.length === 0}
+                  onSelect={() => setShowExportDialog(true)}
+                >
+                  <Download className="w-4 h-4" />
+                  Export
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer outline-none",
+                    !isReadOnly
+                      ? "hover:bg-bg-hover text-text-primary"
+                      : "opacity-50 cursor-not-allowed text-text-tertiary"
+                  )}
+                  disabled={isReadOnly}
+                  onSelect={() => setShowImportDialog(true)}
+                >
+                  <Upload className="w-4 h-4" />
+                  Import
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator className="h-px bg-border my-1" />
+                <DropdownMenu.Item
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none text-text-primary"
+                  onSelect={() => setShowSavedViewsPanel(true)}
+                >
+                  <Bookmark className="w-4 h-4" />
+                  Saved Views
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none text-text-primary"
+                  onSelect={() => setShowMetadataPanel(true)}
+                >
+                  <Info className="w-4 h-4" />
+                  Table Info
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+          <Tooltip content="Refresh" side="bottom">
             <button
-              onClick={handleDeleteRows}
-              className="p-1.5 rounded hover:bg-bg-hover transition-colors flex items-center gap-1 text-sm text-error"
-              title="Delete Selected Rows"
+              onClick={loadData}
+              className="p-1.5 rounded hover:bg-bg-hover transition-colors"
             >
-              <Trash2 className="w-4 h-4" />
-              <span className="hidden sm:inline">Delete</span>
+              <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
             </button>
-          )}
-          <div className="w-px h-5 bg-border mx-1" /> {/* Separator */}
-          <button
-            onClick={() => setShowExportDialog(true)}
-            disabled={rows.length === 0}
-            className={cn(
-              "p-1.5 rounded transition-colors flex items-center gap-1 text-sm",
-              rows.length > 0
-                ? "hover:bg-bg-hover text-text-primary"
-                : "opacity-50 cursor-not-allowed text-text-tertiary"
-            )}
-            title="Export Data"
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">Export</span>
-          </button>
-          <button
-            onClick={() => setShowImportDialog(true)}
-            disabled={isReadOnly}
-            className={cn(
-              "p-1.5 rounded transition-colors flex items-center gap-1 text-sm",
-              !isReadOnly
-                ? "hover:bg-bg-hover text-text-primary"
-                : "opacity-50 cursor-not-allowed text-text-tertiary"
-            )}
-            title={isReadOnly ? "Read-only connection" : "Import Data"}
-          >
-            <Upload className="w-4 h-4" />
-            <span className="hidden sm:inline">Import</span>
-          </button>
-          <div className="w-px h-5 bg-border mx-1" /> {/* Separator */}
-          <button
-            onClick={() => setShowSavedViewsPanel(true)}
-            className="p-1.5 rounded hover:bg-bg-hover transition-colors"
-            title="Saved Views"
-          >
-            <Bookmark className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setShowMetadataPanel(true)}
-            className="p-1.5 rounded hover:bg-bg-hover transition-colors"
-            title="Table Info"
-          >
-            <Info className="w-4 h-4" />
-          </button>
-          <button
-            onClick={loadData}
-            className="p-1.5 rounded hover:bg-bg-hover transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
-          </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -2211,6 +2200,64 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
             )}
           </div>
         )}
+
+        {/* Floating Selection Bar */}
+        <AnimatePresence>
+          {selectedRows.size > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-2 bg-bg-secondary border border-border rounded-lg shadow-panel"
+            >
+              <div className="flex items-center gap-2 text-sm text-text-primary">
+                <Check className="w-4 h-4 text-accent" />
+                <span className="font-medium">{selectedRows.size} selected</span>
+              </div>
+              <div className="w-px h-5 bg-border" />
+              <div className="flex items-center gap-1">
+                <Tooltip content={`Copy ${selectedRows.size} row${selectedRows.size === 1 ? '' : 's'} to clipboard`} side="top">
+                  <button
+                    onClick={handleCopySelectedRows}
+                    className="p-1.5 rounded hover:bg-bg-hover transition-colors text-text-primary"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </Tooltip>
+                {selectedRows.size === 1 && !isReadOnly && (
+                  <Tooltip content="Duplicate row" side="top">
+                    <button
+                      onClick={handleDuplicateRow}
+                      className="p-1.5 rounded hover:bg-bg-hover transition-colors text-text-primary"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </Tooltip>
+                )}
+                {!isReadOnly && (
+                  <Tooltip content={`Delete ${selectedRows.size} row${selectedRows.size === 1 ? '' : 's'}`} side="top">
+                    <button
+                      onClick={handleDeleteRows}
+                      className="p-1.5 rounded hover:bg-bg-hover transition-colors text-error"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
+              <div className="w-px h-5 bg-border" />
+              <Tooltip content="Clear selection" side="top">
+                <button
+                  onClick={() => setSelectedRows(new Set())}
+                  className="p-1 rounded hover:bg-bg-hover transition-colors text-text-secondary"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </Tooltip>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Pagination info */}
