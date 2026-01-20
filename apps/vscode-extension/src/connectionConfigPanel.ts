@@ -68,18 +68,24 @@ export function showConnectionConfigPanel(
             let connection: DatabaseConnectionConfig;
 
             if (dbType === 'sqlserver') {
+              // When showAllDatabases is enabled and no database specified, use master
+              let sqlServerDatabase = message.database;
+              if (message.showAllDatabases && !sqlServerDatabase) {
+                sqlServerDatabase = 'master';
+              }
               connection = {
                 dbType: 'sqlserver',
                 name: message.name || undefined,
                 host: message.host,
                 port: parseInt(message.port, 10) || 1433,
-                database: message.database,
+                database: sqlServerDatabase,
                 user: message.user,
                 password,
                 instanceName: message.instanceName || undefined,
                 authenticationType: message.authType || 'sql',
                 encrypt: message.encrypt !== false,
                 trustServerCertificate: message.trustServerCert !== false,
+                showAllDatabases: message.showAllDatabases || false,
                 readOnly: message.readOnly || false
               };
             } else if (dbType === 'sqlite') {
@@ -182,16 +188,27 @@ export function showConnectionConfigPanel(
               };
             } else {
               // PostgreSQL, MySQL, MariaDB
+              // When showAllDatabases is enabled and no database specified, use a default
+              let database = message.database;
+              if (message.showAllDatabases && !database) {
+                // Use default system database based on type
+                if (dbType === 'postgres') {
+                  database = 'postgres';
+                } else if (dbType === 'mysql' || dbType === 'mariadb') {
+                  database = 'mysql';
+                }
+              }
               connection = {
                 dbType,
                 name: message.name || undefined,
                 host: message.host,
                 port: parseInt(message.port, 10),
-                database: message.database,
+                database,
                 user: message.user,
                 password,
                 ssl: message.sslEnabled || false,
                 sslMode: message.sslMode || undefined,
+                showAllDatabases: message.showAllDatabases || false,
                 readOnly: message.readOnly || false
               } as DatabaseConnectionConfig;
             }
@@ -268,18 +285,24 @@ export function showConnectionConfigPanel(
               let testConfig: DatabaseConnectionConfig;
 
               if (dbType === 'sqlserver') {
+                // When showAllDatabases is enabled and no database specified, use master
+                let sqlServerTestDatabase = message.database;
+                if (message.showAllDatabases && !sqlServerTestDatabase) {
+                  sqlServerTestDatabase = 'master';
+                }
                 testConfig = {
                   dbType: 'sqlserver',
                   name: message.name || undefined,
                   host: message.host,
                   port: parseInt(message.port, 10) || 1433,
-                  database: message.database,
+                  database: sqlServerTestDatabase,
                   user: message.user,
                   password: testPassword,
                   instanceName: message.instanceName || undefined,
                   authenticationType: message.authType || 'sql',
                   encrypt: message.encrypt !== false,
                   trustServerCertificate: message.trustServerCert !== false,
+                  showAllDatabases: message.showAllDatabases || false,
                   readOnly: message.readOnly || false
                 };
               } else if (dbType === 'mongodb') {
@@ -378,16 +401,27 @@ export function showConnectionConfigPanel(
                 };
               } else {
                 // PostgreSQL, MySQL, MariaDB
+                // When showAllDatabases is enabled and no database specified, use a default
+                let testDatabase = message.database;
+                if (message.showAllDatabases && !testDatabase) {
+                  // Use default system database based on type
+                  if (dbType === 'postgres') {
+                    testDatabase = 'postgres';
+                  } else if (dbType === 'mysql' || dbType === 'mariadb') {
+                    testDatabase = 'mysql';
+                  }
+                }
                 testConfig = {
                   dbType,
                   name: message.name || undefined,
                   host: message.host,
                   port: parseInt(message.port, 10),
-                  database: message.database,
+                  database: testDatabase,
                   user: message.user,
                   password: testPassword,
                   ssl: message.sslEnabled || false,
                   sslMode: message.sslMode || undefined,
+                  showAllDatabases: message.showAllDatabases || false,
                   readOnly: message.readOnly || false
                 } as DatabaseConnectionConfig;
               }
@@ -487,6 +521,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
   const defaultFilePath = escapeHtml((defaults && 'filePath' in defaults ? defaults.filePath : undefined) ?? "");
   const defaultAuthDatabase = escapeHtml((defaults && 'authDatabase' in defaults ? defaults.authDatabase : undefined) ?? "admin");
   const defaultReadOnly = defaults?.readOnly ?? false;
+  const defaultShowAllDatabases = (defaults && 'showAllDatabases' in defaults) ? Boolean(defaults.showAllDatabases) : false;
   const isEditing = Boolean(defaults?.name);
 
   // Redis defaults
@@ -1379,6 +1414,15 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                         </label>
                         <span class="checkbox-icon">🔒</span>
                     </div>
+
+                    <div class="checkbox-group" id="showAllDatabasesGroup" style="display: none;" onclick="document.getElementById('showAllDatabases').click()">
+                        <input type="checkbox" id="showAllDatabases" name="showAllDatabases" ${defaultShowAllDatabases ? 'checked' : ''} onclick="event.stopPropagation()">
+                        <label for="showAllDatabases" onclick="event.stopPropagation()">
+                            <strong>Show all databases</strong>
+                            <div class="help-text" style="margin-top: 2px;">Display all databases on the server in the sidebar tree</div>
+                        </label>
+                        <span class="checkbox-icon">📚</span>
+                    </div>
                 </div>
 
                 <!-- Production Warning -->
@@ -1451,6 +1495,8 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
         const portInput = document.getElementById('port');
         const databaseInput = document.getElementById('database');
         const readOnlyCheckbox = document.getElementById('readOnly');
+        const showAllDatabasesCheckbox = document.getElementById('showAllDatabases');
+        const showAllDatabasesGroup = document.getElementById('showAllDatabasesGroup');
         const productionWarning = document.getElementById('productionWarning');
         const statusMessage = document.getElementById('statusMessage');
         const statusIcon = document.getElementById('statusIcon');
@@ -1552,6 +1598,15 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
             document.querySelectorAll('.sqlserver-advanced-fields').forEach(el => {
                 el.classList.toggle('hidden', type !== 'sqlserver');
             });
+
+            // Show/hide "Show all databases" option (PostgreSQL, MySQL, MariaDB, SQL Server)
+            const supportsShowAllDatabases = type === 'postgres' || type === 'mysql' || type === 'mariadb' || type === 'sqlserver';
+            showAllDatabasesGroup.style.display = supportsShowAllDatabases ? 'flex' : 'none';
+            // Reset checkbox and database field when switching to unsupported types
+            if (!supportsShowAllDatabases) {
+                showAllDatabasesCheckbox.checked = false;
+                databaseInput.disabled = false;
+            }
 
             // Show/hide MongoDB advanced fields
             document.querySelectorAll('.mongodb-advanced-fields').forEach(el => {
@@ -1673,8 +1728,10 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 const host = formData.get('host');
                 const port = formData.get('port');
                 const database = formData.get('database');
+                const showAllDbs = formData.get('showAllDatabases') === 'on';
 
-                if (!host || !port || !database) {
+                // Database is optional when "Show all databases" is enabled
+                if (!host || !port || (!database && !showAllDbs)) {
                     showStatus('Please fill in all required fields', 'error');
                     return;
                 }
@@ -1739,6 +1796,7 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 cassandraSsl: formData.get('cassandraSsl') === 'on',
                 // Common
                 readOnly: formData.get('readOnly') === 'on',
+                showAllDatabases: formData.get('showAllDatabases') === 'on',
                 saveConnection: true,
                 originalName: formData.get('originalName') || '' // For duplicate detection
             });
@@ -1838,7 +1896,8 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
                 cassandraConsistency: formData.get('cassandraConsistency'),
                 cassandraSsl: formData.get('cassandraSsl') === 'on',
                 // Common
-                readOnly: formData.get('readOnly') === 'on'
+                readOnly: formData.get('readOnly') === 'on',
+                showAllDatabases: formData.get('showAllDatabases') === 'on'
             });
         }
 
@@ -1855,6 +1914,19 @@ function getWebviewContent(defaults?: Partial<ConnectionConfig | DatabaseConnect
         hostInput.addEventListener('input', checkProductionWarning);
         databaseInput.addEventListener('input', checkProductionWarning);
         readOnlyCheckbox.addEventListener('change', checkProductionWarning);
+
+        // Toggle database field when "Show all databases" is checked
+        showAllDatabasesCheckbox.addEventListener('change', () => {
+            databaseInput.disabled = showAllDatabasesCheckbox.checked;
+            if (showAllDatabasesCheckbox.checked) {
+                databaseInput.value = '';
+            }
+        });
+
+        // Initialize database field state based on default value
+        if (showAllDatabasesCheckbox.checked) {
+            databaseInput.disabled = true;
+        }
 
         // Handle messages from extension
         window.addEventListener('message', event => {

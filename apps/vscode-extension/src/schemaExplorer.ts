@@ -10,6 +10,8 @@ export interface TableIdentifier {
 }
 
 type ConnectionNode = { type: "connection"; sizeInBytes?: number };
+type DatabasesContainerNode = { type: "databasesContainer"; count: number };
+type DatabaseNode = { type: "database"; name: string };
 type SchemasContainerNode = { type: "schemasContainer"; count: number };
 type SchemaNode = { type: "schema"; schema: string; keyCount?: number };
 type ObjectTypeContainerNode = {
@@ -38,6 +40,8 @@ type TypeNode = { type: "typeNode"; schema: string; name: string };
 type WelcomeNode = { type: "welcome" };
 type NodeData =
   | ConnectionNode
+  | DatabasesContainerNode
+  | DatabaseNode
   | SchemasContainerNode
   | SchemaNode
   | ObjectTypeContainerNode
@@ -284,6 +288,24 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
   getStatusForConnection(conn: ConnectionConfig | DatabaseConnectionConfig): ConnectionStatus {
     const key = this.getConnectionKey(conn);
     return this.clientStatuses.get(key) || 'disconnected';
+  }
+
+  // Get or create a client for a specific database (used when showAllDatabases is enabled)
+  // This creates a separate adapter for each database within the same server
+  async getOrCreateClientForDatabase(
+    originalConn: ConnectionConfig | DatabaseConnectionConfig,
+    databaseName: string
+  ): Promise<DatabaseAdapter> {
+    // Create a modified connection config with the specific database
+    const dbSpecificConn = {
+      ...originalConn,
+      database: databaseName,
+      // Create a unique name for this database-specific connection
+      name: originalConn.name ? `${originalConn.name}:${databaseName}` : undefined,
+    } as DatabaseConnectionConfig;
+
+    // Use getOrCreateClient which handles caching and connection management
+    return this.getOrCreateClient(dbSpecificConn);
   }
 
   // Public method to disconnect a specific connection
@@ -591,6 +613,18 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
           }, conn)];
         }
 
+        // Check if "Show all databases" is enabled for this connection
+        const showAllDatabases = 'showAllDatabases' in conn && conn.showAllDatabases === true;
+        if (showAllDatabases && client.listDatabases) {
+          try {
+            const databases = await client.listDatabases();
+            return [new SchemaTreeItem({ type: "databasesContainer", count: databases.length }, conn)];
+          } catch (dbError) {
+            console.error("[dbview] Failed to list databases:", dbError);
+            // Fall back to showing schemas for the connected database
+          }
+        }
+
         // For schema-based databases (PostgreSQL, MySQL, etc.)
         const schemas = await client.listSchemas();
 
@@ -629,6 +663,62 @@ export class SchemaExplorerProvider implements vscode.TreeDataProvider<SchemaTre
       if (!conn) return null;
       return this.getClientForConnection(conn) || null;
     };
+
+    if (isDatabasesContainerNode(element.node)) {
+      const conn = element.connectionInfo;
+      if (!conn) return [];
+      const client = await getClientForElement(element);
+      if (!client || !client.listDatabases) return [];
+
+      try {
+        const databases = await client.listDatabases();
+        return databases.map((dbName) => new SchemaTreeItem({ type: "database", name: dbName }, conn));
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorKey = `${this.getConnectionKey(conn)}:listDatabases`;
+        if (!this.errorNotificationShown.has(errorKey)) {
+          this.errorNotificationShown.add(errorKey);
+          vscode.window.showErrorMessage(`dbview: Failed to list databases - ${errorMessage}`);
+        }
+        console.error("[dbview] Error listing databases:", error);
+        return [];
+      }
+    }
+
+    if (isDatabaseNode(element.node)) {
+      // Expand database node to show schemas for that specific database
+      const conn = element.connectionInfo;
+      if (!conn) return [];
+
+      const databaseName = element.node.name;
+      try {
+        // Get or create a client for this specific database
+        const dbClient = await this.getOrCreateClientForDatabase(conn, databaseName);
+        if (!dbClient) return [];
+
+        // Load schemas for this database
+        const schemas = await dbClient.listSchemas();
+
+        // Create a modified connection info that includes the database name
+        // This is needed so child nodes can use the correct database-specific client
+        const dbSpecificConn = {
+          ...conn,
+          database: databaseName,
+          name: conn.name ? `${conn.name}:${databaseName}` : undefined,
+        } as DatabaseConnectionConfig;
+
+        return schemas.map((schema) => new SchemaTreeItem({ type: "schema", schema }, dbSpecificConn));
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorKey = `${this.getConnectionKey(conn)}:database:${databaseName}`;
+        if (!this.errorNotificationShown.has(errorKey)) {
+          this.errorNotificationShown.add(errorKey);
+          vscode.window.showErrorMessage(`dbview: Failed to load schemas for "${databaseName}" - ${errorMessage}`);
+        }
+        console.error(`[dbview] Error loading schemas for database ${databaseName}:`, error);
+        return [];
+      }
+    }
 
     if (isSchemasContainerNode(element.node)) {
       const conn = element.connectionInfo;
@@ -933,6 +1023,18 @@ export class SchemaTreeItem extends vscode.TreeItem {
       this.tooltip.appendMarkdown(`_Expand to see database objects_`);
     }
 
+    if (isDatabasesContainerNode(node)) {
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**${node.count} databases found**\n\n`);
+      this.tooltip.appendMarkdown(`_All databases on this server_`);
+    }
+
+    if (isDatabaseNode(node)) {
+      this.tooltip = new vscode.MarkdownString();
+      this.tooltip.appendMarkdown(`**Database: ${node.name}**\n\n`);
+      this.tooltip.appendMarkdown(`_Expand to browse schemas in this database_`);
+    }
+
     if (isSchemasContainerNode(node)) {
       this.tooltip = new vscode.MarkdownString();
       this.tooltip.appendMarkdown(`**${node.count} schemas found**\n\n`);
@@ -1096,6 +1198,12 @@ function getLabel(node: NodeData, connectionInfo?: DatabaseConnectionConfig | nu
     }
     return `${readOnlyBadge}${baseName}`;
   }
+  if (isDatabasesContainerNode(node)) {
+    return `Databases (${node.count})`;
+  }
+  if (isDatabaseNode(node)) {
+    return node.name;
+  }
   if (isSchemasContainerNode(node)) {
     return `Schemas (${node.count})`;
   }
@@ -1178,6 +1286,13 @@ function getCollapsibleState(node: NodeData): vscode.TreeItemCollapsibleState {
     // Start collapsed - user expands to connect (lazy-connect approach)
     return vscode.TreeItemCollapsibleState.Collapsed;
   }
+  if (isDatabasesContainerNode(node)) {
+    return vscode.TreeItemCollapsibleState.Expanded;
+  }
+  if (isDatabaseNode(node)) {
+    // Database nodes can be expanded to show schemas
+    return vscode.TreeItemCollapsibleState.Collapsed;
+  }
   if (isSchemasContainerNode(node)) {
     return vscode.TreeItemCollapsibleState.Expanded;
   }
@@ -1214,6 +1329,12 @@ function getIcon(node: NodeData, connectionStatus?: ConnectionStatus): string {
       default:
         return "database";
     }
+  }
+  if (isDatabasesContainerNode(node)) {
+    return "folder-library";
+  }
+  if (isDatabaseNode(node)) {
+    return "database";
   }
   if (isSchemasContainerNode(node)) {
     return "folder-library";
@@ -1276,6 +1397,12 @@ function getIconColor(node: NodeData, connectionStatus?: ConnectionStatus): vsco
         return new vscode.ThemeColor("charts.green");
     }
   }
+  if (isDatabasesContainerNode(node)) {
+    return new vscode.ThemeColor("charts.yellow");
+  }
+  if (isDatabaseNode(node)) {
+    return new vscode.ThemeColor("charts.blue");
+  }
   if (isSchemasContainerNode(node)) {
     return new vscode.ThemeColor("charts.yellow");
   }
@@ -1325,6 +1452,14 @@ function isWelcomeNode(node: NodeData): node is WelcomeNode {
 
 function isConnectionNode(node: NodeData): node is ConnectionNode {
   return node.type === "connection";
+}
+
+function isDatabasesContainerNode(node: NodeData): node is DatabasesContainerNode {
+  return node.type === "databasesContainer";
+}
+
+function isDatabaseNode(node: NodeData): node is DatabaseNode {
+  return node.type === "database";
 }
 
 function isSchemasContainerNode(node: NodeData): node is SchemasContainerNode {
