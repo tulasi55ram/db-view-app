@@ -6,7 +6,76 @@
   "scripts": {
     "dev": "tsc -p ./tsconfig.main.json && wait-on http://localhost:5174 && electron .",
     "build": "tsc -p ./tsconfig.main.json",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist release",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.dbview.app",
+    "productName": "DBView",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../desktop-ui/dist",
+        "to": "renderer"
+      }
+    ],
+    "asar": true,
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64"]
+        }
+      ],
+      "category": "Development",
+      "icon": "assets/icons"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "dependencies": {
     "@dbview/types": "workspace:^",
@@ -32,6 +101,7 @@
     "@types/mssql": "^9.1.8",
     "@types/node": "^20.11.17",
     "@types/pg": "^8.10.9",
+    "electron-builder": "^24.13.3",
     "ts-node": "^10.9.1",
     "typescript": "^5.4.2",
     "wait-on": "^9.0.3"
