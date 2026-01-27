@@ -3,7 +3,8 @@ import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/v
 import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
 import { sql, PostgreSQL } from "@codemirror/lang-sql";
-import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import {
   autocompletion,
   CompletionContext,
@@ -131,6 +132,54 @@ function createEditorTheme(isDark: boolean, height: string) {
   }, { dark: isDark });
 }
 
+// Create syntax highlighting style based on theme
+// VS Code-like colors for SQL syntax
+function createSqlHighlightStyle(isDark: boolean) {
+  return HighlightStyle.define([
+    // Keywords (SELECT, FROM, WHERE, etc.) - Blue
+    { tag: tags.keyword, color: isDark ? "#569cd6" : "#0000ff", fontWeight: "500" },
+
+    // SQL operators (AND, OR, NOT, etc.)
+    { tag: tags.operatorKeyword, color: isDark ? "#569cd6" : "#0000ff" },
+
+    // Built-in functions (COUNT, SUM, etc.) - Yellow/Brown
+    { tag: tags.function(tags.variableName), color: isDark ? "#dcdcaa" : "#795e26" },
+    { tag: tags.standard(tags.name), color: isDark ? "#dcdcaa" : "#795e26" },
+
+    // Strings - Orange/Red
+    { tag: tags.string, color: isDark ? "#ce9178" : "#a31515" },
+
+    // Numbers - Light green/Dark green
+    { tag: tags.number, color: isDark ? "#b5cea8" : "#098658" },
+
+    // Comments - Green
+    { tag: tags.comment, color: isDark ? "#6a9955" : "#008000", fontStyle: "italic" },
+    { tag: tags.lineComment, color: isDark ? "#6a9955" : "#008000", fontStyle: "italic" },
+    { tag: tags.blockComment, color: isDark ? "#6a9955" : "#008000", fontStyle: "italic" },
+
+    // Types (INT, VARCHAR, etc.) - Teal
+    { tag: tags.typeName, color: isDark ? "#4ec9b0" : "#267f99" },
+
+    // Table/Column names - Light blue/Dark blue
+    { tag: tags.name, color: isDark ? "#9cdcfe" : "#001080" },
+    { tag: tags.propertyName, color: isDark ? "#9cdcfe" : "#001080" },
+
+    // Punctuation (parentheses, commas, etc.)
+    { tag: tags.punctuation, color: isDark ? "#d4d4d4" : "#000000" },
+    { tag: tags.bracket, color: isDark ? "#ffd700" : "#0431fa" },
+
+    // Operators (=, <, >, etc.)
+    { tag: tags.operator, color: isDark ? "#d4d4d4" : "#000000" },
+
+    // Special values (NULL, TRUE, FALSE)
+    { tag: tags.null, color: isDark ? "#569cd6" : "#0000ff" },
+    { tag: tags.bool, color: isDark ? "#569cd6" : "#0000ff" },
+
+    // Definition names (table names in CREATE TABLE, etc.)
+    { tag: tags.definition(tags.name), color: isDark ? "#4fc1ff" : "#0070c1" },
+  ]);
+}
+
 export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
   value,
   onChange,
@@ -147,6 +196,7 @@ export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
   const viewRef = useRef<EditorView | null>(null);
   const readOnlyCompartment = useRef(new Compartment());
   const themeCompartment = useRef(new Compartment());
+  const highlightCompartment = useRef(new Compartment());
   const [currentTheme, setCurrentTheme] = useState<'light' | 'dark'>(detectTheme);
 
   // Store autocomplete data in a ref so it can be updated without recreating the editor
@@ -272,8 +322,9 @@ export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
     const isDark = currentTheme === 'dark';
     const editorTheme = createEditorTheme(isDark, height);
 
-    // Custom syntax highlighting for SQL
-    const sqlHighlighting = syntaxHighlighting(defaultHighlightStyle);
+    // Custom syntax highlighting for SQL (VS Code-like colors)
+    const sqlHighlightStyle = createSqlHighlightStyle(isDark);
+    const sqlHighlighting = syntaxHighlighting(sqlHighlightStyle);
 
     // Custom keybindings
     const customKeybindings = keymap.of([
@@ -302,7 +353,7 @@ export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
         history(),
         search(),
         sql({ dialect: PostgreSQL }),
-        sqlHighlighting,
+        highlightCompartment.current.of(sqlHighlighting),
         autocompletion({
           override: [sqlAutocomplete],
           activateOnTyping: true,
@@ -371,13 +422,17 @@ export const CodeMirrorSqlEditor: FC<CodeMirrorSqlEditorProps> = ({
     return () => observer.disconnect();
   }, [currentTheme]);
 
-  // Update editor theme when currentTheme changes
+  // Update editor theme and syntax highlighting when currentTheme changes
   useEffect(() => {
     if (viewRef.current) {
       const isDark = currentTheme === 'dark';
       const newTheme = createEditorTheme(isDark, height);
+      const newHighlightStyle = createSqlHighlightStyle(isDark);
       viewRef.current.dispatch({
-        effects: themeCompartment.current.reconfigure(newTheme)
+        effects: [
+          themeCompartment.current.reconfigure(newTheme),
+          highlightCompartment.current.reconfigure(syntaxHighlighting(newHighlightStyle))
+        ]
       });
     }
   }, [currentTheme, height]);

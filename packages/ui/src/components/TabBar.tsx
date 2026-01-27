@@ -1,11 +1,31 @@
-import { FC, useState, useRef, useEffect } from 'react';
+import { FC, useState, useRef, useEffect, useCallback } from 'react';
 import type { Tab } from '@dbview/types';
-import { Table2, FileCode, X, Plus } from 'lucide-react';
+import { Table2, FileCode, X, Plus, GripVertical, GitBranch } from 'lucide-react';
 import clsx from 'clsx';
 import { useTabStore } from '@dbview/shared-state/stores';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  horizontalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 interface TabBarProps {
   onNewQuery: () => void;
+  onSplitView?: (direction: "horizontal" | "vertical") => void;
+  onCloseSplit?: () => void;
+  isSplitView?: boolean;
 }
 
 interface ContextMenuState {
@@ -15,14 +35,122 @@ interface ContextMenuState {
   tabId: string | null;
 }
 
-export const TabBar: FC<TabBarProps> = ({ onNewQuery }) => {
+// SortableTab component for drag-and-drop
+interface SortableTabProps {
+  tab: Tab;
+  isActive: boolean;
+  onSelect: () => void;
+  onClose: (e: React.MouseEvent) => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}
+
+const SortableTab: FC<SortableTabProps> = ({
+  tab,
+  isActive,
+  onSelect,
+  onClose,
+  onContextMenu
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: tab.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : undefined,
+  };
+
+  const getTabIcon = (type: Tab["type"]) => {
+    switch (type) {
+      case 'table':
+        return <Table2 className="h-3.5 w-3.5" />;
+      case 'query':
+        return <FileCode className="h-3.5 w-3.5" />;
+      case 'er-diagram':
+        return <GitBranch className="h-3.5 w-3.5" />;
+      default:
+        return null;
+    }
+  };
+
+  const getTabTitle = (tab: Tab) => {
+    if (tab.type === 'table') {
+      return `${tab.schema}.${tab.table}`;
+    }
+    return tab.title;
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={clsx(
+        'flex items-center gap-1 px-1 py-1.5 rounded-t cursor-pointer group min-w-[120px] max-w-[200px] transition-all',
+        isActive
+          ? 'bg-vscode-bg text-vscode-text border-t-2 border-t-vscode-accent'
+          : 'bg-vscode-bg-light text-vscode-text-muted hover:bg-vscode-bg-hover hover:text-vscode-text',
+        isDragging && 'opacity-80 shadow-lg'
+      )}
+      onClick={onSelect}
+      onContextMenu={onContextMenu}
+      role="tab"
+      aria-selected={isActive}
+      title={getTabTitle(tab)}
+    >
+      {/* Drag Handle */}
+      <div
+        {...attributes}
+        {...listeners}
+        className={clsx(
+          'flex-shrink-0 p-0.5 rounded cursor-grab active:cursor-grabbing transition-opacity',
+          isActive ? 'opacity-50 hover:opacity-100' : 'opacity-0 group-hover:opacity-50 hover:!opacity-100'
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <GripVertical className="h-3 w-3" />
+      </div>
+
+      {/* Tab Content */}
+      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+        <div className="flex-shrink-0">{getTabIcon(tab.type)}</div>
+        <span className="text-xs truncate">{getTabTitle(tab)}</span>
+      </div>
+
+      {/* Close Button */}
+      <button
+        className={clsx(
+          'flex-shrink-0 p-0.5 rounded hover:bg-vscode-bg-hover transition-colors',
+          isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        )}
+        onClick={onClose}
+        aria-label="Close tab"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+};
+
+export const TabBar: FC<TabBarProps> = ({
+  onNewQuery,
+  onSplitView,
+  onCloseSplit,
+  isSplitView = false
+}) => {
   const {
     tabs,
     activeTabId,
     setActiveTab,
     closeTab,
     closeOtherTabs,
-    closeAllTabs
+    closeAllTabs,
+    reorderTabs
   } = useTabStore();
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({
@@ -32,6 +160,33 @@ export const TabBar: FC<TabBarProps> = ({ onNewQuery }) => {
     tabId: null,
   });
   const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // Configure DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // Require 8px movement before drag starts
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Handle drag end
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      const oldIndex = tabs.findIndex((t) => t.id === active.id);
+      const newIndex = tabs.findIndex((t) => t.id === over.id);
+
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const reorderedTabs = arrayMove(tabs, oldIndex, newIndex);
+        reorderTabs(reorderedTabs);
+      }
+    }
+  }, [tabs, reorderTabs]);
 
   // Close context menu when clicking outside
   useEffect(() => {
@@ -65,80 +220,58 @@ export const TabBar: FC<TabBarProps> = ({ onNewQuery }) => {
     }
   };
 
-  const handleContextMenuAction = (action: 'close' | 'close-others' | 'close-all') => {
+  const handleContextMenuAction = (action: 'close' | 'close-others' | 'close-all' | 'split-right' | 'split-down' | 'close-split') => {
     const tabId = contextMenu.tabId;
     setContextMenu({ visible: false, x: 0, y: 0, tabId: null });
 
-    if (!tabId) return;
+    if (!tabId && action !== 'close-all' && action !== 'split-right' && action !== 'split-down' && action !== 'close-split') return;
 
     switch (action) {
       case 'close':
-        closeTab(tabId);
+        if (tabId) closeTab(tabId);
         break;
       case 'close-others':
-        closeOtherTabs(tabId);
+        if (tabId) closeOtherTabs(tabId);
         break;
       case 'close-all':
         closeAllTabs();
         break;
+      case 'split-right':
+        onSplitView?.("horizontal");
+        break;
+      case 'split-down':
+        onSplitView?.("vertical");
+        break;
+      case 'close-split':
+        onCloseSplit?.();
+        break;
     }
-  };
-
-  const getTabIcon = (tab: Tab) => {
-    switch (tab.type) {
-      case 'table':
-        return <Table2 className="h-3.5 w-3.5" />;
-      case 'query':
-        return <FileCode className="h-3.5 w-3.5" />;
-      default:
-        return null;
-    }
-  };
-
-  const getTabTitle = (tab: Tab) => {
-    if (tab.type === 'table') {
-      return `${tab.schema}.${tab.table}`;
-    }
-    return tab.title;
   };
 
   return (
     <>
       <div className="flex items-center gap-0.5 border-b border-vscode-border bg-vscode-bg-light px-2 py-1 overflow-x-auto scrollbar-thin">
-        {tabs.map((tab) => {
-          const isActive = tab.id === activeTabId;
-          return (
-            <div
-              key={tab.id}
-              className={clsx(
-                'flex items-center gap-2 px-3 py-1.5 rounded-t cursor-pointer group min-w-[120px] max-w-[200px] transition-colors',
-                isActive
-                  ? 'bg-vscode-bg text-vscode-text border-t-2 border-t-vscode-accent'
-                  : 'bg-vscode-bg-light text-vscode-text-muted hover:bg-vscode-bg-hover hover:text-vscode-text'
-              )}
-              onClick={() => setActiveTab(tab.id)}
-              onContextMenu={(e) => handleContextMenu(e, tab.id)}
-              role="tab"
-              aria-selected={isActive}
-              title={getTabTitle(tab)}
-            >
-              <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                <div className="flex-shrink-0">{getTabIcon(tab)}</div>
-                <span className="text-xs truncate">{getTabTitle(tab)}</span>
-              </div>
-              <button
-                className={clsx(
-                  'flex-shrink-0 p-0.5 rounded hover:bg-vscode-bg-hover transition-colors',
-                  isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                )}
-                onClick={(e) => handleCloseTab(e, tab.id)}
-                aria-label="Close tab"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          );
-        })}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={tabs.map((t) => t.id)}
+            strategy={horizontalListSortingStrategy}
+          >
+            {tabs.map((tab) => (
+              <SortableTab
+                key={tab.id}
+                tab={tab}
+                isActive={tab.id === activeTabId}
+                onSelect={() => setActiveTab(tab.id)}
+                onClose={(e) => handleCloseTab(e, tab.id)}
+                onContextMenu={(e) => handleContextMenu(e, tab.id)}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
 
         {/* New Query Button */}
         <button
@@ -180,6 +313,38 @@ export const TabBar: FC<TabBarProps> = ({ onNewQuery }) => {
             >
               Close All
             </button>
+          )}
+
+          {/* Split View Options */}
+          {onSplitView && tabs.length >= 2 && !isSplitView && (
+            <>
+              <div className="h-px bg-vscode-border my-1" />
+              <button
+                className="w-full px-3 py-1.5 text-left text-xs text-vscode-text hover:bg-vscode-bg-hover transition-colors"
+                onClick={() => handleContextMenuAction('split-right')}
+              >
+                Split Right
+              </button>
+              <button
+                className="w-full px-3 py-1.5 text-left text-xs text-vscode-text hover:bg-vscode-bg-hover transition-colors"
+                onClick={() => handleContextMenuAction('split-down')}
+              >
+                Split Down
+              </button>
+            </>
+          )}
+
+          {/* Close Split Option */}
+          {onCloseSplit && isSplitView && (
+            <>
+              <div className="h-px bg-vscode-border my-1" />
+              <button
+                className="w-full px-3 py-1.5 text-left text-xs text-vscode-text hover:bg-vscode-bg-hover transition-colors"
+                onClick={() => handleContextMenuAction('close-split')}
+              >
+                Close Split
+              </button>
+            </>
           )}
         </div>
       )}

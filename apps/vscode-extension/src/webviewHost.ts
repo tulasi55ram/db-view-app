@@ -45,7 +45,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
     <link href="${styleUri}" rel="stylesheet" />
     <title>dbview</title>
   </head>
-  <body class="vscode-${currentTheme.startsWith('high-contrast') ? 'high-contrast' : currentTheme}">
+  <body class="vscode-${currentTheme}">
     <div id="root"></div>
     <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
   </body>

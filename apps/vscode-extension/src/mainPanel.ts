@@ -2061,6 +2061,85 @@ export async function getOrCreateMainPanel(
           break;
         }
 
+        // ========== Filter Presets ==========
+        case "GET_FILTER_PRESETS": {
+          const { schema, table } = message;
+          const presetsKey = `dbview.filterPresets.${key}.${schema}.${table}`;
+          console.log(`[dbview] Getting filter presets for ${schema}.${table}`);
+
+          try {
+            const presets = context.workspaceState.get<any[]>(presetsKey, []);
+            panel.webview.postMessage({
+              type: "FILTER_PRESETS_LOADED",
+              presets
+            });
+          } catch (error) {
+            console.error(`[dbview] Error loading filter presets:`, error);
+            panel.webview.postMessage({
+              type: "FILTER_PRESET_ERROR",
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+          break;
+        }
+
+        case "SAVE_FILTER_PRESET": {
+          const { schema, table, preset } = message;
+          const presetsKey = `dbview.filterPresets.${key}.${schema}.${table}`;
+          console.log(`[dbview] Saving filter preset "${preset.name}" for ${schema}.${table}`);
+
+          try {
+            const existing = context.workspaceState.get<any[]>(presetsKey, []);
+
+            // Replace if same name exists, otherwise append
+            const index = existing.findIndex((p: any) => p.name === preset.name);
+            if (index >= 0) {
+              existing[index] = preset;
+            } else {
+              existing.push(preset);
+            }
+
+            await context.workspaceState.update(presetsKey, existing);
+
+            panel.webview.postMessage({
+              type: "FILTER_PRESET_SAVED",
+              preset
+            });
+          } catch (error) {
+            console.error(`[dbview] Error saving filter preset:`, error);
+            panel.webview.postMessage({
+              type: "FILTER_PRESET_ERROR",
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+          break;
+        }
+
+        case "DELETE_FILTER_PRESET": {
+          const { schema, table, presetId } = message;
+          const presetsKey = `dbview.filterPresets.${key}.${schema}.${table}`;
+          console.log(`[dbview] Deleting filter preset ${presetId} for ${schema}.${table}`);
+
+          try {
+            const existing = context.workspaceState.get<any[]>(presetsKey, []);
+            const updated = existing.filter((p: any) => p.id !== presetId);
+
+            await context.workspaceState.update(presetsKey, updated);
+
+            panel.webview.postMessage({
+              type: "FILTER_PRESET_DELETED",
+              presetId
+            });
+          } catch (error) {
+            console.error(`[dbview] Error deleting filter preset:`, error);
+            panel.webview.postMessage({
+              type: "FILTER_PRESET_ERROR",
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+          break;
+        }
+
         default:
           console.log(`[dbview] Unknown message type:`, message?.type);
           break;

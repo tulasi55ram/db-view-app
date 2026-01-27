@@ -532,6 +532,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionKey,
             connectionName,
             schema,
+            database,
             dbType,
             table: table.name,
             rowCount: table.rowCount,
@@ -548,6 +549,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionKey,
             connectionName,
             schema,
+            database,
             dbType,
           }));
         }
@@ -560,6 +562,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionKey,
             connectionName,
             schema,
+            database,
             dbType,
           }));
         }
@@ -598,6 +601,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             connectionKey,
             connectionName,
             schema,
+            database,
             dbType,
           }));
         }

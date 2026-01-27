@@ -248,8 +248,20 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
     setTestResult(null);
   };
 
+  const getDefaultDatabase = (type: DatabaseType): string => {
+    switch (type) {
+      case "postgres": return "postgres";
+      case "mysql": return "mysql";
+      case "mariadb": return "mysql";
+      case "sqlserver": return "master";
+      default: return "";
+    }
+  };
+
   const buildConfig = (): DatabaseConnectionConfig => {
     const baseName = name || `${dbType}-${Date.now()}`;
+    // When showAllDatabases is enabled and no database is specified, use a default system database
+    const effectiveDatabase = (showAllDatabases && !database) ? getDefaultDatabase(dbType) : database;
 
     switch (dbType) {
       case "postgres":
@@ -258,7 +270,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           name: baseName,
           host,
           port: parseInt(port),
-          database,
+          database: effectiveDatabase,
           user,
           password,
           showAllDatabases,
@@ -273,7 +285,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           name: baseName,
           host,
           port: parseInt(port),
-          database,
+          database: effectiveDatabase,
           user,
           password,
           showAllDatabases,
@@ -287,7 +299,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           name: baseName,
           host,
           port: parseInt(port),
-          database,
+          database: effectiveDatabase,
           user,
           password,
           showAllDatabases,
@@ -301,7 +313,7 @@ export function AddConnectionView({ onSave, onCancel, editingConnectionKey }: Ad
           name: baseName,
           host,
           port: parseInt(port),
-          database,
+          database: effectiveDatabase,
           user: authenticationType === "sql" ? user : undefined,
           password: authenticationType === "sql" ? password : undefined,
           showAllDatabases,

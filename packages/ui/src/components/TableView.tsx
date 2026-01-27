@@ -1,7 +1,7 @@
 import type { FC } from "react";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import type { SortingState } from "@tanstack/react-table";
-import type { ColumnMetadata, TableIndex, TableStatistics, DatabaseType, SavedView } from "@dbview/types";
+import type { ColumnMetadata, TableIndex, TableStatistics, DatabaseType, SavedView, FilterCondition } from "@dbview/types";
 import { DataGrid, type DataGridColumn } from "./DataGrid";
 import { DataGridV2 } from "./DataGridV2";
 import { VirtualDataGrid } from "./VirtualDataGrid";
@@ -16,6 +16,8 @@ import { TableToolbar } from "./TableToolbar";
 import { QuickFilterBar } from "./QuickFilterBar";
 import { ImportDataDialog } from "./ImportDataDialog";
 import { QuickAccessBar, type PanelType } from "./panels";
+import { FloatingSelectionBar } from "./FloatingSelectionBar";
+import { FilterPresets } from "./FilterPresets";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useTableEditing } from "../hooks/useTableEditing";
 import { useTableFilters } from "../hooks/useTableFilters";
@@ -459,6 +461,33 @@ export const TableView: FC<TableViewProps> = ({
     }
   };
 
+  // Copy selected rows to clipboard
+  const handleCopySelectedRows = useCallback(() => {
+    if (editing.selectedRows.size === 0) return;
+
+    const selectedIndices = Array.from(editing.selectedRows).sort((a, b) => a - b);
+    const selectedData = selectedIndices.map(idx => rows[idx]);
+    const columnNames = metadata?.map(m => m.name) || columns.map(c => c.key);
+
+    // Format as tab-separated values with header
+    const header = columnNames.join('\t');
+    const dataRows = selectedData.map(row =>
+      columnNames.map(col => {
+        const val = row[col];
+        if (val === null || val === undefined) return '';
+        if (typeof val === 'object') return JSON.stringify(val);
+        return String(val);
+      }).join('\t')
+    );
+    const text = [header, ...dataRows].join('\n');
+
+    navigator.clipboard.writeText(text).then(() => {
+      toast.success(`Copied ${selectedData.length} row${selectedData.length === 1 ? '' : 's'} to clipboard`);
+    }).catch(() => {
+      toast.error('Failed to copy to clipboard');
+    });
+  }, [editing.selectedRows, rows, metadata, columns]);
+
   const handleInsert = (values: Record<string, unknown>) => {
     console.log('[TableView] handleInsert called with values:', values);
     console.log('[TableView] Sending INSERT_ROW message:', { schema, table, values });
@@ -575,6 +604,34 @@ export const TableView: FC<TableViewProps> = ({
       setShowFilters(true);
     }
   };
+
+  // Handle loading a filter preset
+  const handleLoadFilterPreset = useCallback((loadedFilters: FilterCondition[], logic: "AND" | "OR") => {
+    filters.setAllConditions(loadedFilters);
+    filters.setLogicOperator(logic);
+    setShowFilters(true);
+
+    // Trigger search with new filters
+    if (vscode && schema && table) {
+      vscode.postMessage({
+        type: "LOAD_TABLE_ROWS",
+        schema,
+        table,
+        limit,
+        offset: 0, // Reset to first page
+        filters: loadedFilters,
+        filterLogic: logic
+      });
+
+      vscode.postMessage({
+        type: "GET_ROW_COUNT",
+        schema,
+        table,
+        filters: loadedFilters,
+        filterLogic: logic
+      });
+    }
+  }, [filters, vscode, schema, table, limit]);
 
   // Listen for export/import responses from extension
   useEffect(() => {
@@ -701,185 +758,204 @@ export const TableView: FC<TableViewProps> = ({
     }
   };
 
+  // State for more menu dropdown
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close more menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    };
+    if (moreMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [moreMenuOpen]);
+
   return (
     <div className="flex h-full flex-col bg-vscode-bg">
-      {/* NEW: Enhanced Toolbar with inline controls */}
-      <div className="flex flex-col border-b border-vscode-border bg-vscode-bg">
-        {/* Header Row - Table Info */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-vscode-bg-light/50">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded bg-vscode-accent/10">
-              <Table2 className="h-4 w-4 text-vscode-accent" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-vscode-text-muted font-medium">{schema}</span>
-                <span className="text-xs text-vscode-text-muted">/</span>
-                <h1 className="text-sm font-semibold text-vscode-text-bright">{table}</h1>
-              </div>
-              <div className="flex items-center gap-3 text-xs text-vscode-text-muted mt-0.5">
-                <span className="flex items-center gap-1">
-                  <Database className="h-3 w-3" />
-                  {columnCount} columns
-                </span>
-                <span>•</span>
-                <span>{loading ? 'Loading...' : `${rowCount.toLocaleString()} rows`}</span>
-                {savedViews.activeView && (
-                  <>
-                    <span>•</span>
-                    <span className="flex items-center gap-1 text-vscode-accent">
-                      <Bookmark className="h-3 w-3" />
-                      {savedViews.activeView.name}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Status Indicators */}
-          <div className="flex items-center gap-2">
-            {hasPendingChanges && (
-              <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-vscode-warning/10 text-vscode-warning text-xs font-medium">
-                <div className="h-1.5 w-1.5 rounded-full bg-vscode-warning animate-pulse" />
-                {editing.pendingEdits.size} unsaved change{editing.pendingEdits.size !== 1 ? 's' : ''}
-              </div>
-            )}
-            {hasSelectedRows && (
-              <div className="flex items-center gap-1 px-2 py-1 rounded bg-vscode-accent/10 text-vscode-accent text-xs font-medium">
-                {editing.selectedRows.size} row{editing.selectedRows.size !== 1 ? 's' : ''} selected
-              </div>
-            )}
-          </div>
+      {/* Compact Single-Row Toolbar (like desktop) */}
+      <div className="h-10 px-4 flex items-center justify-between border-b border-vscode-border bg-vscode-bg-light">
+        {/* Left: Table Info */}
+        <div className="flex items-center gap-2 text-sm text-vscode-text-muted">
+          <span className="font-medium text-vscode-text">
+            {schema}.{table}
+          </span>
+          <span>•</span>
+          <span>{loading ? 'Loading...' : `${rowCount} rows`}{totalRows !== null && ` of ${totalRows.toLocaleString()}`}</span>
+          {hasPendingChanges && (
+            <>
+              <span>•</span>
+              <span className="text-vscode-warning font-medium">
+                {editing.pendingEdits.size} pending
+              </span>
+            </>
+          )}
         </div>
 
-        {/* Action Bar */}
-        <div className="flex items-center justify-between px-4 py-1.5 bg-vscode-bg-light">
-          <div className="flex items-center gap-2">
-            {/* Data Operations Group */}
-            {metadata && (
-              <div className="flex items-center gap-0.5">
-                <ToolbarButton
-                  icon={<Plus className="h-3.5 w-3.5" />}
-                  label="Insert"
-                  onClick={handleInsertRow}
-                  title="Insert new row"
-                />
-                <ToolbarButton
-                  icon={<Copy className="h-3.5 w-3.5" />}
-                  label="Duplicate"
-                  onClick={handleDuplicateRow}
-                  disabled={!hasSelectedRows || editing.selectedRows.size !== 1}
-                  title={hasSelectedRows && editing.selectedRows.size === 1 ? 'Duplicate selected row' : 'Select one row to duplicate'}
-                />
-                <ToolbarButton
-                  icon={<Trash2 className="h-3.5 w-3.5" />}
-                  label="Delete"
-                  onClick={handleDeleteRows}
-                  disabled={!hasSelectedRows}
-                  title={hasSelectedRows ? `Delete ${editing.selectedRows.size} row(s)` : 'Select rows to delete'}
-                  danger
-                />
-                <div className="w-px h-5 bg-vscode-border mx-1" />
-                <ToolbarButton
-                  icon={<Save className="h-3.5 w-3.5" />}
-                  label="Save"
-                  onClick={handleSaveChanges}
-                  disabled={!hasPendingChanges}
-                  title={hasPendingChanges ? `Save ${editing.pendingEdits.size} change(s)` : 'No pending changes'}
-                  primary={hasPendingChanges}
-                />
-                <ToolbarButton
-                  icon={<X className="h-3.5 w-3.5" />}
-                  label="Discard"
-                  onClick={editing.discardAllEdits}
-                  disabled={!hasPendingChanges}
-                  title="Discard all pending changes"
-                />
-                <div className="w-px h-5 bg-vscode-border mx-1" />
+        {/* Right: Action Buttons */}
+        <div className="flex items-center gap-1">
+          {/* Save/Discard - only show when pending changes */}
+          {hasPendingChanges && (
+            <>
+              <button
+                onClick={handleSaveChanges}
+                className="px-2 py-1 rounded bg-vscode-accent hover:bg-vscode-accent/90 transition-colors flex items-center gap-1.5 text-xs text-white font-medium"
+                title={`Save ${editing.pendingEdits.size} change(s)`}
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Save ({editing.pendingEdits.size})</span>
+              </button>
+              <button
+                onClick={editing.discardAllEdits}
+                className="p-1.5 rounded hover:bg-vscode-bg-hover transition-colors text-vscode-text-muted"
+                title="Discard all changes"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+              <div className="w-px h-5 bg-vscode-border mx-1" />
+            </>
+          )}
+
+          {/* Insert Button */}
+          {metadata && (
+            <button
+              onClick={handleInsertRow}
+              className="p-1.5 rounded hover:bg-vscode-bg-hover transition-colors text-vscode-text-muted hover:text-vscode-text"
+              title="Insert new row"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Filter Button */}
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={clsx(
+              "p-1.5 rounded transition-colors flex items-center gap-1",
+              (showFilters || filters.conditions.length > 0)
+                ? "bg-vscode-accent/20 text-vscode-accent"
+                : "hover:bg-vscode-bg-hover text-vscode-text-muted hover:text-vscode-text"
+            )}
+            title={filters.conditions.length > 0 ? `${filters.conditions.length} active filter(s)` : 'Toggle filters'}
+          >
+            <Filter className="w-4 h-4" />
+            {filters.conditions.length > 0 && (
+              <span className="text-[10px] font-semibold">{filters.conditions.length}</span>
+            )}
+          </button>
+
+          {/* Filter Presets */}
+          <FilterPresets
+            schema={schema}
+            table={table}
+            currentFilters={filters.conditions}
+            currentLogic={filters.logicOperator}
+            onLoadPreset={handleLoadFilterPreset}
+          />
+
+          {/* Column Visibility */}
+          {metadata && (
+            <ColumnVisibilityMenu
+              columns={metadata}
+              visibleColumns={visibleColumns}
+              onToggleColumn={handleToggleColumn}
+              onShowAll={handleShowAllColumns}
+              onHideAll={handleHideAllColumns}
+            />
+          )}
+
+          {/* Saved Views */}
+          <SavedViewsPanel
+            views={savedViews.views}
+            activeViewId={savedViews.activeViewId}
+            onApplyView={handleApplyView}
+            onDeleteView={savedViews.deleteView}
+            onExportView={(view) => {
+              const json = JSON.stringify(view, null, 2);
+              navigator.clipboard.writeText(json).then(() => {
+                toast.success('View exported to clipboard');
+              });
+            }}
+            onSaveCurrentView={() => {
+              vscode?.postMessage({ type: "SHOW_SAVE_VIEW_DIALOG" });
+            }}
+            onImportView={() => {
+              toast.info('Import view feature coming soon');
+            }}
+          />
+
+          <div className="w-px h-5 bg-vscode-border mx-1" />
+
+          {/* More Menu (dropdown for secondary features) */}
+          <div className="relative" ref={moreMenuRef}>
+            <button
+              onClick={() => setMoreMenuOpen(!moreMenuOpen)}
+              className="p-1.5 rounded hover:bg-vscode-bg-hover transition-colors text-vscode-text-muted hover:text-vscode-text"
+              title="More options"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+
+            {moreMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 z-50 min-w-[160px] bg-vscode-bg border border-vscode-border rounded shadow-lg py-1">
+                {/* Export */}
+                <button
+                  className="w-full px-3 py-1.5 text-left text-xs text-vscode-text hover:bg-vscode-bg-hover transition-colors flex items-center gap-2"
+                  onClick={() => {
+                    setMoreMenuOpen(false);
+                    vscode?.postMessage({
+                      type: "SHOW_EXPORT_DIALOG",
+                      selectedRowCount: editing.selectedRows.size,
+                      hasFilters: filters.conditions.length > 0
+                    });
+                  }}
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Export
+                </button>
+
+                {/* Import */}
+                <button
+                  className="w-full px-3 py-1.5 text-left text-xs text-vscode-text hover:bg-vscode-bg-hover transition-colors flex items-center gap-2"
+                  onClick={() => {
+                    setMoreMenuOpen(false);
+                    setImportDialogOpen(true);
+                  }}
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  Import
+                </button>
+
+                <div className="h-px bg-vscode-border my-1" />
+
+                {/* Table Info */}
+                <button
+                  className="w-full px-3 py-1.5 text-left text-xs text-vscode-text hover:bg-vscode-bg-hover transition-colors flex items-center gap-2"
+                  onClick={() => {
+                    setMoreMenuOpen(false);
+                    setMetadataPanelOpen(!metadataPanelOpen);
+                  }}
+                >
+                  <Info className="w-3.5 h-3.5" />
+                  Table Info
+                </button>
               </div>
             )}
-
-            {/* View Controls Group */}
-            <div className="flex items-center gap-0.5">
-              <ToolbarButton
-                icon={<Filter className="h-3.5 w-3.5" />}
-                label="Filters"
-                onClick={() => setShowFilters(!showFilters)}
-                primary={showFilters || filters.conditions.length > 0}
-                badge={filters.conditions.length > 0 ? filters.conditions.length : undefined}
-                title={filters.conditions.length > 0 ? `${filters.conditions.length} active filter(s)` : 'Toggle filters'}
-              />
-              {metadata && (
-                <>
-                  <ColumnVisibilityMenu
-                    columns={metadata}
-                    visibleColumns={visibleColumns}
-                    onToggleColumn={handleToggleColumn}
-                    onShowAll={handleShowAllColumns}
-                    onHideAll={handleHideAllColumns}
-                  />
-                  <SavedViewsPanel
-                    views={savedViews.views}
-                    activeViewId={savedViews.activeViewId}
-                    onApplyView={handleApplyView}
-                    onDeleteView={savedViews.deleteView}
-                    onExportView={savedViews.exportView}
-                    onSaveCurrentView={() => {
-                      vscode?.postMessage({
-                        type: "SHOW_SAVE_VIEW",
-                        currentState: getCurrentViewState()
-                      });
-                    }}
-                    onImportView={savedViews.importView}
-                  />
-                </>
-              )}
-              <div className="w-px h-5 bg-vscode-border mx-1" />
-              <ToolbarButton
-                icon={<Download className="h-3.5 w-3.5" />}
-                label="Export"
-                onClick={() => {
-                  vscode?.postMessage({
-                    type: "SHOW_EXPORT_DIALOG",
-                    selectedRowCount: editing.selectedRows.size,
-                    hasFilters: filters.conditions.length > 0
-                  });
-                }}
-                title="Export table data"
-              />
-              <ToolbarButton
-                icon={<Upload className="h-3.5 w-3.5" />}
-                label="Import"
-                onClick={() => setImportDialogOpen(true)}
-                title="Import data from file"
-              />
-            </div>
           </div>
 
-          {/* Right Actions */}
-          <div className="flex items-center gap-0.5">
-            <ToolbarButton
-              icon={<Info className="h-3.5 w-3.5" />}
-              onClick={() => {
-                console.log(`[TableView] Info button clicked. Current state: ${metadataPanelOpen}, will toggle to: ${!metadataPanelOpen}`);
-                setMetadataPanelOpen(!metadataPanelOpen);
-              }}
-              primary={metadataPanelOpen}
-              title="Table metadata and schema information"
-            />
-            <ToolbarButton
-              icon={<RefreshCw className={clsx('h-3.5 w-3.5', loading && 'animate-spin')} />}
-              onClick={onRefresh}
-              disabled={loading}
-              title="Refresh data"
-            />
-            <ToolbarButton
-              icon={<MoreHorizontal className="h-3.5 w-3.5" />}
-              title="More options"
-              disabled
-            />
-          </div>
+          {/* Refresh Button */}
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            className="p-1.5 rounded hover:bg-vscode-bg-hover transition-colors text-vscode-text-muted hover:text-vscode-text disabled:opacity-50"
+            title="Refresh data"
+          >
+            <RefreshCw className={clsx('w-4 h-4', loading && 'animate-spin')} />
+          </button>
         </div>
       </div>
 
@@ -916,38 +992,50 @@ export const TableView: FC<TableViewProps> = ({
         <PanelGroup direction="horizontal" autoSaveId={`tableview-panels-${schema}-${table}`}>
           {/* Main content panel */}
           <Panel id="main" minSize={40}>
-            {metadata && metadata.length > 0 ? (
-              <VirtualDataGrid
-                columns={metadata}
-                rows={rows}
-                loading={loading}
-                selectable={true}
-                selectedRows={editing.selectedRows}
-                onRowSelectionChange={editing.setRowSelection}
-                editingCell={editing.editingCell}
-                onStartEdit={handleStartEdit}
-                onSaveEdit={editing.saveEdit}
-                onCancelEdit={editing.cancelEdit}
-                isPending={editing.isPending}
-                hasError={editing.hasError}
-                getEditValue={editing.getEditValue}
-                visibleColumns={visibleColumns}
-                sorting={sorting}
-                onSortingChange={handleSortingChange}
-                totalRows={totalRows}
-                currentPage={currentPage}
-                pageSize={pageSize}
-                offset={offset}
+            <div className="relative h-full">
+              {metadata && metadata.length > 0 ? (
+                <VirtualDataGrid
+                  columns={metadata}
+                  rows={rows}
+                  loading={loading}
+                  selectable={true}
+                  selectedRows={editing.selectedRows}
+                  onRowSelectionChange={editing.setRowSelection}
+                  editingCell={editing.editingCell}
+                  onStartEdit={handleStartEdit}
+                  onSaveEdit={editing.saveEdit}
+                  onCancelEdit={editing.cancelEdit}
+                  isPending={editing.isPending}
+                  hasError={editing.hasError}
+                  getEditValue={editing.getEditValue}
+                  visibleColumns={visibleColumns}
+                  sorting={sorting}
+                  onSortingChange={handleSortingChange}
+                  totalRows={totalRows}
+                  currentPage={currentPage}
+                  pageSize={pageSize}
+                  offset={offset}
+                />
+              ) : (
+                <DataGrid
+                  columns={columns}
+                  rows={rows}
+                  loading={loading}
+                  showRowNumbers={true}
+                  emptyMessage={`No rows found in ${schema}.${table}`}
+                />
+              )}
+
+              {/* Floating Selection Bar */}
+              <FloatingSelectionBar
+                selectedCount={editing.selectedRows.size}
+                onCopy={handleCopySelectedRows}
+                onDuplicate={handleDuplicateRow}
+                onDelete={handleDeleteRows}
+                onClearSelection={editing.clearSelection}
+                isReadOnly={!metadata}
               />
-            ) : (
-              <DataGrid
-                columns={columns}
-                rows={rows}
-                loading={loading}
-                showRowNumbers={true}
-                emptyMessage={`No rows found in ${schema}.${table}`}
-              />
-            )}
+            </div>
           </Panel>
 
           {/* Resize handle - only show when panel is active */}

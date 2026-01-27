@@ -482,8 +482,8 @@ export function useAppMessages({
 
       case "THEME_CHANGE": {
         document.documentElement.setAttribute('data-theme', message.theme);
-        const bodyClass = message.theme.startsWith('high-contrast') ? 'high-contrast' : message.theme;
-        document.body.className = `vscode-${bodyClass}`;
+        // Set full theme class to properly detect high-contrast-light as light mode
+        document.body.className = `vscode-${message.theme}`;
         setTheme(message.theme);
         break;
       }
