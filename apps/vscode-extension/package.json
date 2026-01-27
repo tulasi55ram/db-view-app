@@ -380,7 +380,8 @@
     "compile": "tsc -p ./tsconfig.json",
     "watch": "tsc -w -p ./tsconfig.json",
     "package": "vsce package",
-    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-rebuild -f -w better-sqlite3 || true",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test:ui": "vitest --ui",
@@ -404,6 +405,7 @@
     "@types/node": "^20.11.17",
     "@types/pg": "^8.10.9",
     "@types/vscode": "^1.84.0",
+    "prebuild-install": "^7.1.2",
     "typescript": "^5.4.2",
     "vsce": "^2.15.0"
   }

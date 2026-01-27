@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, shell, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, nativeTheme, shell, Menu, powerMonitor, dialog } from "electron";
 import * as path from "path";
 import { URL } from "url";
 import { registerAllHandlers } from "./ipc";
@@ -173,4 +173,79 @@ app.on("web-contents-created", (event, contents) => {
     // Block all other navigation
     event.preventDefault();
   });
+});
+
+// ==================== Sleep/Wake Handling ====================
+// Handle system sleep/wake to prevent connection errors after Mac wakes from sleep
+
+let isSystemSuspended = false;
+
+powerMonitor.on("suspend", () => {
+  console.log("[DBView] System is going to sleep - pausing health checks");
+  isSystemSuspended = true;
+
+  // Pause all health checks to prevent errors during sleep
+  if (connectionManager) {
+    connectionManager.pauseAllHealthChecks();
+  }
+});
+
+powerMonitor.on("resume", () => {
+  console.log("[DBView] System resumed from sleep - reconnecting");
+  isSystemSuspended = false;
+
+  // Give the system a moment to restore network connectivity
+  setTimeout(async () => {
+    if (connectionManager) {
+      await connectionManager.reconnectAllAfterWake();
+    }
+  }, 2000); // Wait 2 seconds for network to stabilize
+});
+
+// ==================== Global Error Handling ====================
+// Prevent multiple error dialogs from appearing
+
+let errorDialogShowing = false;
+let lastErrorTime = 0;
+const ERROR_DEBOUNCE_MS = 5000; // Suppress duplicate errors within 5 seconds
+
+process.on("uncaughtException", (error) => {
+  console.error("[DBView] Uncaught exception:", error);
+
+  // Don't show error dialogs during system suspend (connection errors are expected)
+  if (isSystemSuspended) {
+    console.log("[DBView] Suppressing error dialog during system suspend");
+    return;
+  }
+
+  // Debounce error dialogs to prevent multiple alerts
+  const now = Date.now();
+  if (errorDialogShowing || (now - lastErrorTime < ERROR_DEBOUNCE_MS)) {
+    console.log("[DBView] Suppressing duplicate error dialog");
+    return;
+  }
+
+  lastErrorTime = now;
+  errorDialogShowing = true;
+
+  dialog.showMessageBox({
+    type: "error",
+    title: "Application Error",
+    message: "An unexpected error occurred",
+    detail: error.message || String(error),
+    buttons: ["OK"],
+  }).finally(() => {
+    errorDialogShowing = false;
+  });
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[DBView] Unhandled promise rejection:", reason);
+
+  // Don't show dialogs for connection-related errors during suspend
+  if (isSystemSuspended) {
+    return;
+  }
+
+  // Only log, don't show dialog for unhandled rejections (they're often less critical)
 });

@@ -477,4 +477,99 @@ export class ConnectionManager {
   getConnectionStatus(connectionKey: string): ConnectionWithStatus["status"] {
     return this.connectionStatus.get(connectionKey) || "disconnected";
   }
+
+  /**
+   * Pause all health checks (used when system goes to sleep)
+   * This prevents connection errors from being thrown while the system is suspended
+   */
+  pauseAllHealthChecks(): void {
+    console.log("[ConnectionManager] Pausing all health checks");
+
+    // Stop health checks on all adapters
+    for (const [key, adapter] of this.adapters) {
+      try {
+        adapter.stopHealthCheck();
+        console.log(`[ConnectionManager] Stopped health check for ${key}`);
+      } catch (error) {
+        console.error(`[ConnectionManager] Error stopping health check for ${key}:`, error);
+      }
+    }
+
+    // Clear all reconnect timers to prevent reconnect attempts during sleep
+    this.reconnectTimers.forEach((timer, key) => {
+      clearTimeout(timer);
+      console.log(`[ConnectionManager] Cleared reconnect timer for ${key}`);
+    });
+    this.reconnectTimers.clear();
+  }
+
+  /**
+   * Reconnect all connections after system wake
+   * This gracefully handles the transition from sleep back to active state
+   */
+  async reconnectAllAfterWake(): Promise<void> {
+    console.log("[ConnectionManager] Reconnecting all connections after wake");
+
+    // Reset reconnect attempts for all connections
+    this.reconnectAttempts.clear();
+
+    const reconnectPromises = Array.from(this.connectionConfigs.entries()).map(
+      async ([key, config]) => {
+        try {
+          console.log(`[ConnectionManager] Attempting to reconnect ${key}`);
+
+          // Remove old adapter
+          const oldAdapter = this.adapters.get(key);
+          if (oldAdapter) {
+            try {
+              await oldAdapter.disconnect();
+            } catch {
+              // Ignore disconnect errors - connection may already be dead
+            }
+            this.adapters.delete(key);
+          }
+
+          // Set status to connecting
+          this.connectionStatus.set(key, "connecting");
+
+          // Get full config with password and reconnect
+          const fullConfig = await this.getFullConnectionConfig(config);
+          const adapter = DatabaseAdapterFactory.create(fullConfig);
+
+          await adapter.connect();
+          this.adapters.set(key, adapter);
+          this.connectionStatus.set(key, "connected");
+
+          // Restart health checks
+          adapter.startHealthCheck();
+
+          // Re-attach status change listener
+          adapter.on("statusChange", (event) => {
+            const newStatus = event.status === "connected" ? "connected" : "disconnected";
+            this.connectionStatus.set(key, newStatus);
+
+            if (newStatus === "disconnected" && this.connectionConfigs.has(key)) {
+              this.scheduleReconnect(key);
+            }
+
+            if (newStatus === "connected") {
+              this.reconnectAttempts.delete(key);
+              this.clearReconnectTimer(key);
+            }
+          });
+
+          console.log(`[ConnectionManager] Successfully reconnected ${key}`);
+        } catch (error) {
+          console.error(`[ConnectionManager] Failed to reconnect ${key}:`, error);
+          this.connectionStatus.set(key, "error");
+
+          // Schedule a reconnect attempt
+          this.scheduleReconnect(key);
+        }
+      }
+    );
+
+    await Promise.allSettled(reconnectPromises);
+    console.log("[ConnectionManager] Wake reconnection process completed");
+  }
 }
