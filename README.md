@@ -387,6 +387,76 @@ See [FEATURES.md](./FEATURES.md) for planned desktop features:
 
 ## Troubleshooting
 
+### Zscaler / Corporate Proxy Setup
+
+If you're behind Zscaler or another corporate proxy/SSL inspection tool, Electron binaries may fail to download properly during `pnpm install`. You'll see errors like:
+
+```
+dyld: Library not loaded: @rpath/Electron Framework.framework/Electron Framework
+```
+
+**Solution 1: Use Electron Mirror (Recommended)**
+
+Create or edit `.npmrc` in the project root:
+
+```bash
+# .npmrc
+electron_mirror=https://npmmirror.com/mirrors/electron/
+```
+
+Then reinstall:
+
+```bash
+rm -rf node_modules
+pnpm install
+```
+
+**Solution 2: Bypass SSL Verification (Development Only)**
+
+> ⚠️ Only use this for local development, not in production or CI.
+
+```bash
+# Set environment variable before install
+export NODE_TLS_REJECT_UNAUTHORIZED=0
+
+# Clear existing install and reinstall
+rm -rf node_modules
+pnpm install
+
+# Or just rebuild Electron
+pnpm rebuild electron
+```
+
+**Solution 3: Manual Electron Download**
+
+If all else fails, download Electron manually:
+
+1. Find your Electron version in `package.json` (e.g., `28.3.3`)
+2. Download the correct binary from: https://github.com/electron/electron/releases
+3. Set the cache location:
+   ```bash
+   export ELECTRON_CACHE=~/.electron-cache
+   mkdir -p $ELECTRON_CACHE
+   # Place the downloaded zip file in this directory
+   ```
+4. Run `pnpm install`
+
+**Verifying Electron Installation**
+
+After installation, verify Electron works:
+
+```bash
+# Check Electron version
+npx electron --version
+
+# Verify framework files exist (macOS)
+ls node_modules/.pnpm/electron@*/node_modules/electron/dist/Electron.app/Contents/Frameworks/
+```
+
+You should see `Electron Framework.framework` in the output.
+
+---
+
 ### Extension not showing in Activity Bar
 - Make sure you ran `pnpm run build:extension` before launching
 - Check the **Output** panel in VS Code for errors (select "DBView" from dropdown)
