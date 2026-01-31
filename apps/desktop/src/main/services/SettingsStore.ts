@@ -1,7 +1,7 @@
 import Store from "electron-store";
 import type { DatabaseConnectionConfig } from "@dbview/types";
 
-// Connection config without password (passwords stored in keytar)
+// Connection config without password (passwords stored separately using safeStorage)
 export type StoredConnectionConfig = Omit<DatabaseConnectionConfig, "password">;
 
 export interface QueryHistoryEntry {

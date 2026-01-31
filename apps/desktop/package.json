@@ -26,7 +26,7 @@
     ],
     "extraResources": [
       {
-        "from": "../desktop-ui/dist",
+        "from": "../../packages/desktop-ui/dist",
         "to": "renderer"
       }
     ],
@@ -43,7 +43,7 @@
         }
       ],
       "category": "public.app-category.developer-tools",
-      "icon": "assets/icon.icns"
+      "icon": "assets/icon.png"
     },
     "win": {
       "target": [
@@ -89,7 +89,6 @@
     "electron-store": "8",
     "electron-updater": "^6.1.8",
     "ioredis": "^5.8.2",
-    "keytar": "^7.9.0",
     "mongodb": "6.12.0",
     "mssql": "^12.2.0",
     "mysql2": "^3.16.0",
@@ -97,12 +96,11 @@
     "sql-formatter": "^15.6.12"
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.0.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/mssql": "^9.1.8",
     "@types/node": "^20.11.17",
     "@types/pg": "^8.10.9",
-    "electron": "^28.2.1",
+    "electron": "28.2.1",
     "electron-builder": "^24.13.3",
     "prebuild-install": "^7.1.2",
     "ts-node": "^10.9.1",

@@ -52,8 +52,8 @@ function createWindow(): void {
     // Open DevTools in development
     mainWindow.webContents.openDevTools();
   } else {
-    // In production, load the built renderer
-    const indexPath = path.join(__dirname, "../renderer/index.html");
+    // In production, load the built renderer from extraResources
+    const indexPath = path.join(process.resourcesPath, "renderer/index.html");
     mainWindow.loadFile(indexPath).catch((err) => {
       console.error("Failed to load renderer:", err);
     });
