@@ -15,6 +15,9 @@ const electronAPI: ElectronAPI = {
 
   // Schema operations
   listDatabases: (connectionKey) => ipcRenderer.invoke("database:list", connectionKey),
+  getDatabaseConnectionStatus: (connectionKey, database) => ipcRenderer.invoke("database:getConnectionStatus", connectionKey, database),
+  isDatabaseConnected: (connectionKey, database) => ipcRenderer.invoke("database:isConnected", connectionKey, database),
+  getConnectedDatabases: (connectionKey) => ipcRenderer.invoke("database:getConnectedDatabases", connectionKey),
   listSchemas: (connectionKey, database) => ipcRenderer.invoke("schema:list", connectionKey, database),
   listTables: (connectionKey, schema, database) => ipcRenderer.invoke("schema:getTables", connectionKey, schema, database),
   getHierarchy: (connectionKey) => ipcRenderer.invoke("schema:getHierarchy", connectionKey),

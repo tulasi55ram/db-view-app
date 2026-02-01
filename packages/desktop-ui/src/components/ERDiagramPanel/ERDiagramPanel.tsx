@@ -23,6 +23,7 @@ import type { ERDiagramData, ERDiagramTable } from "@dbview/types";
 interface ERDiagramPanelProps {
   connectionKey: string;
   connectionName?: string;
+  database?: string; // Database name for multi-database connections
   schemas: string[]; // Initial schemas (can be empty, will fetch all)
 }
 
@@ -41,7 +42,7 @@ const HEADER_HEIGHT = 36;
 const TABLE_PADDING = 12;
 const TABLE_MARGIN = 80;
 
-export function ERDiagramPanel({ connectionKey, connectionName, schemas: initialSchemas }: ERDiagramPanelProps) {
+export function ERDiagramPanel({ connectionKey, connectionName, database, schemas: initialSchemas }: ERDiagramPanelProps) {
   const [diagramData, setDiagramData] = useState<ERDiagramData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +69,7 @@ export function ERDiagramPanel({ connectionKey, connectionName, schemas: initial
     const fetchSchemas = async () => {
       if (!api) return;
       try {
-        const allSchemas = await api.listSchemas(connectionKey);
+        const allSchemas = await api.listSchemas(connectionKey, database);
         // Filter out common system schemas that typically don't have user tables
         const userSchemas = allSchemas.filter((s: string) =>
           !s.startsWith('pg_') &&
@@ -85,7 +86,7 @@ export function ERDiagramPanel({ connectionKey, connectionName, schemas: initial
       }
     };
     fetchSchemas();
-  }, [api, connectionKey, initialSchemas.length]);
+  }, [api, connectionKey, database, initialSchemas.length]);
 
   // Close schema selector when clicking outside
   useEffect(() => {
@@ -135,7 +136,7 @@ export function ERDiagramPanel({ connectionKey, connectionName, schemas: initial
     setError(null);
 
     try {
-      const data = await api.getERDiagram(connectionKey, schemasToLoad);
+      const data = await api.getERDiagram(connectionKey, schemasToLoad, database);
       setDiagramData(data);
     } catch (err) {
       console.error("Failed to load ER diagram:", err);
@@ -144,7 +145,7 @@ export function ERDiagramPanel({ connectionKey, connectionName, schemas: initial
     } finally {
       setLoading(false);
     }
-  }, [api, connectionKey, schemasToLoad]);
+  }, [api, connectionKey, database, schemasToLoad]);
 
   useEffect(() => {
     // Only load if we have schemas selected

@@ -946,6 +946,7 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
         connectionKey,
         schema,
         table,
+        database,
         primaryKey,
         column,
         value: parsedValue,
@@ -981,6 +982,7 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
         connectionKey,
         schema,
         table,
+        database,
         values: document,
       });
 
@@ -1059,6 +1061,7 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
           connectionKey,
           schema,
           table,
+          database,
           primaryKey,
           column: edit.column,
           value: convertedValue,
@@ -1144,6 +1147,7 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
         connectionKey,
         schema,
         table,
+        database,
         values,
       });
 
@@ -1261,6 +1265,7 @@ export function TableView({ connectionKey, schema, table, database }: TableViewP
         connectionKey,
         schema,
         table,
+        database,
         primaryKeys,
       });
 

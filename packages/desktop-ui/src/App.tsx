@@ -182,13 +182,14 @@ function AppContent() {
   );
 
   const handleQueryOpen = useCallback(
-    async (connectionKey: string, connectionName: string) => {
+    async (connectionKey: string, connectionName: string, database?: string) => {
       closeConnectionDialog();
       const connectionColor = await getConnectionColor(connectionKey);
       addQueryTab({
         connectionName,
         connectionKey,
         connectionColor,
+        database,
       });
     },
     [addQueryTab, getConnectionColor, closeConnectionDialog]
@@ -199,10 +200,17 @@ function AppContent() {
     const connectionColor = activeTab?.connectionKey
       ? await getConnectionColor(activeTab.connectionKey)
       : undefined;
+    // Get database from active tab if it exists (for multi-database connections)
+    const database = activeTab?.type === 'table'
+      ? (activeTab as import("@dbview/types").TableTab).database
+      : activeTab?.type === 'query'
+        ? (activeTab as import("@dbview/types").QueryTab).database
+        : undefined;
     addQueryTab({
       connectionName: activeTab?.connectionName,
       connectionKey: activeTab?.connectionKey,
       connectionColor,
+      database,
     });
   }, [tabs, activeTabId, addQueryTab, getConnectionColor]);
 
@@ -283,6 +291,7 @@ function AppContent() {
             id: queryTab.id,
             connectionKey: queryTab.connectionKey,
             connectionName: queryTab.connectionName,
+            database: queryTab.database,
             sql: queryTab.sql,
             columns: queryTab.columns,
             rows: queryTab.rows,
@@ -302,6 +311,7 @@ function AppContent() {
           key={tab.id}
           connectionKey={tab.connectionKey}
           connectionName={tab.connectionName}
+          database={erTab.database}
           schemas={erTab.selectedSchemas}
         />
       );
@@ -376,6 +386,7 @@ function AppContent() {
                 id: queryTab.id,
                 connectionKey: queryTab.connectionKey,
                 connectionName: queryTab.connectionName,
+                database: queryTab.database,
                 sql: queryTab.sql,
                 columns: queryTab.columns,
                 rows: queryTab.rows,
@@ -396,6 +407,7 @@ function AppContent() {
             <ERDiagramPanel
               connectionKey={tab.connectionKey}
               connectionName={tab.connectionName}
+              database={erTab.database}
               schemas={erTab.selectedSchemas}
             />
           </div>

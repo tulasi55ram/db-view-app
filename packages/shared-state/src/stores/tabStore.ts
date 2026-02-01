@@ -48,6 +48,7 @@ interface TabActions {
     connectionKey?: string;
     connectionColor?: string;
     dbType?: DatabaseType;
+    database?: string;
   }) => string;
 
   addERDiagramTab: (params: {
@@ -248,13 +249,14 @@ export const useTabStore = create<TabState & TabActions>()(
         },
 
         // Add a new query tab
-        addQueryTab: ({ connectionName, connectionKey, connectionColor, dbType }) => {
+        addQueryTab: ({ connectionName, connectionKey, connectionColor, dbType, database }) => {
           const tabId = generateTabId();
           const newTab: QueryTab = {
             id: tabId,
             type: 'query',
             title: 'New Query',
             sql: '',
+            database,
             columns: [],
             rows: [],
             loading: false,

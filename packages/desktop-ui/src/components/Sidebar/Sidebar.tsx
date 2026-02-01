@@ -127,6 +127,12 @@ interface TreeNode {
   readOnly?: boolean; // Connection read-only status
   isLoading?: boolean;
   showAllDatabases?: boolean; // Whether connection shows all databases
+  /**
+   * For database nodes in showAllDatabases mode:
+   * - false/undefined: Database is visible but not connected (greyed out, DataGrip-style)
+   * - true: Database is connected (active, schemas loaded)
+   */
+  isDbConnected?: boolean;
   // Table metadata
   rowCount?: number;
   sizeBytes?: number;
@@ -141,7 +147,7 @@ interface TreeNode {
 interface SidebarProps {
   onTableSelect: (connectionKey: string, connectionName: string, schema: string, table: string, database?: string) => void;
   onFunctionSelect?: (connectionKey: string, connectionName: string, schema: string, functionName: string, functionType: 'function' | 'procedure' | 'aggregate' | 'window' | 'trigger', database?: string) => void;
-  onQueryOpen: (connectionKey: string, connectionName: string) => void;
+  onQueryOpen: (connectionKey: string, connectionName: string, database?: string) => void;
   onERDiagramOpen?: (connectionKey: string, connectionName: string, schemas: string[]) => void;
   onAddConnection: () => void;
   onEditConnection: (connectionKey: string) => void;
@@ -404,6 +410,11 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
     if (!api) return [];
     try {
       const databases = await api.listDatabases(connectionKey);
+
+      // Check which databases are already connected
+      const connectedDatabases = await api.getConnectedDatabases?.(connectionKey) || [];
+      const connectedSet = new Set(connectedDatabases);
+
       return databases.map((database: string) => ({
         id: `${connectionKey}:database:${database}`,
         type: "database" as const,
@@ -412,6 +423,8 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
         connectionName,
         database,
         dbType,
+        // Mark as connected only if already connected, otherwise show as "available but not connected"
+        isDbConnected: connectedSet.has(database),
         children: [],
       }));
     } catch (error) {
@@ -745,15 +758,18 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
           });
         }
       } else if (node.type === "database" && (!node.children || node.children.length === 0) && node.connectionKey && node.connectionName && node.database) {
-        // Handle database node expansion - load schemas for this database
+        // Handle database node expansion - connect to this database and load schemas
+        // This is the "connect on-demand" pattern inspired by DataGrip
         setLoadingNodes((prev) => new Set(prev).add(node.id));
         try {
           const schemas = await loadSchemas(node.connectionKey, node.connectionName, node.database, node.dbType);
-          setTreeData((prev) => updateTreeNode(prev, node.id, { children: schemas }));
+          // Mark database as connected now that we've successfully loaded schemas
+          setTreeData((prev) => updateTreeNode(prev, node.id, { children: schemas, isDbConnected: true }));
+          toast.success(`Connected to database: ${node.database}`);
         } catch (error) {
           console.error("Failed to load database schemas:", error);
           const errorMessage = error instanceof Error ? error.message : String(error);
-          toast.error(`Failed to load database schemas: ${errorMessage}`);
+          toast.error(`Failed to connect to database: ${errorMessage}`);
         } finally {
           setLoadingNodes((prev) => {
             const next = new Set(prev);
@@ -959,7 +975,8 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
           default: return "text-text-tertiary";
         }
       case "database":
-        return "text-cyan-400";
+        // DataGrip-style: Connected databases are bright, not-connected are greyed
+        return node.isDbConnected ? "text-cyan-400" : "text-text-tertiary";
       case "schema":
         return "text-purple-400";
       case "objectTypeContainer":
@@ -1163,9 +1180,27 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
               )}
 
               {/* Node Name */}
-              <Tooltip content={node.name}>
-                <span className="whitespace-nowrap text-text-primary">{node.name}</span>
+              <Tooltip content={node.type === "database" && !node.isDbConnected ? `${node.name} (click to connect)` : node.name}>
+                <span className={cn(
+                  "whitespace-nowrap",
+                  // Grey out database names that aren't connected (DataGrip-style)
+                  node.type === "database" && !node.isDbConnected
+                    ? "text-text-tertiary italic"
+                    : "text-text-primary"
+                )}>{node.name}</span>
               </Tooltip>
+
+              {/* Database Connection Status Badge */}
+              {node.type === "database" && (
+                <span className={cn(
+                  "px-1.5 py-0.5 text-[10px] font-medium rounded ml-auto shrink-0",
+                  node.isDbConnected
+                    ? "bg-emerald-500/15 text-emerald-400"
+                    : "bg-text-tertiary/10 text-text-tertiary"
+                )}>
+                  {node.isDbConnected ? "connected" : "click to connect"}
+                </span>
+              )}
 
               {/* Table Badges - Row count and size */}
               {node.type === "table" && (
@@ -1205,13 +1240,16 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
                   "animate-scale-in origin-top-left z-50"
                 )}
               >
-                <ContextMenu.Item
-                  className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
-                  onSelect={() => node.connectionKey && node.connectionName && onQueryOpen(node.connectionKey, node.connectionName)}
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  New Query
-                </ContextMenu.Item>
+                {/* Hide New Query at connection level for showAllDatabases - user must select a specific database */}
+                {!node.showAllDatabases && (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                    onSelect={() => node.connectionKey && node.connectionName && onQueryOpen(node.connectionKey, node.connectionName)}
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    New Query
+                  </ContextMenu.Item>
+                )}
 
                 {node.status === "connected" && onERDiagramOpen && (
                   <ContextMenu.Item
@@ -1223,7 +1261,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
                           const schemas = node.children?.filter(c => c.type === "schema").map(s => s.name) || [];
                           if (schemas.length === 0 && api) {
                             // If no schemas loaded yet, fetch them
-                            const fetchedSchemas = await api.listSchemas(node.connectionKey);
+                            const fetchedSchemas = await api.listSchemas(node.connectionKey, node.database);
                             onERDiagramOpen(node.connectionKey, node.connectionName, fetchedSchemas);
                           } else {
                             onERDiagramOpen(node.connectionKey, node.connectionName, schemas);
@@ -1281,6 +1319,40 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             </ContextMenu.Portal>
           )}
 
+          {/* Context Menu for Databases */}
+          {node.type === "database" && (
+            <ContextMenu.Portal>
+              <ContextMenu.Content
+                className={cn(
+                  "min-w-[160px] py-1 rounded-md",
+                  "bg-bg-tertiary border border-border shadow-panel",
+                  "animate-scale-in origin-top-left z-50"
+                )}
+              >
+                {/* Show "Connect" option for not-connected databases */}
+                {!node.isDbConnected && (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                    onSelect={() => toggleNode(node)}
+                  >
+                    <Database className="w-3.5 h-3.5" />
+                    Connect to Database
+                  </ContextMenu.Item>
+                )}
+                {/* Show "New Query" for connected databases */}
+                {node.isDbConnected && (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                    onSelect={() => node.connectionKey && node.connectionName && onQueryOpen(node.connectionKey, node.connectionName, node.database)}
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    New Query
+                  </ContextMenu.Item>
+                )}
+              </ContextMenu.Content>
+            </ContextMenu.Portal>
+          )}
+
           {/* Context Menu for Schemas */}
           {node.type === "schema" && (
             <ContextMenu.Portal>
@@ -1293,7 +1365,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
               >
                 <ContextMenu.Item
                   className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
-                  onSelect={() => node.connectionKey && node.connectionName && onQueryOpen(node.connectionKey, node.connectionName)}
+                  onSelect={() => node.connectionKey && node.connectionName && onQueryOpen(node.connectionKey, node.connectionName, node.database)}
                 >
                   <Play className="w-3.5 h-3.5" />
                   New Query
@@ -1334,7 +1406,7 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
                 </ContextMenu.Item>
                 <ContextMenu.Item
                   className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
-                  onSelect={() => node.connectionKey && node.connectionName && onQueryOpen(node.connectionKey, node.connectionName)}
+                  onSelect={() => node.connectionKey && node.connectionName && onQueryOpen(node.connectionKey, node.connectionName, node.database)}
                 >
                   <Play className="w-3.5 h-3.5" />
                   New Query

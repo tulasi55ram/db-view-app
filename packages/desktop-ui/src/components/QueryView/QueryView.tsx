@@ -272,6 +272,7 @@ export interface QueryViewProps {
     id: string;
     connectionKey?: string;
     connectionName?: string;
+    database?: string;
     sql?: string;
     columns?: string[];
     rows?: Record<string, unknown>[];
@@ -431,7 +432,7 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     let isActive = true;
 
     api
-      .getAutocompleteData(tab.connectionKey)
+      .getAutocompleteData(tab.connectionKey, tab.database)
       .then((data) => {
         // Only update state if this effect is still active
         if (isActive) {
@@ -475,6 +476,7 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     try {
       const result = await api.runQuery({
         connectionKey: tab.connectionKey,
+        database: tab.database,
         sql: sqlToRun,
       });
 
@@ -517,7 +519,7 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     }
 
     try {
-      await api.cancelQuery(tab.connectionKey);
+      await api.cancelQuery(tab.connectionKey, tab.database);
 
       // Update UI state
       onTabUpdate(tab.id, {
@@ -646,6 +648,7 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     try {
       const result = await api.explainQuery({
         connectionKey: tab.connectionKey,
+        database: tab.database,
         sql: tab.sql,
       });
       setExplainPlan(result);

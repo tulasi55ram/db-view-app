@@ -401,6 +401,9 @@ export interface ElectronAPI {
 
   // Schema operations
   listDatabases(connectionKey: string): Promise<string[]>;
+  getDatabaseConnectionStatus(connectionKey: string, database: string): Promise<"connected" | "disconnected" | "connecting" | "error">;
+  isDatabaseConnected(connectionKey: string, database: string): Promise<boolean>;
+  getConnectedDatabases(connectionKey: string): Promise<string[]>;
   listSchemas(connectionKey: string, database?: string): Promise<string[]>;
   listTables(connectionKey: string, schema: string, database?: string): Promise<TableInfo[]>;
   getHierarchy(connectionKey: string): Promise<any>;

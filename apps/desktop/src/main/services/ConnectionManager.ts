@@ -20,12 +20,18 @@ export interface ConnectionWithStatus {
 /**
  * ConnectionManager - Manages multiple database connections
  *
+ * Architecture (DataGrip-inspired):
+ * - Main connection: Used for metadata queries (listing databases, schemas)
+ * - Database connections: Created on-demand when user accesses a specific database
+ * - Proper cleanup: Disconnecting main connection also cleans up all database connections
+ *
  * Handles:
  * - Connection lifecycle (create, connect, disconnect)
  * - Adapter caching and reuse
  * - Health checks
  * - Password retrieval from secure storage
  * - Auto-reconnection on disconnect
+ * - Database-specific connection tracking and cleanup
  */
 export class ConnectionManager {
   private adapters: Map<string, DatabaseAdapter> = new Map();
@@ -33,6 +39,18 @@ export class ConnectionManager {
   private reconnectAttempts: Map<string, number> = new Map();
   private reconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private connectionConfigs: Map<string, StoredConnectionConfig> = new Map();
+
+  /**
+   * Tracks which database-specific connections belong to which parent connection.
+   * Key: parent connection key, Value: Set of database-specific connection keys
+   */
+  private databaseConnectionRegistry: Map<string, Set<string>> = new Map();
+
+  /**
+   * Tracks connection status for individual databases within a showAllDatabases connection.
+   * Key: "parentConnectionKey:database", Value: connection status
+   */
+  private databaseConnectionStatus: Map<string, ConnectionWithStatus["status"]> = new Map();
 
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly INITIAL_RECONNECT_DELAY = 1000; // 1 second
@@ -263,6 +281,9 @@ export class ConnectionManager {
    * Get adapter for a specific database when in "show all databases" mode.
    * If database is provided, creates a new adapter connection to that database.
    * Otherwise, returns the existing adapter.
+   *
+   * Database connections are tracked and will be cleaned up when the parent
+   * connection is disconnected.
    */
   async getAdapterForDatabase(connectionKey: string, database?: string): Promise<DatabaseAdapter | undefined> {
     // If no database specified, return existing adapter
@@ -288,6 +309,7 @@ export class ConnectionManager {
 
     // Get the key for this database-specific connection
     const dbSpecificKey = this.getConnectionKey(dbSpecificConfig);
+    const dbStatusKey = `${connectionKey}:db:${database}`;
 
     // Check if we already have an adapter for this database
     const existingAdapter = this.adapters.get(dbSpecificKey);
@@ -295,9 +317,60 @@ export class ConnectionManager {
       return existingAdapter;
     }
 
+    // Update database connection status to connecting
+    this.databaseConnectionStatus.set(dbStatusKey, "connecting");
+
     // Create a new adapter for this database
     console.log(`[ConnectionManager] Creating adapter for database: ${database} (key: ${dbSpecificKey})`);
-    return this.getOrCreateAdapter(dbSpecificConfig);
+
+    try {
+      const adapter = await this.getOrCreateAdapter(dbSpecificConfig);
+
+      // Register this database connection with its parent
+      if (!this.databaseConnectionRegistry.has(connectionKey)) {
+        this.databaseConnectionRegistry.set(connectionKey, new Set());
+      }
+      this.databaseConnectionRegistry.get(connectionKey)!.add(dbSpecificKey);
+
+      // Update database connection status
+      this.databaseConnectionStatus.set(dbStatusKey, "connected");
+
+      console.log(`[ConnectionManager] Database ${database} connected. Parent ${connectionKey} now has ${this.databaseConnectionRegistry.get(connectionKey)!.size} database connections.`);
+
+      return adapter;
+    } catch (error) {
+      this.databaseConnectionStatus.set(dbStatusKey, "error");
+      throw error;
+    }
+  }
+
+  /**
+   * Get connection status for a specific database within a showAllDatabases connection.
+   */
+  getDatabaseConnectionStatus(connectionKey: string, database: string): ConnectionWithStatus["status"] {
+    const dbStatusKey = `${connectionKey}:db:${database}`;
+    return this.databaseConnectionStatus.get(dbStatusKey) || "disconnected";
+  }
+
+  /**
+   * Check if a specific database is connected within a showAllDatabases connection.
+   */
+  isDatabaseConnected(connectionKey: string, database: string): boolean {
+    return this.getDatabaseConnectionStatus(connectionKey, database) === "connected";
+  }
+
+  /**
+   * Get all connected databases for a connection.
+   */
+  getConnectedDatabases(connectionKey: string): string[] {
+    const connectedDatabases: string[] = [];
+    for (const [key, status] of this.databaseConnectionStatus) {
+      if (key.startsWith(`${connectionKey}:db:`) && status === "connected") {
+        const database = key.substring(`${connectionKey}:db:`.length);
+        connectedDatabases.push(database);
+      }
+    }
+    return connectedDatabases;
   }
 
   /**
@@ -392,7 +465,7 @@ export class ConnectionManager {
   }
 
   /**
-   * Disconnect a specific connection
+   * Disconnect a specific connection and all its database-specific child connections.
    */
   async disconnect(connectionKey: string): Promise<void> {
     // Clear reconnect attempts - user intentionally disconnected
@@ -400,16 +473,48 @@ export class ConnectionManager {
     this.reconnectAttempts.delete(connectionKey);
     this.connectionConfigs.delete(connectionKey);
 
+    // First, disconnect all database-specific connections that belong to this parent
+    const databaseConnections = this.databaseConnectionRegistry.get(connectionKey);
+    if (databaseConnections && databaseConnections.size > 0) {
+      console.log(`[ConnectionManager] Disconnecting ${databaseConnections.size} database connections for ${connectionKey}`);
+
+      const disconnectPromises = Array.from(databaseConnections).map(async (dbKey) => {
+        try {
+          const dbAdapter = this.adapters.get(dbKey);
+          if (dbAdapter) {
+            await dbAdapter.disconnect();
+            this.adapters.delete(dbKey);
+            console.log(`[ConnectionManager] Disconnected database connection: ${dbKey}`);
+          }
+        } catch (error) {
+          console.error(`[ConnectionManager] Error disconnecting database ${dbKey}:`, error);
+        }
+      });
+
+      await Promise.all(disconnectPromises);
+      this.databaseConnectionRegistry.delete(connectionKey);
+    }
+
+    // Clear all database connection statuses for this parent
+    for (const key of this.databaseConnectionStatus.keys()) {
+      if (key.startsWith(`${connectionKey}:db:`)) {
+        this.databaseConnectionStatus.delete(key);
+      }
+    }
+
+    // Now disconnect the main adapter
     const adapter = this.adapters.get(connectionKey);
     if (adapter) {
       await adapter.disconnect();
       this.adapters.delete(connectionKey);
       this.connectionStatus.set(connectionKey, "disconnected");
     }
+
+    console.log(`[ConnectionManager] Fully disconnected ${connectionKey} and all child connections`);
   }
 
   /**
-   * Disconnect all connections
+   * Disconnect all connections including all database-specific connections.
    */
   async disconnectAll(): Promise<void> {
     // Clear all reconnect timers
@@ -417,6 +522,10 @@ export class ConnectionManager {
     this.reconnectTimers.clear();
     this.reconnectAttempts.clear();
     this.connectionConfigs.clear();
+
+    // Clear database connection registry and statuses
+    this.databaseConnectionRegistry.clear();
+    this.databaseConnectionStatus.clear();
 
     const disconnectPromises = Array.from(this.adapters.entries()).map(async ([key, adapter]) => {
       try {

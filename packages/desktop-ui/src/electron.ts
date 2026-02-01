@@ -49,15 +49,15 @@ export interface ElectronAPI {
 
   // Schema operations
   listDatabases(connectionKey: string): Promise<string[]>;
-  listSchemas(connectionKey: string): Promise<string[]>;
-  listTables(connectionKey: string, schema: string): Promise<TableInfo[]>;
+  listSchemas(connectionKey: string, database?: string): Promise<string[]>;
+  listTables(connectionKey: string, schema: string, database?: string): Promise<TableInfo[]>;
   getHierarchy(connectionKey: string): Promise<unknown>;
-  getObjectCounts(connectionKey: string, schema: string): Promise<ObjectCounts>;
-  listViews(connectionKey: string, schema: string): Promise<string[]>;
-  listMaterializedViews(connectionKey: string, schema: string): Promise<string[]>;
-  listFunctions(connectionKey: string, schema: string): Promise<string[]>;
-  listProcedures(connectionKey: string, schema: string): Promise<string[]>;
-  listTypes(connectionKey: string, schema: string): Promise<string[]>;
+  getObjectCounts(connectionKey: string, schema: string, database?: string): Promise<ObjectCounts>;
+  listViews(connectionKey: string, schema: string, database?: string): Promise<string[]>;
+  listMaterializedViews(connectionKey: string, schema: string, database?: string): Promise<string[]>;
+  listFunctions(connectionKey: string, schema: string, database?: string): Promise<string[]>;
+  listProcedures(connectionKey: string, schema: string, database?: string): Promise<string[]>;
+  listTypes(connectionKey: string, schema: string, database?: string): Promise<string[]>;
   listColumns(connectionKey: string, schema: string, table: string, database?: string): Promise<ColumnInfo[]>;
 
   // Table operations
@@ -74,7 +74,7 @@ export interface ElectronAPI {
   runQuery(params: RunQueryParams): Promise<QueryResult>;
   formatSql(sql: string): Promise<string>;
   explainQuery(params: ExplainQueryParams): Promise<ExplainPlan>;
-  cancelQuery(connectionKey: string): Promise<void>;
+  cancelQuery(connectionKey: string, database?: string): Promise<void>;
 
   // Saved views
   getViews(params: GetViewsParams): Promise<SavedView[]>;
@@ -82,10 +82,10 @@ export interface ElectronAPI {
   deleteView(params: DeleteViewParams): Promise<void>;
 
   // ER Diagram
-  getERDiagram(connectionKey: string, schemas: string[]): Promise<ERDiagramData>;
+  getERDiagram(connectionKey: string, schemas: string[], database?: string): Promise<ERDiagramData>;
 
   // Autocomplete
-  getAutocompleteData(connectionKey: string): Promise<AutocompleteData>;
+  getAutocompleteData(connectionKey: string, database?: string): Promise<AutocompleteData>;
 
   // Export/Import
   exportData(params: ExportDataParams): Promise<string | null>;
@@ -213,6 +213,7 @@ export interface DeleteRowsParams {
 
 export interface RunQueryParams {
   connectionKey: string;
+  database?: string;
   sql: string;
 }
 
@@ -226,6 +227,7 @@ export interface QueryResult {
 
 export interface ExplainQueryParams {
   connectionKey: string;
+  database?: string;
   sql: string;
 }
 

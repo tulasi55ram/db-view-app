@@ -171,6 +171,21 @@ export function registerAllHandlers(connectionManager: ConnectionManager): void 
     return databases;
   });
 
+  // Get connection status for a specific database within a showAllDatabases connection
+  ipcMain.handle("database:getConnectionStatus", async (_event, connectionKey: string, database: string) => {
+    return connectionManager.getDatabaseConnectionStatus(connectionKey, database);
+  });
+
+  // Check if a specific database is connected
+  ipcMain.handle("database:isConnected", async (_event, connectionKey: string, database: string) => {
+    return connectionManager.isDatabaseConnected(connectionKey, database);
+  });
+
+  // Get all connected databases for a connection
+  ipcMain.handle("database:getConnectedDatabases", async (_event, connectionKey: string) => {
+    return connectionManager.getConnectedDatabases(connectionKey);
+  });
+
   ipcMain.handle("schema:list", async (_event, connectionKey: string, database?: string) => {
     const adapter = await connectionManager.getAdapterForDatabase(connectionKey, database);
     if (!adapter) {

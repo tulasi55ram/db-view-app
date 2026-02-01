@@ -203,6 +203,7 @@ export interface DocumentQueryViewProps {
     id: string;
     connectionKey?: string;
     connectionName?: string;
+    database?: string;
     sql?: string;
     columns?: string[];
     rows?: Record<string, unknown>[];
@@ -362,7 +363,7 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
       // Load CQL autocomplete data for Cassandra
       if (dbType === "cassandra") {
         api
-          .getAutocompleteData(tab.connectionKey)
+          .getAutocompleteData(tab.connectionKey, tab.database)
           .then((data) => {
             // Transform TableInfo to CqlTableInfo
             const cqlTables: CqlTableInfo[] = (data.tables || []).map((t: TableInfo) => ({
@@ -383,7 +384,7 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
       // Load ES autocomplete data for Elasticsearch
       if (dbType === "elasticsearch") {
         api
-          .getAutocompleteData(tab.connectionKey)
+          .getAutocompleteData(tab.connectionKey, tab.database)
           .then((data) => {
             // Transform columns to ES field format
             const fields: Record<string, ESFieldInfo[]> = {};
@@ -409,7 +410,7 @@ export function DocumentQueryView({ tab, onTabUpdate, dbType }: DocumentQueryVie
       // Load MongoDB autocomplete data
       if (dbType === "mongodb") {
         api
-          .getAutocompleteData(tab.connectionKey)
+          .getAutocompleteData(tab.connectionKey, tab.database)
           .then((data) => {
             // Transform columns to MongoDB field format
             const fields: Record<string, MongoFieldInfo[]> = {};
