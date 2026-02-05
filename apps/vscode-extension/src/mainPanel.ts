@@ -2186,10 +2186,12 @@ export async function openQueryInPanel(
 
   // Send message to open a new query tab (queues if webview not ready)
   // Include dbType to route to the correct query editor (SQL, Document, or Redis)
+  // Include database for multi-database connections (showAllDatabases)
   sendMessageToPanel(key, {
     type: "OPEN_QUERY_TAB",
     connectionName,
-    dbType: connectionConfig.dbType || 'postgres'
+    dbType: connectionConfig.dbType || 'postgres',
+    database: 'database' in connectionConfig ? connectionConfig.database : undefined
   });
 }
 

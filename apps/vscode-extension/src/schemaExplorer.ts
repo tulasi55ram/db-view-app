@@ -882,7 +882,14 @@ export class SchemaTreeItem extends vscode.TreeItem {
     super(getLabel(node, connectionInfo), getCollapsibleState(node));
     this.connectionInfo = connectionInfo ?? null;
 
-    this.contextValue = node.type;
+    // Set contextValue based on node type and connection settings
+    // For showAllDatabases connections, use a different contextValue to hide "New Query" at connection level
+    const isShowAllDatabases = connectionInfo && 'showAllDatabases' in connectionInfo && connectionInfo.showAllDatabases === true;
+    if (node.type === 'connection' && isShowAllDatabases) {
+      this.contextValue = 'connectionShowAll';
+    } else {
+      this.contextValue = node.type;
+    }
     this.iconPath = new vscode.ThemeIcon(
       getIcon(node, connectionStatus),
       getIconColor(node, connectionStatus)

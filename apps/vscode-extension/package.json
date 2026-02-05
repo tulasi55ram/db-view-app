@@ -228,62 +228,62 @@
         },
         {
           "command": "dbview.showDatabaseInfo",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "1_actions@2"
         },
         {
           "command": "dbview.showRunningQueries",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "1_actions@3"
         },
         {
           "command": "dbview.refreshExplorer",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "2_connection@1"
         },
         {
           "command": "dbview.reconnectConnection",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "2_connection@2"
         },
         {
           "command": "dbview.disconnectConnection",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "2_connection@3"
         },
         {
           "command": "dbview.copyConnectionString",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "3_copy@1"
         },
         {
           "command": "dbview.copyDatabaseName",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "3_copy@2"
         },
         {
           "command": "dbview.copyHostPort",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "3_copy@3"
         },
         {
           "command": "dbview.editConnection",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "4_manage@1"
         },
         {
           "command": "dbview.configureConnection",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "4_manage@2"
         },
         {
           "command": "dbview.deleteConnection",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "5_danger@1"
         },
         {
           "command": "dbview.refreshConnection",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "inline@1"
         },
         {
@@ -293,18 +293,23 @@
         },
         {
           "command": "dbview.editConnection",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "inline@3"
         },
         {
           "command": "dbview.copyConnectionString",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "inline@4"
         },
         {
           "command": "dbview.deleteConnection",
-          "when": "view == dbview.dbExplorer && viewItem == connection",
+          "when": "view == dbview.dbExplorer && viewItem =~ /^connection/",
           "group": "inline@5"
+        },
+        {
+          "command": "dbview.newQueryFromConnection",
+          "when": "view == dbview.dbExplorer && viewItem == database",
+          "group": "1_actions@1"
         },
         {
           "command": "dbview.openTable",

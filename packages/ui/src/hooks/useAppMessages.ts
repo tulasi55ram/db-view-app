@@ -10,7 +10,7 @@ type ThemeKind = 'light' | 'dark' | 'high-contrast' | 'high-contrast-light';
 
 export type IncomingMessage =
   | { type: "OPEN_TABLE"; schema: string; table: string; limit?: number; connectionName?: string; dbType?: DatabaseType; readOnly?: boolean }
-  | { type: "OPEN_QUERY_TAB"; connectionName?: string; dbType?: DatabaseType }
+  | { type: "OPEN_QUERY_TAB"; connectionName?: string; dbType?: DatabaseType; database?: string }
   | { type: "OPEN_ER_DIAGRAM"; schemas: string[] }
   | { type: "DOCUMENT_QUERY_RESULT"; tabId: string; columns: string[]; rows: Record<string, unknown>[]; duration?: number }
   | { type: "DOCUMENT_QUERY_ERROR"; tabId: string; message: string }
@@ -45,7 +45,7 @@ interface UseAppMessagesProps {
 
   // Tab operations
   findOrCreateTableTab: (opts: { schema: string; table: string; limit?: number; connectionName?: string; dbType?: DatabaseType; readOnly?: boolean }) => string;
-  addQueryTab: (opts: { connectionName?: string; dbType?: DatabaseType }) => void;
+  addQueryTab: (opts: { connectionName?: string; dbType?: DatabaseType; database?: string }) => void;
   addERDiagramTab: (opts: { availableSchemas: string[] }) => void;
   getActiveTab: () => any;
   getTab: (id: string) => any;
@@ -114,6 +114,7 @@ export function useAppMessages({
         addQueryTab({
           connectionName: message.connectionName,
           dbType: message.dbType,
+          database: message.database,
         });
         break;
       }
