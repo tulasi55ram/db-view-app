@@ -1,5 +1,19 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Play, Wand2, History, Activity, BookOpen, Save, Bookmark, X } from "lucide-react";
+import {
+  Play,
+  Square,
+  Wand2,
+  History,
+  Activity,
+  BookOpen,
+  Save,
+  Bookmark,
+  Keyboard,
+  Clock,
+  Database,
+  Rows3,
+  Zap,
+} from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SqlEditor, type SqlEditorRef } from "./SqlEditor";
 import { QueryResultsGrid } from "./QueryResultsGrid";
@@ -9,6 +23,7 @@ import { SavedQueriesPanel } from "./SavedQueriesPanel";
 import { SaveQueryModal } from "./SaveQueryModal";
 import { getElectronAPI } from "@/electron";
 import { toast } from "sonner";
+import { cn } from "@/utils/cn";
 import type { TableInfo, ColumnMetadata, ExplainPlan, SavedQuery, QueryHistoryEntry } from "@dbview/types";
 import { useQueryHistoryStore, useSavedQueriesStore } from "@dbview/shared-state";
 import type { SqlDatabaseType, ForeignKeyRelation } from "@/utils/sqlAutocomplete";
@@ -662,126 +677,248 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
     }
   }, [tab, api]);
 
+  // Check for selection when clicking run
+  const checkSelectionAndRun = useCallback(() => {
+    const selectedText = sqlEditorRef.current?.getSelectedText();
+    handleRunQuery(selectedText);
+  }, [handleRunQuery]);
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-bg-primary">
-      {/* Toolbar - Compact, always visible, z-10 ensures it stays above content */}
-      <div className="h-10 px-4 flex items-center justify-between border-b border-border bg-bg-secondary relative z-10">
-        <div className="flex items-center gap-2">
-          {tab.loading ? (
+      {/* Enhanced Toolbar */}
+      <div className="h-12 px-3 flex items-center justify-between border-b border-border bg-bg-secondary relative z-10">
+        {/* Left Section: Primary Actions */}
+        <div className="flex items-center gap-1">
+          {/* Run/Cancel Button Group */}
+          <div className="flex items-center">
+            {tab.loading ? (
+              <button
+                onClick={handleCancelQuery}
+                className={cn(
+                  "h-8 px-4 rounded-lg flex items-center gap-2",
+                  "bg-red-500 hover:bg-red-600 text-white",
+                  "text-xs font-medium transition-all duration-150",
+                  "shadow-sm hover:shadow-md"
+                )}
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+                <span>Cancel</span>
+              </button>
+            ) : (
+              <button
+                onClick={checkSelectionAndRun}
+                disabled={!tab.sql?.trim()}
+                className={cn(
+                  "h-8 px-4 rounded-lg flex items-center gap-2",
+                  "bg-green-600 hover:bg-green-700 text-white",
+                  "text-xs font-medium transition-all duration-150",
+                  "shadow-sm hover:shadow-md",
+                  "disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+                )}
+                title="Run query (⌘+Enter)"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Run</span>
+                <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-mono">
+                  ⌘↵
+                </kbd>
+              </button>
+            )}
+          </div>
+
+          {/* Separator */}
+          <div className="w-px h-5 bg-border mx-2" />
+
+          {/* Secondary Actions */}
+          <div className="flex items-center gap-1">
             <button
-              onClick={handleCancelQuery}
-              className="h-7 px-3 rounded flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium transition-colors"
+              onClick={handleFormatSql}
+              disabled={tab.loading || !tab.sql?.trim()}
+              className={cn(
+                "h-8 px-3 rounded-lg flex items-center gap-1.5",
+                "bg-bg-tertiary hover:bg-bg-hover text-text-primary",
+                "border border-transparent hover:border-border",
+                "text-xs font-medium transition-all duration-150",
+                "disabled:opacity-50 disabled:cursor-not-allowed"
+              )}
+              title="Format SQL (⌘+Shift+F)"
             >
-              <X className="w-3 h-3" />
-              Cancel
+              <Wand2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Format</span>
             </button>
-          ) : (
+
+            <button
+              onClick={handleExplainQuery}
+              disabled={tab.loading || !tab.sql?.trim() || explainLoading}
+              className={cn(
+                "h-8 px-3 rounded-lg flex items-center gap-1.5",
+                "bg-bg-tertiary hover:bg-bg-hover text-text-primary",
+                "border border-transparent hover:border-border",
+                "text-xs font-medium transition-all duration-150",
+                "disabled:opacity-50 disabled:cursor-not-allowed"
+              )}
+              title="Explain query execution plan"
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Explain</span>
+            </button>
+
+            <button
+              onClick={handleSaveQuery}
+              disabled={tab.loading || !tab.sql?.trim()}
+              className={cn(
+                "h-8 px-3 rounded-lg flex items-center gap-1.5",
+                "bg-bg-tertiary hover:bg-bg-hover text-text-primary",
+                "border border-transparent hover:border-border",
+                "text-xs font-medium transition-all duration-150",
+                "disabled:opacity-50 disabled:cursor-not-allowed"
+              )}
+              title="Save query (⌘+S)"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Save</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Center Section: Connection & Status */}
+        <div className="hidden md:flex items-center gap-3">
+          {/* Connection Badge */}
+          {tab.connectionKey && (
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-bg-tertiary border border-border">
+              <Database className="w-3.5 h-3.5 text-accent" />
+              <span className="text-xs text-text-secondary font-medium">
+                {tab.connectionName || tab.database || dbType}
+              </span>
+              <span className={cn(
+                "w-1.5 h-1.5 rounded-full",
+                tab.loading ? "bg-yellow-500 animate-pulse" : "bg-green-500"
+              )} />
+            </div>
+          )}
+        </div>
+
+        {/* Right Section: Panel Toggles */}
+        <div className="flex items-center gap-1">
+          {/* Panel Toggle Buttons */}
+          <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5 border border-border">
             <button
               onClick={() => {
-                const selectedText = sqlEditorRef.current?.getSelectedText();
-                handleRunQuery(selectedText);
+                const newValue = !showSavedQueries;
+                setShowSavedQueries(newValue);
+                if (newValue) {
+                  setShowExplainPanel(false);
+                  setShowHistory(false);
+                  setShowReference(false);
+                }
               }}
-              disabled={!tab.sql?.trim()}
-              className="h-7 px-3 rounded flex items-center gap-1.5 bg-accent hover:bg-accent/90 text-white text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className={cn(
+                "h-7 px-2.5 rounded-md flex items-center gap-1.5 text-xs font-medium transition-all duration-150",
+                showSavedQueries
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+              )}
+              title="Saved queries"
             >
-              <Play className="w-3 h-3" />
-              Run
-              <span className="opacity-70">(Cmd+Enter)</span>
+              <Bookmark className="w-3.5 h-3.5" />
+              <span className="hidden lg:inline">Saved</span>
             </button>
-          )}
+
+            <button
+              onClick={() => {
+                const newValue = !showExplainPanel;
+                setShowExplainPanel(newValue);
+                if (newValue) {
+                  setShowSavedQueries(false);
+                  setShowHistory(false);
+                  setShowReference(false);
+                }
+              }}
+              className={cn(
+                "h-7 px-2.5 rounded-md flex items-center gap-1.5 text-xs font-medium transition-all duration-150",
+                showExplainPanel
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+              )}
+              title="Query execution plan"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span className="hidden lg:inline">Plan</span>
+            </button>
+
+            <button
+              onClick={() => {
+                const newValue = !showHistory;
+                setShowHistory(newValue);
+                if (newValue) {
+                  setShowSavedQueries(false);
+                  setShowExplainPanel(false);
+                  setShowReference(false);
+                }
+              }}
+              className={cn(
+                "h-7 px-2.5 rounded-md flex items-center gap-1.5 text-xs font-medium transition-all duration-150",
+                showHistory
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+              )}
+              title="Query history"
+            >
+              <History className="w-3.5 h-3.5" />
+              <span className="hidden lg:inline">History</span>
+            </button>
+
+            <button
+              onClick={() => {
+                const newValue = !showReference;
+                setShowReference(newValue);
+                if (newValue) {
+                  setShowSavedQueries(false);
+                  setShowExplainPanel(false);
+                  setShowHistory(false);
+                }
+              }}
+              className={cn(
+                "h-7 px-2.5 rounded-md flex items-center gap-1.5 text-xs font-medium transition-all duration-150",
+                showReference
+                  ? "bg-accent text-white shadow-sm"
+                  : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+              )}
+              title="SQL reference"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span className="hidden lg:inline">Docs</span>
+            </button>
+          </div>
+
+          {/* Keyboard Shortcuts Button */}
           <button
-            onClick={handleFormatSql}
-            disabled={tab.loading || !tab.sql?.trim()}
-            className="h-7 px-3 rounded flex items-center gap-1.5 bg-bg-tertiary hover:bg-bg-hover text-text-primary text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => toast.info(
+              <div className="space-y-2">
+                <p className="font-medium">Keyboard Shortcuts</p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  <span className="text-text-secondary">Run query</span>
+                  <kbd className="font-mono">⌘ + Enter</kbd>
+                  <span className="text-text-secondary">Format SQL</span>
+                  <kbd className="font-mono">⌘ + Shift + F</kbd>
+                  <span className="text-text-secondary">Save query</span>
+                  <kbd className="font-mono">⌘ + S</kbd>
+                  <span className="text-text-secondary">Autocomplete</span>
+                  <kbd className="font-mono">Ctrl + Space</kbd>
+                  <span className="text-text-secondary">Find</span>
+                  <kbd className="font-mono">⌘ + F</kbd>
+                </div>
+              </div>,
+              { duration: 5000 }
+            )}
+            className={cn(
+              "h-8 w-8 rounded-lg flex items-center justify-center",
+              "text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary",
+              "transition-all duration-150"
+            )}
+            title="Keyboard shortcuts"
           >
-            <Wand2 className="w-3 h-3" />
-            Format
-          </button>
-          <button
-            onClick={handleExplainQuery}
-            disabled={tab.loading || !tab.sql?.trim() || explainLoading}
-            className="h-7 px-3 rounded flex items-center gap-1.5 bg-bg-tertiary hover:bg-bg-hover text-text-primary text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Activity className="w-3 h-3" />
-            Explain
-          </button>
-          <button
-            onClick={handleSaveQuery}
-            disabled={tab.loading || !tab.sql?.trim()}
-            className="h-7 px-3 rounded flex items-center gap-1.5 bg-bg-tertiary hover:bg-bg-hover text-text-primary text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Save className="w-3 h-3" />
-            Save
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              const newValue = !showSavedQueries;
-              setShowSavedQueries(newValue);
-              if (newValue) {
-                setShowExplainPanel(false);
-                setShowHistory(false);
-                setShowReference(false);
-              }
-            }}
-            className={`h-7 px-3 rounded flex items-center gap-1.5 text-xs font-medium transition-colors ${
-              showSavedQueries ? "bg-accent/20 text-accent" : "bg-bg-tertiary hover:bg-bg-hover text-text-primary"
-            }`}
-          >
-            <Bookmark className="w-3 h-3" />
-            Saved
-          </button>
-          <button
-            onClick={() => {
-              const newValue = !showExplainPanel;
-              setShowExplainPanel(newValue);
-              if (newValue) {
-                setShowSavedQueries(false);
-                setShowHistory(false);
-                setShowReference(false);
-              }
-            }}
-            className={`h-7 px-3 rounded flex items-center gap-1.5 text-xs font-medium transition-colors ${
-              showExplainPanel ? "bg-accent/20 text-accent" : "bg-bg-tertiary hover:bg-bg-hover text-text-primary"
-            }`}
-          >
-            <Activity className="w-3 h-3" />
-            Plan
-          </button>
-          <button
-            onClick={() => {
-              const newValue = !showHistory;
-              setShowHistory(newValue);
-              if (newValue) {
-                setShowSavedQueries(false);
-                setShowExplainPanel(false);
-                setShowReference(false);
-              }
-            }}
-            className={`h-7 px-3 rounded flex items-center gap-1.5 text-xs font-medium transition-colors ${
-              showHistory ? "bg-accent/20 text-accent" : "bg-bg-tertiary hover:bg-bg-hover text-text-primary"
-            }`}
-          >
-            <History className="w-3 h-3" />
-            History
-          </button>
-          <button
-            onClick={() => {
-              const newValue = !showReference;
-              setShowReference(newValue);
-              if (newValue) {
-                setShowSavedQueries(false);
-                setShowExplainPanel(false);
-                setShowHistory(false);
-              }
-            }}
-            className={`h-7 px-3 rounded flex items-center gap-1.5 text-xs font-medium transition-colors ${
-              showReference ? "bg-accent/20 text-accent" : "bg-bg-tertiary hover:bg-bg-hover text-text-primary"
-            }`}
-          >
-            <BookOpen className="w-3 h-3" />
-            Reference
+            <Keyboard className="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -922,6 +1059,75 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
             </div>
           </Panel>
         </PanelGroup>
+      </div>
+
+      {/* Status Bar */}
+      <div className="h-7 px-3 flex items-center justify-between border-t border-border bg-bg-secondary text-xs">
+        {/* Left: Query Status */}
+        <div className="flex items-center gap-4">
+          {tab.loading ? (
+            <div className="flex items-center gap-2 text-yellow-500">
+              <div className="w-3 h-3 rounded-full border-2 border-yellow-500 border-t-transparent animate-spin" />
+              <span>Executing query...</span>
+            </div>
+          ) : tab.error ? (
+            <div className="flex items-center gap-2 text-red-400">
+              <div className="w-2 h-2 rounded-full bg-red-500" />
+              <span className="truncate max-w-[300px]">{tab.error}</span>
+            </div>
+          ) : tab.rows && tab.rows.length > 0 ? (
+            <div className="flex items-center gap-2 text-green-400">
+              <div className="w-2 h-2 rounded-full bg-green-500" />
+              <span>Query completed</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-text-tertiary">
+              <div className="w-2 h-2 rounded-full bg-text-tertiary" />
+              <span>Ready</span>
+            </div>
+          )}
+        </div>
+
+        {/* Center: Query Stats */}
+        <div className="flex items-center gap-4 text-text-secondary">
+          {tab.rows && tab.rows.length > 0 && (
+            <>
+              <div className="flex items-center gap-1.5">
+                <Rows3 className="w-3.5 h-3.5 text-text-tertiary" />
+                <span>
+                  {tab.rows.length.toLocaleString()} row{tab.rows.length !== 1 ? 's' : ''}
+                  {tab.hasMore && '+'}
+                </span>
+              </div>
+              {tab.duration !== undefined && (
+                <div className="flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-text-tertiary" />
+                  <span>
+                    {tab.duration < 1000
+                      ? `${tab.duration}ms`
+                      : `${(tab.duration / 1000).toFixed(2)}s`}
+                  </span>
+                </div>
+              )}
+              {tab.columns && (
+                <div className="flex items-center gap-1.5 text-text-tertiary">
+                  <span>{tab.columns.length} column{tab.columns.length !== 1 ? 's' : ''}</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Right: Database Info */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-text-tertiary">
+            <Database className="w-3.5 h-3.5" />
+            <span className="uppercase font-medium">{dbType}</span>
+          </div>
+          {tab.database && (
+            <span className="text-text-secondary">{tab.database}</span>
+          )}
+        </div>
       </div>
 
       {/* Save Query Modal */}

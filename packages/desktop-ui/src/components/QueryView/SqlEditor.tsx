@@ -23,6 +23,67 @@ import {
 } from "@/utils/sqlAutocomplete";
 import { getQueryAtCursor } from "@/utils/queryParser";
 
+/**
+ * Click-anywhere extension for CodeMirror
+ * Allows clicking in empty space below the document to automatically
+ * insert newlines and position the cursor at that location.
+ * This provides a more intuitive editing experience similar to VS Code.
+ */
+function createClickAnywhereExtension() {
+  return EditorView.domEventHandlers({
+    mousedown: (event, view) => {
+      // Use scrollDOM to get the full scrollable area (includes empty space)
+      const scrollDOM = view.scrollDOM;
+      const scrollRect = scrollDOM.getBoundingClientRect();
+
+      // Check if click is within the editor's scrollable area
+      if (
+        event.clientX < scrollRect.left ||
+        event.clientX > scrollRect.right ||
+        event.clientY < scrollRect.top ||
+        event.clientY > scrollRect.bottom
+      ) {
+        return false;
+      }
+
+      // Get document info
+      const docLength = view.state.doc.length;
+      const lastLineBlock = view.lineBlockAt(docLength);
+      const lineHeight = view.defaultLineHeight;
+
+      // Check if click is below the last line of content
+      // Account for scroll position
+      const scrollTop = scrollDOM.scrollTop;
+      const contentBottom = lastLineBlock.bottom - scrollTop + scrollRect.top;
+
+      if (event.clientY > contentBottom) {
+        // Calculate how many lines we need to add
+        const clickY = event.clientY;
+        const linesToAdd = Math.max(1, Math.ceil((clickY - contentBottom) / lineHeight));
+
+        // Create newlines to insert
+        const newlines = "\n".repeat(linesToAdd);
+
+        // Insert newlines at the end of document and move cursor there
+        view.dispatch({
+          changes: { from: docLength, insert: newlines },
+          selection: { anchor: docLength + linesToAdd },
+          scrollIntoView: true,
+        });
+
+        // Focus the editor
+        view.focus();
+
+        // Prevent default to avoid text selection issues
+        event.preventDefault();
+        return true;
+      }
+
+      return false; // Let default handling proceed
+    },
+  });
+}
+
 export interface SqlEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -152,17 +213,17 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
       };
     };
 
-    // Create theme based on current mode
+    // Create theme based on current mode - clean, minimal design like VS Code/TablePlus
     const createEditorTheme = (isDark: boolean) =>
       EditorView.theme(
         {
           "&": {
-            backgroundColor: isDark ? "#171717" : "#ffffff",
-            color: isDark ? "#fafafa" : "#171717",
+            backgroundColor: isDark ? "#1e1e1e" : "#ffffff",
+            color: isDark ? "#d4d4d4" : "#1e1e1e",
             minHeight: "100%",
             fontSize: "13px",
             lineHeight: "1.5",
-            fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', 'Consolas', monospace",
             display: "flex",
             flexDirection: "column",
           },
@@ -170,53 +231,64 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
             overflow: "auto",
             height: "100%",
             flex: "1",
+            scrollbarWidth: "thin",
+            scrollbarColor: isDark ? "#404040 transparent" : "#c4c4c4 transparent",
+            cursor: "text",
           },
           ".cm-content": {
-            caretColor: "#3b82f6",
+            caretColor: isDark ? "#aeafad" : "#000000",
             padding: "12px 0",
+            minHeight: "100%",
           },
           ".cm-line": {
             lineHeight: "1.5",
+            padding: "0 16px 0 8px",
           },
           ".cm-cursor": {
-            borderLeftColor: "#3b82f6",
+            borderLeftColor: isDark ? "#aeafad" : "#000000",
             borderLeftWidth: "2px",
-            height: "1.2em !important",
           },
+          // Very subtle active line - barely visible, just helps track position
           ".cm-activeLine": {
-            backgroundColor: isDark ? "#262626" : "#f5f5f5",
+            backgroundColor: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.04)",
           },
           ".cm-activeLineGutter": {
-            backgroundColor: isDark ? "#262626" : "#f5f5f5",
+            backgroundColor: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.04)",
           },
           ".cm-gutters": {
-            backgroundColor: isDark ? "#171717" : "#fafafa",
-            color: isDark ? "#737373" : "#a3a3a3",
+            backgroundColor: isDark ? "#1e1e1e" : "#f8f8f8",
+            color: isDark ? "#858585" : "#999999",
             border: "none",
-            minWidth: "40px",
+            borderRight: isDark ? "1px solid #333333" : "1px solid #e5e5e5",
+            minWidth: "50px",
+          },
+          ".cm-lineNumbers": {
+            minWidth: "46px",
           },
           ".cm-lineNumbers .cm-gutterElement": {
             padding: "0 12px 0 8px",
+            textAlign: "right",
+            fontSize: "12px",
+          },
+          ".cm-lineNumbers .cm-gutterElement.cm-activeLineGutter": {
+            color: isDark ? "#c6c6c6" : "#333333",
           },
           "&.cm-focused .cm-selectionBackground, ::selection": {
-            backgroundColor: "#3b82f6",
-            color: "#ffffff",
+            backgroundColor: isDark ? "#264f78" : "#add6ff",
           },
           ".cm-selectionBackground": {
-            backgroundColor: isDark ? "#262626" : "#e5e5e5",
+            backgroundColor: isDark ? "#264f78" : "#add6ff",
           },
           ".cm-tooltip": {
-            backgroundColor: isDark ? "#262626" : "#ffffff",
-            border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
-            color: isDark ? "#fafafa" : "#171717",
-            borderRadius: "6px",
-            boxShadow: isDark
-              ? "0 4px 12px rgba(0, 0, 0, 0.4)"
-              : "0 4px 12px rgba(0, 0, 0, 0.1)",
+            backgroundColor: isDark ? "#252526" : "#ffffff",
+            border: isDark ? "1px solid #454545" : "1px solid #c8c8c8",
+            color: isDark ? "#cccccc" : "#1e1e1e",
+            borderRadius: "4px",
+            boxShadow: "0 2px 8px rgba(0, 0, 0, 0.15)",
           },
           ".cm-tooltip-autocomplete": {
-            backgroundColor: isDark ? "#262626" : "#ffffff",
-            border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
+            backgroundColor: isDark ? "#252526" : "#ffffff",
+            border: isDark ? "1px solid #454545" : "1px solid #c8c8c8",
             maxWidth: "400px",
           },
           ".cm-tooltip-autocomplete ul": {
@@ -224,12 +296,12 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
           },
           ".cm-tooltip-autocomplete ul li": {
             padding: "4px 8px",
-            borderRadius: "4px",
+            borderRadius: "3px",
             margin: "2px 4px",
           },
           ".cm-tooltip-autocomplete ul li[aria-selected]": {
-            backgroundColor: isDark ? "#404040" : "#e5e5e5",
-            color: isDark ? "#fafafa" : "#171717",
+            backgroundColor: isDark ? "#04395e" : "#d6ebff",
+            color: isDark ? "#ffffff" : "#1e1e1e",
           },
           ".cm-completionIcon": {
             width: "1.2em",
@@ -265,8 +337,7 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
             borderLeft: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
           },
           ".cm-placeholder": {
-            color: "#737373",
-            lineHeight: "1.5",
+            color: isDark ? "#6a6a6a" : "#999999",
           },
         },
         { dark: isDark }
@@ -364,6 +435,8 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
         themeCompartment.current.of(editorTheme),
         readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly || loading)),
         placeholderExt("Write your SQL query here... (Ctrl+Space for autocomplete)"),
+        // Click-anywhere extension: allows clicking in empty space to position cursor
+        createClickAnywhereExtension(),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             const newValue = update.state.doc.toString();
@@ -404,34 +477,54 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
       const newTheme = EditorView.theme(
         {
           "&": {
-            backgroundColor: isDark ? "#171717" : "#ffffff",
-            color: isDark ? "#fafafa" : "#171717",
+            backgroundColor: isDark ? "#1e1e1e" : "#ffffff",
+            color: isDark ? "#d4d4d4" : "#1e1e1e",
+          },
+          ".cm-scroller": {
+            scrollbarColor: isDark ? "#404040 transparent" : "#c4c4c4 transparent",
+            cursor: "text",
+          },
+          ".cm-content": {
+            caretColor: isDark ? "#aeafad" : "#000000",
+          },
+          ".cm-cursor": {
+            borderLeftColor: isDark ? "#aeafad" : "#000000",
           },
           ".cm-activeLine": {
-            backgroundColor: isDark ? "#262626" : "#f5f5f5",
+            backgroundColor: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.04)",
           },
           ".cm-activeLineGutter": {
-            backgroundColor: isDark ? "#262626" : "#f5f5f5",
+            backgroundColor: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.04)",
           },
           ".cm-gutters": {
-            backgroundColor: isDark ? "#171717" : "#fafafa",
-            color: isDark ? "#737373" : "#a3a3a3",
+            backgroundColor: isDark ? "#1e1e1e" : "#f8f8f8",
+            color: isDark ? "#858585" : "#999999",
+            borderRight: isDark ? "1px solid #333333" : "1px solid #e5e5e5",
+          },
+          ".cm-lineNumbers .cm-gutterElement.cm-activeLineGutter": {
+            color: isDark ? "#c6c6c6" : "#333333",
+          },
+          "&.cm-focused .cm-selectionBackground, ::selection": {
+            backgroundColor: isDark ? "#264f78" : "#add6ff",
           },
           ".cm-selectionBackground": {
-            backgroundColor: isDark ? "#262626" : "#e5e5e5",
+            backgroundColor: isDark ? "#264f78" : "#add6ff",
           },
           ".cm-tooltip": {
-            backgroundColor: isDark ? "#262626" : "#ffffff",
-            border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
-            color: isDark ? "#fafafa" : "#171717",
+            backgroundColor: isDark ? "#252526" : "#ffffff",
+            border: isDark ? "1px solid #454545" : "1px solid #c8c8c8",
+            color: isDark ? "#cccccc" : "#1e1e1e",
           },
           ".cm-tooltip-autocomplete": {
-            backgroundColor: isDark ? "#262626" : "#ffffff",
-            border: isDark ? "1px solid #404040" : "1px solid #e5e5e5",
+            backgroundColor: isDark ? "#252526" : "#ffffff",
+            border: isDark ? "1px solid #454545" : "1px solid #c8c8c8",
           },
           ".cm-tooltip-autocomplete ul li[aria-selected]": {
-            backgroundColor: isDark ? "#404040" : "#e5e5e5",
-            color: isDark ? "#fafafa" : "#171717",
+            backgroundColor: isDark ? "#04395e" : "#d6ebff",
+            color: isDark ? "#ffffff" : "#1e1e1e",
+          },
+          ".cm-placeholder": {
+            color: isDark ? "#6a6a6a" : "#999999",
           },
         },
         { dark: isDark }
@@ -480,24 +573,86 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
     }
   }, [value]);
 
+  // Handle clicks in empty space below the content
+  const handleContainerClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const view = viewRef.current;
+    if (!view || readOnly || loading) return;
+
+    const container = editorRef.current;
+    if (!container) return;
+
+    const containerRect = container.getBoundingClientRect();
+
+    // Check if click is within the container
+    if (
+      event.clientX < containerRect.left ||
+      event.clientX > containerRect.right ||
+      event.clientY < containerRect.top ||
+      event.clientY > containerRect.bottom
+    ) {
+      return;
+    }
+
+    // Get document info
+    const docLength = view.state.doc.length;
+    const lastLineBlock = view.lineBlockAt(docLength);
+    const lineHeight = view.defaultLineHeight;
+
+    // Calculate the content bottom position relative to the viewport
+    // Account for the container's position and any scroll
+    const scrollDOM = view.scrollDOM;
+    const scrollTop = scrollDOM.scrollTop;
+    const editorTop = containerRect.top;
+
+    // lastLineBlock.bottom is in document coordinates, need to convert to screen
+    const contentBottom = editorTop + lastLineBlock.bottom - scrollTop;
+
+    // Check if click is below the last line of content
+    if (event.clientY > contentBottom + 5) { // 5px buffer
+      // Calculate how many lines we need to add
+      const linesToAdd = Math.max(1, Math.ceil((event.clientY - contentBottom) / lineHeight));
+
+      // Create newlines to insert
+      const newlines = "\n".repeat(linesToAdd);
+
+      // Insert newlines at the end of document and move cursor there
+      view.dispatch({
+        changes: { from: docLength, insert: newlines },
+        selection: { anchor: docLength + linesToAdd },
+        scrollIntoView: true,
+      });
+
+      // Focus the editor
+      view.focus();
+    }
+  };
+
   return (
     <div className="relative h-full flex flex-col">
-      <div ref={editorRef} className="rounded border border-border overflow-auto flex-1" style={{ minHeight: 0 }} />
+      {/* Editor Container - clean, minimal styling */}
+      <div
+        ref={editorRef}
+        onClick={handleContainerClick}
+        className={`
+          flex-1 overflow-auto cursor-text
+          ${error ? 'ring-1 ring-red-500/50' : ''}
+        `}
+        style={{ minHeight: 0 }}
+      />
 
-      {/* Database type badge */}
-      <div className="absolute top-2 right-2 px-2 py-0.5 text-[10px] font-medium rounded bg-bg-tertiary text-text-secondary uppercase tracking-wide">
-        {dbType}
-      </div>
+      {/* Error indicator */}
+      {error && (
+        <div className="absolute bottom-2 left-2 right-2 px-3 py-2 rounded bg-red-500/10 border border-red-500/30">
+          <p className="text-xs text-red-400 truncate">{error}</p>
+        </div>
+      )}
 
-      {/* Error indicator border */}
-      {error && <div className="absolute inset-0 pointer-events-none border-2 border-error/50 rounded" />}
-
-      {/* Loading overlay - pointer-events-none to prevent blocking other UI elements */}
+      {/* Loading overlay */}
       {loading && (
-        <div className="absolute inset-0 bg-bg-primary/50 backdrop-blur-[1px] flex items-center justify-center rounded pointer-events-none">
-          <div className="flex items-center gap-2 text-sm text-text-secondary">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-            <span>Executing query...</span>
+        <div className="absolute inset-0 bg-bg-primary/70 flex items-center justify-center">
+          <div className="flex items-center gap-2.5 px-4 py-2 rounded bg-bg-secondary border border-border shadow-md">
+            <div className="w-4 h-4 rounded-full border-2 border-accent border-t-transparent animate-spin" />
+            <span className="text-sm text-text-primary">Executing...</span>
           </div>
         </div>
       )}

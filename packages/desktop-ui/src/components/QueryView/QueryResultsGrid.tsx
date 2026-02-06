@@ -1,8 +1,9 @@
 import { type FC, useState, useRef, useEffect } from "react";
-import { Download, Copy, Check, ChevronDown, Clock } from "lucide-react";
+import { Download, Copy, Check, ChevronDown, Clock, Play, Database, Sparkles, Terminal, Table2 } from "lucide-react";
 import { exportToCSV, exportToJSON, copyToClipboardAsTSV } from "@/utils/exportData";
 import { toast } from "sonner";
 import { CellValue } from "@/components/JsonCellViewer";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 export interface QueryResultsGridProps {
   columns: string[];
@@ -22,6 +23,7 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [copied, setCopied] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const parentRef = useRef<HTMLDivElement>(null);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -57,12 +59,28 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
     }
     setShowExportMenu(false);
   };
+
+  // Virtualization setup - must be before early returns
+  const ROW_HEIGHT = 33; // Height of each row in pixels
+
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10, // Render 10 extra rows above and below viewport for smooth scrolling
+  });
+
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-text-secondary">
-          <div className="h-8 w-8 mx-auto mb-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-          <p>Executing query...</p>
+      <div className="flex-1 flex items-center justify-center bg-bg-primary">
+        <div className="text-center">
+          <div className="relative w-12 h-12 mx-auto mb-4">
+            <div className="absolute inset-0 rounded-full border-2 border-accent/20" />
+            <div className="absolute inset-0 rounded-full border-2 border-accent border-t-transparent animate-spin" />
+            <Database className="absolute inset-0 m-auto w-5 h-5 text-accent" />
+          </div>
+          <p className="text-text-primary font-medium mb-1">Executing Query</p>
+          <p className="text-sm text-text-tertiary">Fetching results from database...</p>
         </div>
       </div>
     );
@@ -70,10 +88,51 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
 
   if (columns.length === 0 || rows.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-text-secondary">
-        <div className="text-center">
-          <p className="text-lg mb-2">No Results</p>
-          <p className="text-sm text-text-tertiary">Query returned no data</p>
+      <div className="flex-1 flex items-center justify-center bg-bg-primary p-8">
+        <div className="text-center max-w-md">
+          {/* Icon */}
+          <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-accent/20 to-accent/5 flex items-center justify-center">
+            <Table2 className="w-8 h-8 text-accent" />
+          </div>
+
+          {/* Title */}
+          <h3 className="text-lg font-semibold text-text-primary mb-2">No Results</h3>
+          <p className="text-sm text-text-secondary mb-6">
+            Write a query above and press <kbd className="px-1.5 py-0.5 mx-1 rounded bg-bg-tertiary border border-border text-xs font-mono">⌘ Enter</kbd> to execute
+          </p>
+
+          {/* Quick Tips */}
+          <div className="grid grid-cols-1 gap-3 text-left">
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-bg-secondary border border-border">
+              <div className="w-8 h-8 rounded-md bg-green-500/10 flex items-center justify-center flex-shrink-0">
+                <Play className="w-4 h-4 text-green-500" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-text-primary">Run Query</p>
+                <p className="text-xs text-text-tertiary">Select text to run part of your query, or run the entire editor</p>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-bg-secondary border border-border">
+              <div className="w-8 h-8 rounded-md bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                <Sparkles className="w-4 h-4 text-blue-500" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-text-primary">Smart Autocomplete</p>
+                <p className="text-xs text-text-tertiary">Press <kbd className="px-1 py-0.5 rounded bg-bg-tertiary border border-border text-[10px] font-mono">Ctrl+Space</kbd> for table and column suggestions</p>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-bg-secondary border border-border">
+              <div className="w-8 h-8 rounded-md bg-purple-500/10 flex items-center justify-center flex-shrink-0">
+                <Terminal className="w-4 h-4 text-purple-500" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-text-primary">SQL Snippets</p>
+                <p className="text-xs text-text-tertiary">Type common keywords like SELECT, INSERT, JOIN for quick templates</p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -82,7 +141,7 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
   return (
     <div className="h-full flex flex-col overflow-hidden bg-bg-primary">
       {/* Status bar at top */}
-      <div className="h-8 px-4 flex items-center justify-between border-b border-border bg-bg-secondary text-xs text-text-secondary">
+      <div className="h-8 px-4 flex items-center justify-between border-b border-border bg-bg-secondary text-xs text-text-secondary flex-shrink-0">
         <div className="flex items-center gap-4">
           <span className="font-medium">
             {rows.length.toLocaleString()} {rows.length === 1 ? "row" : "rows"} returned
@@ -139,40 +198,65 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
         </div>
       </div>
 
-      {/* Simple non-virtualized table (for debugging) */}
-      <div className="flex-1 overflow-auto">
-        <table className="w-full text-sm">
-          {/* Sticky header */}
-          <thead className="sticky top-0 bg-bg-tertiary border-b border-border z-10">
-            <tr>
-              {/* Row number column */}
-              <th className="px-3 py-2 text-left font-medium text-text-secondary whitespace-nowrap w-12 border-r border-border">#</th>
-              {columns.map((column) => (
-                <th key={column} className="px-3 py-2 text-left font-medium text-text-primary whitespace-nowrap border-r border-border">
-                  {column}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={index} className="border-b border-border hover:bg-bg-hover transition-colors">
-                {/* Row number */}
-                <td className="px-3 py-2 text-text-tertiary whitespace-nowrap font-mono text-xs w-12 border-r border-border">
-                  {index + 1}
-                </td>
+      {/* Virtualized table container */}
+      <div ref={parentRef} className="flex-1 overflow-auto" style={{ contain: 'strict' }}>
+        <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+          {/* Sticky header - positioned at top */}
+          <div
+            className="sticky top-0 bg-bg-tertiary border-b border-border z-20"
+            style={{
+              display: 'flex',
+              width: '100%'
+            }}
+          >
+            {/* Row number column header */}
+            <div className="px-3 py-2 text-left font-medium text-text-secondary whitespace-nowrap border-r border-border text-sm" style={{ minWidth: '60px', maxWidth: '60px' }}>
+              #
+            </div>
+            {/* Data column headers */}
+            {columns.map((column) => (
+              <div key={column} className="px-3 py-2 text-left font-medium text-text-primary whitespace-nowrap border-r border-border text-sm" style={{ minWidth: '150px' }}>
+                {column}
+              </div>
+            ))}
+          </div>
+
+          {/* Virtual rows */}
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const row = rows[virtualRow.index];
+
+            return (
+              <div
+                key={virtualRow.key}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                  display: 'flex',
+                }}
+                className="border-b border-border hover:bg-bg-hover transition-colors"
+              >
+                {/* Row number cell */}
+                <div className="px-3 py-2 text-text-tertiary whitespace-nowrap font-mono text-xs border-r border-border flex items-center" style={{ minWidth: '60px', maxWidth: '60px' }}>
+                  {virtualRow.index + 1}
+                </div>
+                {/* Data cells */}
                 {columns.map((column) => (
-                  <td
+                  <div
                     key={column}
-                    className="px-3 py-2 whitespace-nowrap border-r border-border"
+                    className="px-3 py-2 whitespace-nowrap border-r border-border text-sm flex items-center"
+                    style={{ minWidth: '150px' }}
                   >
                     <CellValue value={row[column]} />
-                  </td>
+                  </div>
                 ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
