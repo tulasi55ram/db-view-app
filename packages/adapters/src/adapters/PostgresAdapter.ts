@@ -1030,7 +1030,27 @@ export class PostgresAdapter extends EventEmitter implements DatabaseAdapter {
   async explainQuery(sql: string): Promise<ExplainPlan> {
     const explainSql = `EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`;
     const result = await this.query(explainSql);
-    return result.rows[0]['QUERY PLAN'][0] as ExplainPlan;
+
+    // The query method returns an array of results (one per statement)
+    // For EXPLAIN, we want the first result
+    const explainResult = Array.isArray(result) ? result[0] : result;
+
+    // Validate result structure
+    if (!explainResult || !explainResult.rows || explainResult.rows.length === 0) {
+      throw new Error('EXPLAIN query returned no results');
+    }
+
+    const firstRow = explainResult.rows[0];
+    if (!firstRow || !firstRow['QUERY PLAN']) {
+      throw new Error('EXPLAIN query returned invalid format - missing QUERY PLAN column');
+    }
+
+    const queryPlan = firstRow['QUERY PLAN'];
+    if (!Array.isArray(queryPlan) || queryPlan.length === 0) {
+      throw new Error('EXPLAIN query returned invalid format - QUERY PLAN is not an array or is empty');
+    }
+
+    return queryPlan[0] as ExplainPlan;
   }
 
   // ==================== CRUD Operations ====================

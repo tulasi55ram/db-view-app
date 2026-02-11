@@ -1,5 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
-import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
+import { EditorView, keymap, placeholder as placeholderExt, lineNumbers } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
 import { sql, PostgreSQL, MySQL, MariaSQL, SQLite, MSSQL } from "@codemirror/lang-sql";
@@ -420,6 +420,7 @@ export const SqlEditor = forwardRef<SqlEditorRef, SqlEditorProps>(({
     const startState = EditorState.create({
       doc: value,
       extensions: [
+        lineNumbers(),
         EditorView.lineWrapping,
         history(),
         search(),

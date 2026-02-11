@@ -25,6 +25,72 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
   const menuRef = useRef<HTMLDivElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
+  // Column widths state - initialize with default widths
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+    const widths: Record<string, number> = {};
+    columns.forEach(col => {
+      widths[col] = 200; // Default width
+    });
+    return widths;
+  });
+
+  // Resizing state
+  const [resizingColumn, setResizingColumn] = useState<string | null>(null);
+  const resizeStartX = useRef<number>(0);
+  const resizeStartWidth = useRef<number>(0);
+
+  // Update column widths when columns change
+  useEffect(() => {
+    setColumnWidths(prev => {
+      const newWidths: Record<string, number> = {};
+      columns.forEach(col => {
+        newWidths[col] = prev[col] || 200; // Keep existing width or use default
+      });
+      return newWidths;
+    });
+  }, [columns]);
+
+  // Handle column resize
+  const handleResizeStart = (column: string, startX: number) => {
+    setResizingColumn(column);
+    resizeStartX.current = startX;
+    resizeStartWidth.current = columnWidths[column];
+  };
+
+  const handleResizeMove = (e: MouseEvent) => {
+    if (!resizingColumn) return;
+
+    const diff = e.clientX - resizeStartX.current;
+    const newWidth = Math.max(100, resizeStartWidth.current + diff); // Min width 100px
+
+    setColumnWidths(prev => ({
+      ...prev,
+      [resizingColumn]: newWidth,
+    }));
+  };
+
+  const handleResizeEnd = () => {
+    setResizingColumn(null);
+  };
+
+  // Add/remove mouse event listeners for resizing
+  useEffect(() => {
+    if (resizingColumn) {
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      document.addEventListener('mousemove', handleResizeMove);
+      document.addEventListener('mouseup', handleResizeEnd);
+
+      return () => {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', handleResizeMove);
+        document.removeEventListener('mouseup', handleResizeEnd);
+      };
+    }
+  }, [resizingColumn, columnWidths]);
+
   // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -215,8 +281,23 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
             </div>
             {/* Data column headers */}
             {columns.map((column) => (
-              <div key={column} className="px-3 py-2 text-left font-medium text-text-primary whitespace-nowrap border-r border-border text-sm" style={{ minWidth: '150px' }}>
-                {column}
+              <div
+                key={column}
+                className="px-3 py-2 text-left font-medium text-text-primary whitespace-nowrap border-r border-border text-sm overflow-hidden relative group"
+                style={{ width: `${columnWidths[column]}px`, flexShrink: 0 }}
+              >
+                <span className="truncate block">{column}</span>
+                {/* Resize handle */}
+                <div
+                  className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/50 group-hover:bg-accent/30"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    handleResizeStart(column, e.clientX);
+                  }}
+                  style={{
+                    background: resizingColumn === column ? 'rgb(var(--accent) / 0.5)' : undefined,
+                  }}
+                />
               </div>
             ))}
           </div>
@@ -247,10 +328,12 @@ export const QueryResultsGrid: FC<QueryResultsGridProps> = ({ columns, rows, loa
                 {columns.map((column) => (
                   <div
                     key={column}
-                    className="px-3 py-2 whitespace-nowrap border-r border-border text-sm flex items-center"
-                    style={{ minWidth: '150px' }}
+                    className="px-3 py-2 whitespace-nowrap border-r border-border text-sm flex items-center overflow-hidden"
+                    style={{ width: `${columnWidths[column]}px`, flexShrink: 0 }}
                   >
-                    <CellValue value={row[column]} />
+                    <div className="truncate w-full">
+                      <CellValue value={row[column]} />
+                    </div>
                   </div>
                 ))}
               </div>

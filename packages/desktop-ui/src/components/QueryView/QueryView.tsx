@@ -12,7 +12,6 @@ import {
   Clock,
   Database,
   Rows3,
-  Zap,
 } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SqlEditor, type SqlEditorRef } from "./SqlEditor";
@@ -702,14 +701,13 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
                 )}
               >
                 <Square className="w-3.5 h-3.5 fill-current" />
-                <span>Cancel</span>
               </button>
             ) : (
               <button
                 onClick={checkSelectionAndRun}
                 disabled={!tab.sql?.trim()}
                 className={cn(
-                  "h-8 px-4 rounded-lg flex items-center gap-2",
+                  "h-8 px-4 rounded-md flex items-center gap-2",
                   "bg-green-600 hover:bg-green-700 text-white",
                   "text-xs font-medium transition-all duration-150",
                   "shadow-sm hover:shadow-md",
@@ -718,10 +716,6 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
                 title="Run query (⌘+Enter)"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Run</span>
-                <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-mono">
-                  ⌘↵
-                </kbd>
               </button>
             )}
           </div>
@@ -822,28 +816,6 @@ export function QueryView({ tab, onTabUpdate }: QueryViewProps) {
             >
               <Bookmark className="w-3.5 h-3.5" />
               <span className="hidden lg:inline">Saved</span>
-            </button>
-
-            <button
-              onClick={() => {
-                const newValue = !showExplainPanel;
-                setShowExplainPanel(newValue);
-                if (newValue) {
-                  setShowSavedQueries(false);
-                  setShowHistory(false);
-                  setShowReference(false);
-                }
-              }}
-              className={cn(
-                "h-7 px-2.5 rounded-md flex items-center gap-1.5 text-xs font-medium transition-all duration-150",
-                showExplainPanel
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
-              )}
-              title="Query execution plan"
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <span className="hidden lg:inline">Plan</span>
             </button>
 
             <button
