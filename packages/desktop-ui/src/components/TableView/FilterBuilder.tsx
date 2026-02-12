@@ -164,178 +164,162 @@ export function FilterBuilder({ columns, onApply, initialFilters = [], initialLo
     <div className="border-b border-border bg-bg-secondary">
       {/* Expandable Panel Content */}
       {isOpen && (
-        <div className="animate-slideDown max-h-[60vh] overflow-y-auto flex flex-col">
-          {/* Header with close button - Sticky */}
-          <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-border bg-bg-tertiary">
-            <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-              <Filter className="w-4 h-4" />
-              Filter Conditions
-            </h3>
-            <button
-              onClick={() => setIsOpen(false)}
-              className="p-1 rounded hover:bg-bg-hover transition-colors"
-              title="Collapse filter panel"
-            >
-              <X className="w-4 h-4" />
-            </button>
+        <div className="animate-slideDown max-h-[50vh] overflow-y-auto">
+          {/* Compact Header with actions */}
+          <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bg-tertiary">
+            <div className="flex items-center gap-3">
+              <h3 className="text-xs font-medium text-text-primary flex items-center gap-1.5">
+                <Filter className="w-3.5 h-3.5" />
+                Filters
+              </h3>
+              {/* Inline Logic Toggle - Only show when multiple filters */}
+              {filters.length > 1 && (
+                <div className="flex items-center bg-bg-secondary rounded border border-border">
+                  <button
+                    onClick={() => setLogic("AND")}
+                    className={`px-2 py-0.5 text-[10px] font-medium transition-colors rounded-l ${
+                      logic === "AND"
+                        ? "bg-accent text-white"
+                        : "text-text-secondary hover:text-text-primary"
+                    }`}
+                    title="All conditions must match"
+                  >
+                    AND
+                  </button>
+                  <button
+                    onClick={() => setLogic("OR")}
+                    className={`px-2 py-0.5 text-[10px] font-medium transition-colors rounded-r ${
+                      logic === "OR"
+                        ? "bg-accent text-white"
+                        : "text-text-secondary hover:text-text-primary"
+                    }`}
+                    title="Any condition can match"
+                  >
+                    OR
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={handleClear}
+                className="px-2 py-1 rounded text-[10px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              >
+                Clear
+              </button>
+              <button
+                onClick={handleApply}
+                className="px-2.5 py-1 rounded bg-accent hover:bg-accent/90 text-white text-[10px] font-medium transition-colors"
+              >
+                Apply
+              </button>
+              <button
+                onClick={() => setIsOpen(false)}
+                className="p-1 rounded hover:bg-bg-hover transition-colors ml-1"
+                title="Collapse"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
-          {/* Filter Logic - Only show when multiple filters */}
-          {filters.length > 1 && (
-            <div className="px-4 py-3 border-b border-border bg-bg-primary">
-              <label className="text-xs text-text-secondary mb-2 block">Match conditions</label>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setLogic("AND")}
-                  className={`flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                    logic === "AND"
-                      ? "bg-accent text-white"
-                      : "bg-bg-tertiary text-text-primary hover:bg-bg-hover"
-                  }`}
-                  title="All conditions must be true"
-                >
-                  All (AND)
-                </button>
-                <button
-                  onClick={() => setLogic("OR")}
-                  className={`flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                    logic === "OR" ? "bg-accent text-white" : "bg-bg-tertiary text-text-primary hover:bg-bg-hover"
-                  }`}
-                  title="At least one condition must be true"
-                >
-                  Any (OR)
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Filters List */}
-          <div className="px-4 py-3 space-y-3">
+          {/* Compact Filters List */}
+          <div className="px-3 py-2 space-y-1.5">
             {filters.map((filter, index) => (
-              <div key={filter.id}>
-                {/* AND/OR separator between conditions */}
-                {index > 0 && filters.length > 1 && (
-                  <div className="flex items-center gap-2 py-2">
-                    <div className="flex-1 h-px bg-border" />
-                    <span className="text-xs text-text-tertiary font-medium">
-                      {logic}
-                    </span>
-                    <div className="flex-1 h-px bg-border" />
-                  </div>
+              <div key={filter.id} className="flex items-center gap-1.5">
+                {/* Logic badge for rows after first */}
+                {index > 0 && filters.length > 1 ? (
+                  <span className="w-8 text-[10px] text-text-tertiary font-medium text-center flex-shrink-0">
+                    {logic}
+                  </span>
+                ) : (
+                  <span className="w-8 flex-shrink-0" />
                 )}
 
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 p-3 border border-border rounded bg-bg-primary">
-                    <div className="grid grid-cols-3 gap-2">
-                      {/* Column */}
-                      <select
-                        value={filter.columnName}
-                        onChange={(e) => updateFilter(index, "columnName", e.target.value)}
-                        className="col-span-1 px-2 py-1.5 bg-bg-secondary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
-                      >
-                        {columns.map((col) => (
-                          <option key={col.name} value={col.name}>
-                            {col.name}
-                          </option>
-                        ))}
-                      </select>
+                {/* Column */}
+                <select
+                  value={filter.columnName}
+                  onChange={(e) => updateFilter(index, "columnName", e.target.value)}
+                  className="w-32 flex-shrink-0 px-2 py-1 bg-bg-primary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  {columns.map((col) => (
+                    <option key={col.name} value={col.name}>
+                      {col.name}
+                    </option>
+                  ))}
+                </select>
 
-                      {/* Operator */}
-                      <select
-                        value={filter.operator}
-                        onChange={(e) => updateFilter(index, "operator", e.target.value as FilterOperator)}
-                        className="col-span-1 px-2 py-1.5 bg-bg-secondary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
-                      >
-                        {OPERATORS.map((op) => (
-                          <option key={op.value} value={op.value}>
-                            {op.label}
-                          </option>
-                        ))}
-                      </select>
+                {/* Operator */}
+                <select
+                  value={filter.operator}
+                  onChange={(e) => updateFilter(index, "operator", e.target.value as FilterOperator)}
+                  className="w-36 flex-shrink-0 px-2 py-1 bg-bg-primary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  {OPERATORS.map((op) => (
+                    <option key={op.value} value={op.value}>
+                      {op.label}
+                    </option>
+                  ))}
+                </select>
 
-                      {/* Value (hide for is_null / is_not_null) */}
-                      {filter.operator !== "is_null" && filter.operator !== "is_not_null" ? (
-                        filter.operator === "between" ? (
-                          // BETWEEN needs two input fields for value and value2
-                          <div className="col-span-1 flex items-center gap-1">
-                            <input
-                              type="text"
-                              value={String(filter.value || "")}
-                              onChange={(e) => updateFilter(index, "value", e.target.value)}
-                              placeholder="min"
-                              className="flex-1 min-w-0 px-2 py-1.5 bg-bg-secondary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
-                            />
-                            <span className="text-xs text-text-tertiary">to</span>
-                            <input
-                              type="text"
-                              value={String(filter.value2 || "")}
-                              onChange={(e) => updateFilter(index, "value2", e.target.value)}
-                              placeholder="max"
-                              className="flex-1 min-w-0 px-2 py-1.5 bg-bg-secondary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
-                            />
-                          </div>
-                        ) : (
-                          <input
-                            type="text"
-                            value={String(filter.value || "")}
-                            onChange={(e) => updateFilter(index, "value", e.target.value)}
-                            placeholder={
-                              filter.operator === "in"
-                                ? "value1, value2, value3"
-                                : filter.operator === "contains" || filter.operator === "starts_with" || filter.operator === "ends_with"
-                                ? "pattern"
-                                : "value"
-                            }
-                            className="col-span-1 px-2 py-1.5 bg-bg-secondary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-2 focus:ring-accent"
-                          />
-                        )
-                      ) : (
-                        <div className="col-span-1" />
-                      )}
+                {/* Value (hide for is_null / is_not_null) */}
+                {filter.operator !== "is_null" && filter.operator !== "is_not_null" ? (
+                  filter.operator === "between" ? (
+                    <div className="flex-1 flex items-center gap-1 min-w-0">
+                      <input
+                        type="text"
+                        value={String(filter.value || "")}
+                        onChange={(e) => updateFilter(index, "value", e.target.value)}
+                        placeholder="min"
+                        className="flex-1 min-w-0 px-2 py-1 bg-bg-primary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                      <span className="text-[10px] text-text-tertiary">–</span>
+                      <input
+                        type="text"
+                        value={String(filter.value2 || "")}
+                        onChange={(e) => updateFilter(index, "value2", e.target.value)}
+                        placeholder="max"
+                        className="flex-1 min-w-0 px-2 py-1 bg-bg-primary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
                     </div>
-                  </div>
+                  ) : (
+                    <input
+                      type="text"
+                      value={String(filter.value || "")}
+                      onChange={(e) => updateFilter(index, "value", e.target.value)}
+                      placeholder={
+                        filter.operator === "in"
+                          ? "val1, val2, ..."
+                          : "value"
+                      }
+                      className="flex-1 min-w-0 px-2 py-1 bg-bg-primary border border-border rounded text-text-primary text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                  )
+                ) : (
+                  <div className="flex-1" />
+                )}
 
-                  {/* Inline action buttons */}
-                  <div className="flex items-center gap-1">
-                    {/* Add After Button */}
+                {/* Compact action buttons */}
+                <div className="flex items-center flex-shrink-0">
+                  <button
+                    onClick={() => addFilterAfter(index)}
+                    className="p-1 rounded text-text-tertiary hover:text-accent hover:bg-bg-hover transition-colors"
+                    title="Add condition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                  {filters.length > 1 && (
                     <button
-                      onClick={() => addFilterAfter(index)}
-                      className="p-1.5 rounded text-text-secondary hover:text-accent hover:bg-bg-hover transition-colors"
-                      title="Add condition below"
+                      onClick={() => removeFilter(index)}
+                      className="p-1 rounded text-text-tertiary hover:text-error hover:bg-bg-hover transition-colors"
+                      title="Remove"
                     >
-                      <Plus className="w-4 h-4" />
+                      <X className="w-3.5 h-3.5" />
                     </button>
-
-                    {/* Remove Button - Only show if more than 1 filter */}
-                    {filters.length > 1 && (
-                      <button
-                        onClick={() => removeFilter(index)}
-                        className="p-1.5 rounded text-text-secondary hover:text-error hover:bg-bg-hover transition-colors"
-                        title="Remove condition"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
+                  )}
                 </div>
               </div>
             ))}
-          </div>
-
-          {/* Footer - Sticky */}
-          <div className="sticky bottom-0 z-10 flex items-center justify-between gap-2 px-4 py-3 border-t border-border bg-bg-tertiary">
-            <button
-              onClick={handleClear}
-              className="px-3 py-1.5 rounded bg-bg-secondary hover:bg-bg-hover text-text-primary text-xs transition-colors"
-            >
-              Clear All
-            </button>
-            <button
-              onClick={handleApply}
-              className="px-3 py-1.5 rounded bg-accent hover:bg-accent/90 text-white text-xs font-medium transition-colors"
-            >
-              Apply Filters
-            </button>
           </div>
         </div>
       )}

@@ -672,6 +672,141 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
     });
   };
 
+  // Refresh a specific node - clears its children and reloads them
+  const refreshNode = useCallback(async (node: TreeNode) => {
+    if (!api || !node.connectionKey || !node.connectionName) return;
+
+    setLoadingNodes((prev) => new Set(prev).add(node.id));
+
+    try {
+      let newChildren: TreeNode[] = [];
+
+      switch (node.type) {
+        case "connection": {
+          const noSchemaDatabases = ["mongodb", "redis", "elasticsearch", "cassandra"];
+          const isNoSchemaDb = noSchemaDatabases.includes(node.dbType || "");
+
+          if (isNoSchemaDb) {
+            newChildren = await loadObjectTypeContainers(node.connectionKey, node.connectionName, "", node.dbType);
+          } else if (node.showAllDatabases) {
+            newChildren = await loadDatabases(node.connectionKey, node.connectionName, node.dbType);
+          } else {
+            newChildren = await loadSchemas(node.connectionKey, node.connectionName, undefined, node.dbType);
+          }
+          break;
+        }
+        case "database": {
+          if (node.database) {
+            newChildren = await loadSchemas(node.connectionKey, node.connectionName, node.database, node.dbType);
+          }
+          break;
+        }
+        case "schema": {
+          if (node.schema !== undefined) {
+            newChildren = await loadObjectTypeContainers(node.connectionKey, node.connectionName, node.schema, node.dbType, node.database);
+          }
+          break;
+        }
+        case "objectTypeContainer": {
+          if (node.schema !== undefined && node.objectType) {
+            const database = node.database || findDatabaseForNode(treeData, node.id);
+            newChildren = await loadObjectsForType(node.connectionKey, node.connectionName, node.schema, node.objectType, node.dbType, database);
+          }
+          break;
+        }
+        case "table": {
+          if (node.schema !== undefined && node.table) {
+            newChildren = await loadColumns(node.connectionKey, node.connectionName, node.schema, node.table, node.database);
+          }
+          break;
+        }
+      }
+
+      setTreeData((prev) => updateTreeNode(prev, node.id, { children: newChildren }));
+      toast.success(`Refreshed ${node.name}`);
+    } catch (error) {
+      console.error("Failed to refresh node:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      toast.error(`Failed to refresh: ${errorMessage}`);
+    } finally {
+      setLoadingNodes((prev) => {
+        const next = new Set(prev);
+        next.delete(node.id);
+        return next;
+      });
+    }
+  }, [api, treeData]);
+
+  // Helper to find all nodes in the tree
+  const getAllNodes = (nodes: TreeNode[]): TreeNode[] => {
+    const result: TreeNode[] = [];
+    const traverse = (nodeList: TreeNode[]) => {
+      for (const node of nodeList) {
+        result.push(node);
+        if (node.children) {
+          traverse(node.children);
+        }
+      }
+    };
+    traverse(nodes);
+    return result;
+  };
+
+  // Smart refresh - refreshes all expanded nodes from deepest to shallowest
+  const refreshAllExpandedNodes = useCallback(async () => {
+    if (!api) return;
+    setIsRefreshing(true);
+
+    try {
+      // First, reload connections to get any new/removed connections
+      const conns = await api.getConnections();
+      setConnections(conns);
+
+      const savedOrder = await api.getConnectionOrder?.() || [];
+      setConnectionOrder(savedOrder);
+
+      // Find all expanded nodes and sort by depth (deepest first to avoid re-fetching)
+      const allNodes = getAllNodes(treeData);
+      const expandedNodesList = allNodes.filter(node =>
+        expandedNodes.has(node.id) &&
+        node.children &&
+        node.children.length > 0
+      );
+
+      // Calculate depth for each node
+      const getNodeDepth = (nodeId: string, nodes: TreeNode[], depth: number = 0): number => {
+        for (const node of nodes) {
+          if (node.id === nodeId) return depth;
+          if (node.children) {
+            const childDepth = getNodeDepth(nodeId, node.children, depth + 1);
+            if (childDepth !== -1) return childDepth;
+          }
+        }
+        return -1;
+      };
+
+      // Sort by depth (deepest first)
+      expandedNodesList.sort((a, b) => {
+        const depthA = getNodeDepth(a.id, treeData);
+        const depthB = getNodeDepth(b.id, treeData);
+        return depthB - depthA;
+      });
+
+      // Refresh each expanded node
+      for (const node of expandedNodesList) {
+        await refreshNode(node);
+      }
+
+      toast.success("Refresh complete");
+    } catch (error) {
+      console.error("Failed to refresh:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      toast.error(`Refresh failed: ${errorMessage}`);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [api, treeData, expandedNodes, refreshNode]);
+
   // Helper function to find database for a node by traversing up the tree
   const findDatabaseForNode = (nodes: TreeNode[], nodeId: string): string | undefined => {
     for (const node of nodes) {
@@ -846,6 +981,19 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
       toggleNode(connectionNode);
     }
   }, [expandConnectionKey, treeData, expandedNodes, toggleNode]);
+
+  // F5 keyboard shortcut for refresh
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "F5") {
+        e.preventDefault();
+        refreshAllExpandedNodes();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [refreshAllExpandedNodes]);
 
   const handleTableClick = (node: TreeNode) => {
     // Note: node.schema can be empty string for NoSQL databases (MongoDB, Redis)
@@ -1240,6 +1388,17 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
                   "animate-scale-in origin-top-left z-50"
                 )}
               >
+                {/* Refresh node - reload schemas/databases */}
+                {node.status === "connected" && (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                    onSelect={() => refreshNode(node)}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Refresh
+                  </ContextMenu.Item>
+                )}
+
                 {/* Hide New Query at connection level for showAllDatabases - user must select a specific database */}
                 {!node.showAllDatabases && (
                   <ContextMenu.Item
@@ -1329,6 +1488,16 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
                   "animate-scale-in origin-top-left z-50"
                 )}
               >
+                {/* Refresh for connected databases */}
+                {node.isDbConnected && (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                    onSelect={() => refreshNode(node)}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Refresh
+                  </ContextMenu.Item>
+                )}
                 {/* Show "Connect" option for not-connected databases */}
                 {!node.isDbConnected && (
                   <ContextMenu.Item
@@ -1365,6 +1534,13 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
               >
                 <ContextMenu.Item
                   className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                  onSelect={() => refreshNode(node)}
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Refresh
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
                   onSelect={() => node.connectionKey && node.connectionName && onQueryOpen(node.connectionKey, node.connectionName, node.database)}
                 >
                   <Play className="w-3.5 h-3.5" />
@@ -1387,6 +1563,27 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
             </ContextMenu.Portal>
           )}
 
+          {/* Context Menu for Object Type Containers (Tables, Views, Functions, etc.) */}
+          {node.type === "objectTypeContainer" && (
+            <ContextMenu.Portal>
+              <ContextMenu.Content
+                className={cn(
+                  "min-w-[160px] py-1 rounded-md",
+                  "bg-bg-tertiary border border-border shadow-panel",
+                  "animate-scale-in origin-top-left z-50"
+                )}
+              >
+                <ContextMenu.Item
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                  onSelect={() => refreshNode(node)}
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Refresh
+                </ContextMenu.Item>
+              </ContextMenu.Content>
+            </ContextMenu.Portal>
+          )}
+
           {/* Context Menu for Tables/Collections */}
           {node.type === "table" && (
             <ContextMenu.Portal>
@@ -1397,6 +1594,13 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
                   "animate-scale-in origin-top-left z-50"
                 )}
               >
+                <ContextMenu.Item
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
+                  onSelect={() => refreshNode(node)}
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Refresh Columns
+                </ContextMenu.Item>
                 <ContextMenu.Item
                   className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-bg-hover outline-none"
                   onSelect={() => handleTableClick(node)}
@@ -1475,12 +1679,12 @@ export function Sidebar({ onTableSelect, onFunctionSelect, onQueryOpen, onERDiag
               onClick={toggleTheme}
             />
           </Tooltip>
-          <Tooltip content="Refresh">
+          <Tooltip content="Refresh all (F5)">
             <IconButton
               icon={<RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")} />}
               size="sm"
-              aria-label="Refresh connections"
-              onClick={loadConnections}
+              aria-label="Refresh all expanded nodes"
+              onClick={refreshAllExpandedNodes}
             />
           </Tooltip>
           <Tooltip content="Add Connection">
